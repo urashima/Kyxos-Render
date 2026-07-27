@@ -50,7 +50,19 @@ jobs:
         with:
           name: typecheck-diagnostics
           path: typecheck.log
-      - run: pnpm test
+      - name: Unit tests
+        shell: bash
+        run: |
+          set +e
+          pnpm test 2>&1 | tee unit-test.log
+          status=${PIPESTATUS[0]}
+          exit $status
+      - name: Upload unit test diagnostics
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-diagnostics
+          path: unit-test.log
       - run: pnpm build
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm test:e2e
