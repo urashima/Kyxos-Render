@@ -1,0 +1,40 @@
+name: Bootstrap source tree
+
+on:
+  push:
+    branches: [feat/webgpu-realism-complete]
+    paths:
+      - '.bootstrap/**'
+      - '.github/workflows/bootstrap-source.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  unpack:
+    if: ${{ hashFiles('.bootstrap/source.part00', '.bootstrap/source.part01', '.bootstrap/source.part02', '.bootstrap/source.part03', '.bootstrap/source.part04') != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/webgpu-realism-complete
+      - name: Verify all source chunks
+        run: |
+          test -f .bootstrap/source.part00
+          test -f .bootstrap/source.part01
+          test -f .bootstrap/source.part02
+          test -f .bootstrap/source.part03
+          test -f .bootstrap/source.part04
+      - name: Unpack source tree
+        run: |
+          cat .bootstrap/source.part* | base64 --decode > /tmp/kyxos-source.tar.gz
+          echo '65adebe9c315a7315181b378e81b29796908241ab89b0c8c800e7dd6af7348a3  /tmp/kyxos-source.tar.gz' | sha256sum --check
+          tar -xzf /tmp/kyxos-source.tar.gz -C .
+          rm -rf .bootstrap .github/workflows/bootstrap-source.yml
+      - name: Commit generated source
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'tests-pages: complete viewer, playground and acceptance harness'
+          git push origin HEAD:feat/webgpu-realism-complete
