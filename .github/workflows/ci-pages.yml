@@ -1,0 +1,82 @@
+name: CI and Pages
+
+on:
+  push:
+    branches: [main, feat/webgpu-realism-complete]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      full_acceptance:
+        description: Run the complete lifecycle release gate
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: kyxos-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Expand initial source archive
+        if: ${{ hashFiles('.bootstrap/source.part04') != '' }}
+        run: |
+          cat .bootstrap/source.part* | base64 --decode > /tmp/kyxos-source.tar.gz
+          echo '65adebe9c315a7315181b378e81b29796908241ab89b0c8c800e7dd6af7348a3  /tmp/kyxos-source.tar.gz' | sha256sum --check
+          tar -xzf /tmp/kyxos-source.tar.gz -C .
+          rm -rf .bootstrap .github/workflows/bootstrap-source.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'tests-pages: complete viewer, playground and acceptance harness'
+          git push origin HEAD:feat/webgpu-realism-complete
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --no-frozen-lockfile
+      - run: pnpm format
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:e2e
+        env:
+          CI: true
+      - name: Full lifecycle acceptance
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.full_acceptance }}
+        run: pnpm test:e2e --grep "specified resource stability counts"
+        env:
+          CI: true
+          FULL_ACCEPTANCE: 1
+      - name: Build Pages artifact
+        run: PAGES_BUILD=1 pnpm build:pages
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
+    needs: verify
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
