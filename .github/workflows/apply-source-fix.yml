@@ -1,0 +1,38 @@
+name: Apply source fix
+
+on:
+  push:
+    branches: [feat/webgpu-realism-complete]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/webgpu-realism-complete
+      - name: Pass camera explicitly to SSR
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('packages/viewer/src/KyxosViewer.ts')
+          source = path.read_text()
+          before = """          const ssrNode = ssr(source, depth, sceneNormal, {\n            stochastic: true,\n"""
+          after = """          const ssrNode = ssr(source, depth, sceneNormal, {\n            camera: this.camera,\n            stochastic: true,\n"""
+          if before in source:
+              path.write_text(source.replace(before, after, 1))
+          elif after not in source:
+              raise SystemExit('SSR construction pattern not found')
+          PY
+      - name: Commit source fix
+        run: |
+          if git diff --quiet; then exit 0; fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add packages/viewer/src/KyxosViewer.ts
+          git commit -m 'ssr: pass the scene camera to the official node'
+          git push origin HEAD:feat/webgpu-realism-complete
