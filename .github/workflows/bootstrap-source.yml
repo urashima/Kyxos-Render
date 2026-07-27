@@ -3,22 +3,21 @@ name: Bootstrap source tree
 on:
   push:
     branches: [feat/webgpu-realism-complete]
-    paths:
-      - '.bootstrap/**'
-      - '.github/workflows/bootstrap-source.yml'
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
   unpack:
-    if: ${{ hashFiles('.bootstrap/source.part00', '.bootstrap/source.part01', '.bootstrap/source.part02', '.bootstrap/source.part03', '.bootstrap/source.part04') != '' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: feat/webgpu-realism-complete
-      - name: Verify all source chunks
+      - name: Verify source chunks
         run: |
           test -f .bootstrap/source.part00
           test -f .bootstrap/source.part01
