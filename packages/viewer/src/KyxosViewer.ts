@@ -367,6 +367,7 @@ export class KyxosViewer extends EventTarget {
         try {
           const settings = this.effects.ssr;
           const ssrNode = ssr(source, depth, sceneNormal, {
+            camera: this.camera,
             stochastic: true,
             diffuseNode: diffuseMetal,
             metalnessNode: diffuseMetal.a,
