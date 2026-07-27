@@ -11,7 +11,7 @@
     "lint": "eslint .",
     "format:check": "prettier --check .",
     "format": "prettier --write .",
-    "test": "vitest run",
+    "test": "vitest run tests/unit",
     "test:e2e": "playwright test",
     "typecheck": "pnpm --filter @kyxos/viewer typecheck && pnpm --filter @kyxos/playground typecheck",
     "verify": "pnpm lint && pnpm typecheck && pnpm test && pnpm build"
