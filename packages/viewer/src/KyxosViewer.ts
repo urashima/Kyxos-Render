@@ -1,15 +1,16 @@
 import * as THREE from 'three/webgpu';
 import {
+  builtinAOContext,
+  convertToTexture,
   diffuseColor,
   emissive,
-  materialMetalness,
-  materialRoughness,
+  metalness,
   mrt,
   normalView,
-  output,
   packNormalToRGB,
   pass,
   renderOutput,
+  roughness,
   sample,
   screenUV,
   texture3D,
@@ -42,7 +43,13 @@ import { smaa } from 'three/addons/tsl/display/SMAANode.js';
 import { lut3D } from 'three/addons/tsl/display/Lut3DNode.js';
 import { sharpen } from 'three/addons/tsl/display/SharpenNode.js';
 
-import { beforeAfterNode, createWarmLutTexture, gradualBackgroundNode, lensDistortionNode, sparkleNode } from './effects/customNodes';
+import {
+  beforeAfterNode,
+  createWarmLutTexture,
+  gradualBackgroundNode,
+  lensDistortionNode,
+  sparkleNode,
+} from './effects/customNodes';
 import { createQualityPreset, mergeEffectSettings } from './presets';
 import { createDefaultScene } from './scene/createDefaultScene';
 import type {
@@ -105,6 +112,8 @@ export class KyxosViewer extends EventTarget {
   private disposed = false;
   private initialized = false;
   private rebuildQueued = false;
+  private pipelineGeneration = 0;
+  private webgpuRecoveryActive = false;
   private lastFrameTime = performance.now();
   private elapsed = 0;
   private fpsAccumulator = 0;
@@ -133,7 +142,9 @@ export class KyxosViewer extends EventTarget {
     this.autoStart = options.autoStart ?? true;
     this.quality = options.quality ?? 'high';
     this.effects = createQualityPreset(this.quality);
-    this.metrics.pixelRatio = clampPixelRatio(options.pixelRatio ?? Math.min(window.devicePixelRatio || 1, 1.5));
+    this.metrics.pixelRatio = clampPixelRatio(
+      options.pixelRatio ?? Math.min(window.devicePixelRatio || 1, 1.5),
+    );
   }
 
   private async initialize() {
@@ -218,7 +229,11 @@ export class KyxosViewer extends EventTarget {
       this.renderPipeline.render();
     } catch (error) {
       this.dispatchEvent(new CustomEvent('error', { detail: { error } }));
-      this.warn('pipeline', `Render pipeline error: ${error instanceof Error ? error.message : String(error)}`);
+      this.warn(
+        'pipeline',
+        `Render pipeline error: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      this.activateWebGPURecovery(`render-error:${error instanceof Error ? error.message : String(error)}`);
       return;
     }
 
@@ -249,6 +264,7 @@ export class KyxosViewer extends EventTarget {
 
   private buildPipeline(reason: string) {
     if (this.disposed) return;
+    const generation = ++this.pipelineGeneration;
     this.disposePipeline();
     this.debugNodes.clear();
 
@@ -256,50 +272,121 @@ export class KyxosViewer extends EventTarget {
     pipeline.outputColorTransform = false;
     this.renderPipeline = pipeline;
 
-    const scenePass = pass(this.scene, this.camera);
-    scenePass.name = 'Kyxos.SceneMRT';
-    scenePass.options.samples = 0;
-    scenePass.setMRT(
+    // Keep the lit beauty pass independent from material-data MRT. This mirrors
+    // the official Three.js AO pre-pass architecture and prevents one unsupported
+    // material attachment from invalidating the visible scene color.
+    const prePass = pass(this.scene, this.camera);
+    prePass.name = 'Kyxos.PrePassMRT';
+    prePass.transparent = false;
+    prePass.options.samples = 0;
+    prePass.setMRT(
       mrt({
-        output,
-        normal: vec4(packNormalToRGB(normalView).rgb, materialRoughness),
-        diffuseColor: vec4(diffuseColor.rgb, materialMetalness),
+        output: packNormalToRGB(normalView),
         velocity,
-        emissive: vec4(emissive.rgb, 1),
+        metalrough: vec2(metalness, roughness),
+        diffuseColor: vec4(diffuseColor.rgb, 1),
       }),
     );
+    this.nodes.push(prePass);
+
+    const depth = prePass.getTextureNode('depth');
+    const linearDepth = prePass.getLinearDepthNode();
+    const normalPacked = prePass.getTextureNode('output');
+    const velocityNode = prePass.getTextureNode('velocity');
+    const metalRough = prePass.getTextureNode('metalrough');
+    const diffuseMetal = prePass.getTextureNode('diffuseColor');
+
+    const normalTexture = prePass.getTexture('output');
+    normalTexture.type = THREE.UnsignedByteType;
+    const metalRoughTexture = prePass.getTexture('metalrough');
+    metalRoughTexture.type = THREE.UnsignedByteType;
+    const diffuseTexture = prePass.getTexture('diffuseColor');
+    diffuseTexture.type = THREE.UnsignedByteType;
+
+    const sceneNormal = sample((uv: any) => unpackRGBToNormal(normalPacked.sample(uv).rgb));
+    const metalRoughness = sample((uv: any) => metalRough.sample(uv).rg);
+    const useSSAA = this.effects.ssaa.enabled;
+
+    // Feed AO into the Beauty pass through Three.js' official lighting context.
+    // Keeping Beauty as a real pass texture means SSR, TRAA and the remaining
+    // texture-based effects can sample it without turning the visible graph black.
+    let ambientOcclusionNode: any = null;
+
+    if (!useSSAA && this.effects.gtao.enabled) {
+      try {
+        const settings = this.effects.gtao;
+        const gtao = ao(depth, sceneNormal, this.camera);
+        gtao.samples.value = Number(settings.samples ?? 16);
+        gtao.radius.value = Number(settings.radius ?? 0.5);
+        gtao.scale.value = Number(settings.intensity ?? 1.2);
+        gtao.thickness.value = Number(settings.thickness ?? 1);
+        gtao.resolutionScale = Number(settings.resolutionScale ?? 0.5);
+        gtao.useTemporalFiltering = this.effects.traa.enabled;
+        ambientOcclusionNode = gtao.getTextureNode().sample(screenUV).r;
+        this.nodes.push(gtao);
+      } catch (error) {
+        this.effectFailure('gtao', error);
+      }
+    }
+
+    if (!useSSAA && this.effects.ssao.enabled) {
+      try {
+        const settings = this.effects.ssao;
+        const ssaoNode = ssao(depth, sceneNormal, this.camera);
+        ssaoNode.samples.value = Number(settings.samples ?? 16);
+        ssaoNode.radius.value = Number(settings.radius ?? 0.5);
+        ssaoNode.intensity.value = Number(settings.intensity ?? 1.5);
+        ssaoNode.resolutionScale = Number(settings.resolutionScale ?? 0.5);
+        const ssaoSample = ssaoNode.getTextureNode().sample(screenUV).r;
+        ambientOcclusionNode = ambientOcclusionNode ? ambientOcclusionNode.mul(ssaoSample) : ssaoSample;
+        this.nodes.push(ssaoNode);
+      } catch (error) {
+        this.effectFailure('ssao', error);
+      }
+    }
+
+    const scenePass = pass(this.scene, this.camera);
+    scenePass.name = 'Kyxos.Beauty';
+    scenePass.options.samples = 0;
+    if (ambientOcclusionNode) scenePass.contextNode = builtinAOContext(ambientOcclusionNode);
     this.nodes.push(scenePass);
 
     const beauty = scenePass.getTextureNode('output');
-    const depth = scenePass.getTextureNode('depth');
-    const linearDepth = scenePass.getLinearDepthNode();
-    const normalPacked = scenePass.getTextureNode('normal');
-    const diffuseMetal = scenePass.getTextureNode('diffuseColor');
-    const velocityNode = scenePass.getTextureNode('velocity');
-    const emissiveNode = scenePass.getTextureNode('emissive');
     const viewZ = scenePass.getViewZNode();
 
-    const normalTexture = scenePass.getTexture('normal');
-    normalTexture.type = THREE.UnsignedByteType;
-    const diffuseTexture = scenePass.getTexture('diffuseColor');
-    diffuseTexture.type = THREE.UnsignedByteType;
-    const emissiveTexture = scenePass.getTexture('emissive');
-    emissiveTexture.type = THREE.UnsignedByteType;
-
-    const sceneNormal = sample((uv: any) => unpackRGBToNormal(normalPacked.sample(uv).rgb));
-    const metalRoughness = sample((uv: any) => vec2(diffuseMetal.sample(uv).a, normalPacked.sample(uv).a));
+    // Emissive remains outside the four-attachment material pre-pass so WebGL2
+    // compatibility is preserved while the debug channel is fully restored.
+    const emissivePass = pass(this.scene, this.camera);
+    emissivePass.name = 'Kyxos.Emissive';
+    emissivePass.options.samples = 0;
+    emissivePass.setMRT(mrt({ output: vec4(emissive.rgb, 1) }));
+    this.nodes.push(emissivePass);
+    const emissiveNode = emissivePass.getTextureNode('output');
 
     this.debugNodes.set('beauty', renderOutput(beauty));
-    this.debugNodes.set('depth', vec4(vec3(linearDepth), 1));
-    this.debugNodes.set('velocity', vec4(velocityNode.xy.mul(8).add(0.5), 0, 1));
-    this.debugNodes.set('normal', vec4(normalPacked.rgb, 1));
-    this.debugNodes.set('diffuseColor', vec4(diffuseMetal.rgb, 1));
-    this.debugNodes.set('metalness', vec4(vec3(diffuseMetal.a), 1));
-    this.debugNodes.set('roughness', vec4(vec3(normalPacked.a), 1));
-    this.debugNodes.set('emissive', vec4(emissiveNode.rgb, 1));
+    this.debugNodes.set('depth', renderOutput(vec4(vec3(linearDepth), 1)));
+    this.debugNodes.set('velocity', renderOutput(vec4(velocityNode.xy.mul(8).add(0.5), 0, 1)));
+    this.debugNodes.set('normal', renderOutput(vec4(normalPacked.rgb, 1)));
+    this.debugNodes.set('diffuseColor', renderOutput(vec4(diffuseMetal.rgb, 1)));
+    this.debugNodes.set('metalness', renderOutput(vec4(vec3(metalRough.r), 1)));
+    this.debugNodes.set('roughness', renderOutput(vec4(vec3(metalRough.g), 1)));
+    this.debugNodes.set('emissive', renderOutput(emissiveNode));
+    this.warnings.delete('emissive-prepass');
+
+    // Debug buffers use a dedicated short graph. Building the complete temporal
+    // and post-processing stack and then selecting an early pass does not
+    // reliably schedule that pass in the pinned Three.js RenderPipeline.
+    if (this.debugView !== 'final') {
+      this.beforeNode = renderOutput(beauty);
+      this.finalNode = this.beforeNode;
+      pipeline.outputNode = this.debugNodes.get(this.debugView) ?? this.beforeNode;
+      pipeline.needsUpdate = true;
+      this.warnings.delete('pipeline');
+      this.dispatchEvent(new CustomEvent('pipeline-rebuilt', { detail: { reason } }));
+      return;
+    }
 
     let source: any = beauty;
-    const useSSAA = this.effects.ssaa.enabled;
 
     if (useSSAA) {
       const ssaaNode = ssaaPass(this.scene, this.camera);
@@ -314,38 +401,6 @@ export class KyxosViewer extends EventTarget {
     } else {
       this.warnings.delete('capture-ssaa');
 
-      if (this.effects.gtao.enabled) {
-        try {
-          const settings = this.effects.gtao;
-          const gtao = ao(depth, sceneNormal, this.camera);
-          gtao.samples.value = Number(settings.samples ?? 16);
-          gtao.radius.value = Number(settings.radius ?? 0.5);
-          gtao.scale.value = Number(settings.intensity ?? 1.2);
-          gtao.thickness.value = Number(settings.thickness ?? 1);
-          gtao.resolutionScale = Number(settings.resolutionScale ?? 0.5);
-          gtao.useTemporalFiltering = this.effects.traa.enabled;
-          source = vec4(source.rgb.mul(gtao.getTextureNode().sample(screenUV).r), source.a);
-          this.nodes.push(gtao);
-        } catch (error) {
-          this.effectFailure('gtao', error);
-        }
-      }
-
-      if (this.effects.ssao.enabled) {
-        try {
-          const settings = this.effects.ssao;
-          const ssaoNode = ssao(depth, sceneNormal, this.camera);
-          ssaoNode.samples.value = Number(settings.samples ?? 16);
-          ssaoNode.radius.value = Number(settings.radius ?? 0.5);
-          ssaoNode.intensity.value = Number(settings.intensity ?? 1.5);
-          ssaoNode.resolutionScale = Number(settings.resolutionScale ?? 0.5);
-          source = vec4(source.rgb.mul(ssaoNode.getTextureNode().sample(screenUV).r), source.a);
-          this.nodes.push(ssaoNode);
-        } catch (error) {
-          this.effectFailure('ssao', error);
-        }
-      }
-
       if (this.effects.ssgi.enabled) {
         try {
           const settings = this.effects.ssgi;
@@ -356,7 +411,10 @@ export class KyxosViewer extends EventTarget {
           gi.giIntensity.value = Number(settings.intensity ?? 1);
           gi.resolutionScale = Number(settings.resolutionScale ?? 0.5);
           gi.useTemporalFiltering = settings.temporalFiltering !== false;
-          source = vec4(source.rgb.mul(gi.getAONode()).add(diffuseMetal.rgb.mul(gi.getGINode().rgb)), source.a);
+          source = vec4(
+            source.rgb.mul(gi.getAONode()).add(diffuseMetal.rgb.mul(gi.getGINode().rgb)),
+            source.a,
+          );
           this.nodes.push(gi);
         } catch (error) {
           this.effectFailure('ssgi', error);
@@ -366,14 +424,18 @@ export class KyxosViewer extends EventTarget {
       if (this.effects.ssr.enabled) {
         try {
           const settings = this.effects.ssr;
-          const ssrNode = ssr(source, depth, sceneNormal, {
+          // SSR internally samples its color input, so keep the original Scene Pass texture here.
+          const ssrNode = ssr(beauty, depth, sceneNormal, {
             camera: this.camera,
-            stochastic: true,
+            // Stochastic SSR requires an original equirectangular HDR texture for misses.
+            // The active studio environment is PMREM, so use the official mirror/blur path.
+            stochastic: false,
             diffuseNode: diffuseMetal,
-            metalnessNode: diffuseMetal.a,
-            roughnessNode: normalPacked.a,
-            environmentNode: this.scene.environment ?? null,
-            envImportanceSampling: true,
+            metalnessNode: metalRough.r,
+            roughnessNode: metalRough.g,
+            // PMREM scene.environment is not an equirectangular SSR sampling source.
+            // Keep screen-space reflections enabled without compiling the null MIS path.
+            envImportanceSampling: false,
             binaryRefine: true,
           });
           ssrNode.resolutionScale = Number(settings.resolutionScale ?? 0.5);
@@ -382,7 +444,6 @@ export class KyxosViewer extends EventTarget {
           ssrNode.maxDistance.value = Number(settings.maxDistance ?? 0.4);
           ssrNode.intensity.value = Number(settings.intensity ?? 1);
           ssrNode.thickness.value = Number(settings.thickness ?? 0.1);
-          if (this.scene.environment) ssrNode.setEnvMap(this.scene.environment);
 
           let reflection: any = ssrNode;
           if (this.effects.temporalReprojection.enabled) {
@@ -417,7 +478,7 @@ export class KyxosViewer extends EventTarget {
             this.nodes.push(spatial);
           }
 
-          source = vec4(source.rgb.add(reflection.rgb.mul(Number(settings.intensity ?? 1))), 1);
+          source = vec4(source.rgb.add(reflection.rgb), 1);
           this.nodes.push(ssrNode);
         } catch (error) {
           this.effectFailure('ssr', error);
@@ -450,7 +511,9 @@ export class KyxosViewer extends EventTarget {
       if (this.effects.motionBlur.enabled) {
         try {
           const amount = uniform(Number(this.effects.motionBlur.amount ?? 1));
-          source = motionBlur(source, velocityNode.mul(amount));
+          const motionInput = convertToTexture(source);
+          if (motionInput !== source) this.nodes.push(motionInput);
+          source = motionBlur(motionInput, velocityNode.mul(amount));
         } catch (error) {
           this.effectFailure('motionBlur', error);
         }
@@ -534,12 +597,83 @@ export class KyxosViewer extends EventTarget {
       }
     }
 
+    this.warnings.delete('webgpu-safe-beauty');
+
+    // The complete effect graph is the normal WebGPU output. If a real device
+    // later produces a persistently black frame or a render exception, rebuild
+    // on the known-good Beauty texture instead of leaving the application black.
+    if (this.backend === 'webgpu' && this.webgpuRecoveryActive && !useSSAA) {
+      source = renderOutput(beauty);
+    }
+
     this.finalNode = source;
     this.debugNodes.set('final', source);
     this.applyOutputSelection();
     pipeline.needsUpdate = true;
     this.warnings.delete('pipeline');
     this.dispatchEvent(new CustomEvent('pipeline-rebuilt', { detail: { reason } }));
+    this.scheduleWebGPUVisibilityRecovery(generation, reason, useSSAA);
+  }
+
+  private activateWebGPURecovery(reason: string) {
+    if (this.backend !== 'webgpu' || this.webgpuRecoveryActive || this.disposed) return;
+    this.webgpuRecoveryActive = true;
+    this.warn(
+      'webgpu-auto-recovery',
+      `WebGPU full stack produced no visible output (${reason}); the viewer recovered to the lit Beauty pass. Change an effect or preset to retry the complete stack.`,
+    );
+    this.queuePipelineRebuild(`webgpu-recovery:${reason}`);
+  }
+
+  private scheduleWebGPUVisibilityRecovery(generation: number, reason: string, useSSAA: boolean) {
+    if (
+      this.backend !== 'webgpu' ||
+      useSSAA ||
+      this.webgpuRecoveryActive ||
+      this.debugView !== 'final' ||
+      this.disposed
+    ) {
+      return;
+    }
+
+    window.setTimeout(() => {
+      if (
+        generation !== this.pipelineGeneration ||
+        this.webgpuRecoveryActive ||
+        this.debugView !== 'final' ||
+        this.disposed ||
+        document.visibilityState === 'hidden'
+      ) {
+        return;
+      }
+
+      requestAnimationFrame(() => {
+        if (generation !== this.pipelineGeneration || this.disposed) return;
+        try {
+          const verificationCanvas = document.createElement('canvas');
+          verificationCanvas.width = 32;
+          verificationCanvas.height = 18;
+          const context = verificationCanvas.getContext('2d', { willReadFrequently: true });
+          if (!context) return;
+          context.drawImage(this.canvas, 0, 0, verificationCanvas.width, verificationCanvas.height);
+          const data = context.getImageData(0, 0, verificationCanvas.width, verificationCanvas.height).data;
+          let visible = 0;
+          for (let index = 0; index < data.length; index += 4) {
+            if (data[index] + data[index + 1] + data[index + 2] > 24 && data[index + 3] > 0) {
+              visible += 1;
+            }
+          }
+          if (visible <= verificationCanvas.width * verificationCanvas.height * 0.02) {
+            this.activateWebGPURecovery(`black-output:${reason}`);
+          }
+        } catch (error) {
+          this.warn(
+            'webgpu-visibility-check',
+            `WebGPU visibility check was unavailable: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      });
+    }, 4000);
   }
 
   private applyOutputSelection() {
@@ -585,6 +719,8 @@ export class KyxosViewer extends EventTarget {
 
   setEffect(effect: EffectName, settings: Partial<EffectsState[EffectName]>) {
     this.effects = mergeEffectSettings(this.effects, effect, settings);
+    this.webgpuRecoveryActive = false;
+    this.warnings.delete('webgpu-auto-recovery');
     if (effect === 'gradualBackground') this.updateBackground();
     this.queuePipelineRebuild(`effect:${effect}`);
   }
@@ -592,6 +728,8 @@ export class KyxosViewer extends EventTarget {
   setQualityPreset(quality: QualityPresetName) {
     this.quality = quality;
     this.effects = createQualityPreset(quality);
+    this.webgpuRecoveryActive = false;
+    this.warnings.delete('webgpu-auto-recovery');
     this.updateBackground();
     this.queuePipelineRebuild(`quality:${quality}`);
   }
@@ -615,7 +753,10 @@ export class KyxosViewer extends EventTarget {
 
   setDebugView(view: DebugView) {
     this.debugView = view;
-    this.applyOutputSelection();
+    // Pass/RTT lifecycle dependencies are not reliably re-registered by a hot
+    // outputNode swap in the pinned Three.js RenderPipeline. Rebuild the small
+    // graph so Beauty and G-buffer debug passes are scheduled deterministically.
+    this.queuePipelineRebuild(`debug-view:${view}`);
   }
 
   getDebugView() {
@@ -744,7 +885,8 @@ export class KyxosViewer extends EventTarget {
         if (!input) return [key, null] as const;
         if (typeof input !== 'string') return [key, input] as const;
         const texture = await textureLoader.loadAsync(input);
-        texture.colorSpace = key === 'baseColor' || key === 'emissive' ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+        texture.colorSpace =
+          key === 'baseColor' || key === 'emissive' ? THREE.SRGBColorSpace : THREE.NoColorSpace;
         texture.wrapS = THREE.RepeatWrapping;
         texture.wrapT = THREE.RepeatWrapping;
         this.materialTextures.add(texture);
@@ -754,7 +896,11 @@ export class KyxosViewer extends EventTarget {
     const textures = Object.fromEntries(entries) as Record<string, THREE.Texture | null>;
 
     this.modelRoot.traverse((object: any) => {
-      const materials = Array.isArray(object.material) ? object.material : object.material ? [object.material] : [];
+      const materials = Array.isArray(object.material)
+        ? object.material
+        : object.material
+          ? [object.material]
+          : [];
       for (const material of materials) {
         if (!material.isMeshStandardMaterial && !material.isMeshPhysicalMaterial) continue;
         if ('baseColor' in textures) material.map = textures.baseColor;
@@ -785,7 +931,11 @@ export class KyxosViewer extends EventTarget {
 
     this.renderPipeline.render();
     const blob = await new Promise<Blob>((resolve, reject) => {
-      this.canvas.toBlob((value) => (value ? resolve(value) : reject(new Error('Canvas capture failed.'))), mimeType, quality);
+      this.canvas.toBlob(
+        (value) => (value ? resolve(value) : reject(new Error('Canvas capture failed.'))),
+        mimeType,
+        quality,
+      );
     });
 
     if (scale !== 1) {
@@ -796,7 +946,10 @@ export class KyxosViewer extends EventTarget {
     return blob;
   }
 
-  async runStressTest(name: 'resize' | 'toggle' | 'model' | 'environment', iterations: number): Promise<StressResult> {
+  async runStressTest(
+    name: 'resize' | 'toggle' | 'model' | 'environment',
+    iterations: number,
+  ): Promise<StressResult> {
     const before = this.getMetrics();
     const started = performance.now();
 
