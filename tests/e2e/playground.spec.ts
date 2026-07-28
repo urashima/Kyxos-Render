@@ -84,6 +84,7 @@ test('WebGL 2 medium mode renders visible final pixels', async ({ page }) => {
   });
 
   expect(pixels.visible).toBeGreaterThan(pixels.total * 0.1);
+
   expect(pageErrors).toEqual([]);
   expect(consoleErrors.filter((message) => message.includes('colorNode.sample'))).toEqual([]);
 });

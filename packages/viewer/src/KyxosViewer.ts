@@ -1,15 +1,13 @@
 import * as THREE from 'three/webgpu';
 import {
   diffuseColor,
-  emissive,
-  materialMetalness,
-  materialRoughness,
+  metalness,
   mrt,
   normalView,
-  output,
   packNormalToRGB,
   pass,
   renderOutput,
+  roughness,
   sample,
   screenUV,
   texture3D,
@@ -267,57 +265,60 @@ export class KyxosViewer extends EventTarget {
     pipeline.outputColorTransform = false;
     this.renderPipeline = pipeline;
 
+    // Keep the lit beauty pass independent from material-data MRT. This mirrors
+    // the official Three.js AO pre-pass architecture and prevents one unsupported
+    // material attachment from invalidating the visible scene color.
+    const prePass = pass(this.scene, this.camera);
+    prePass.name = 'Kyxos.PrePassMRT';
+    prePass.transparent = false;
+    prePass.options.samples = 0;
+    prePass.setMRT(
+      mrt({
+        output: packNormalToRGB(normalView),
+        velocity,
+        metalrough: vec2(metalness, roughness),
+        diffuseColor: vec4(diffuseColor.rgb, 1),
+      }),
+    );
+    this.nodes.push(prePass);
+
+    const depth = prePass.getTextureNode('depth');
+    const linearDepth = prePass.getLinearDepthNode();
+    const normalPacked = prePass.getTextureNode('output');
+    const velocityNode = prePass.getTextureNode('velocity');
+    const metalRough = prePass.getTextureNode('metalrough');
+    const diffuseMetal = prePass.getTextureNode('diffuseColor');
+
+    const normalTexture = prePass.getTexture('output');
+    normalTexture.type = THREE.UnsignedByteType;
+    const metalRoughTexture = prePass.getTexture('metalrough');
+    metalRoughTexture.type = THREE.UnsignedByteType;
+    const diffuseTexture = prePass.getTexture('diffuseColor');
+    diffuseTexture.type = THREE.UnsignedByteType;
+
+    const sceneNormal = sample((uv: any) => unpackRGBToNormal(normalPacked.sample(uv).rgb));
+    const metalRoughness = sample((uv: any) => metalRough.sample(uv).rg);
+
     const scenePass = pass(this.scene, this.camera);
-    scenePass.name = 'Kyxos.SceneMRT';
+    scenePass.name = 'Kyxos.Beauty';
     scenePass.options.samples = 0;
-    const hasEmissiveAttachment = this.backend === 'webgpu';
-    const mrtOutputs: Record<string, any> = {
-      output,
-      normal: vec4(packNormalToRGB(normalView).rgb, materialRoughness),
-      diffuseColor: vec4(diffuseColor.rgb, materialMetalness),
-      velocity,
-    };
-    if (hasEmissiveAttachment) {
-      mrtOutputs.emissive = vec4(emissive.rgb, 1);
-      this.warnings.delete('webgl2-mrt');
-    } else {
-      this.warn(
-        'webgl2-mrt',
-        'WebGL 2 uses a four-attachment Scene MRT for guaranteed compatibility; emissive debug output is unavailable.',
-      );
-    }
-    scenePass.setMRT(mrt(mrtOutputs));
     this.nodes.push(scenePass);
 
     const beauty = scenePass.getTextureNode('output');
-    const depth = scenePass.getTextureNode('depth');
-    const linearDepth = scenePass.getLinearDepthNode();
-    const normalPacked = scenePass.getTextureNode('normal');
-    const diffuseMetal = scenePass.getTextureNode('diffuseColor');
-    const velocityNode = scenePass.getTextureNode('velocity');
-    const emissiveNode = hasEmissiveAttachment ? scenePass.getTextureNode('emissive') : null;
     const viewZ = scenePass.getViewZNode();
 
-    const normalTexture = scenePass.getTexture('normal');
-    normalTexture.type = THREE.UnsignedByteType;
-    const diffuseTexture = scenePass.getTexture('diffuseColor');
-    diffuseTexture.type = THREE.UnsignedByteType;
-    if (hasEmissiveAttachment) {
-      const emissiveTexture = scenePass.getTexture('emissive');
-      emissiveTexture.type = THREE.UnsignedByteType;
-    }
-
-    const sceneNormal = sample((uv: any) => unpackRGBToNormal(normalPacked.sample(uv).rgb));
-    const metalRoughness = sample((uv: any) => vec2(diffuseMetal.sample(uv).a, normalPacked.sample(uv).a));
-
-    this.debugNodes.set('beauty', renderOutput(beauty));
+    this.debugNodes.set('beauty', scenePass);
     this.debugNodes.set('depth', vec4(vec3(linearDepth), 1));
     this.debugNodes.set('velocity', vec4(velocityNode.xy.mul(8).add(0.5), 0, 1));
     this.debugNodes.set('normal', vec4(normalPacked.rgb, 1));
     this.debugNodes.set('diffuseColor', vec4(diffuseMetal.rgb, 1));
-    this.debugNodes.set('metalness', vec4(vec3(diffuseMetal.a), 1));
-    this.debugNodes.set('roughness', vec4(vec3(normalPacked.a), 1));
-    this.debugNodes.set('emissive', hasEmissiveAttachment ? vec4(emissiveNode.rgb, 1) : vec4(0, 0, 0, 1));
+    this.debugNodes.set('metalness', vec4(vec3(metalRough.r), 1));
+    this.debugNodes.set('roughness', vec4(vec3(metalRough.g), 1));
+    this.debugNodes.set('emissive', vec4(0, 0, 0, 1));
+    this.warn(
+      'emissive-prepass',
+      'Emissive debug output is isolated from the core pre-pass while the visible pipeline is stabilized.',
+    );
 
     let source: any = beauty;
     const useSSAA = this.effects.ssaa.enabled;
@@ -395,9 +396,8 @@ export class KyxosViewer extends EventTarget {
             camera: this.camera,
             stochastic: true,
             diffuseNode: diffuseMetal,
-            metalnessNode: diffuseMetal.a,
-            roughnessNode: normalPacked.a,
-            environmentNode: this.scene.environment ?? null,
+            metalnessNode: metalRough.r,
+            roughnessNode: metalRough.g,
             envImportanceSampling: true,
             binaryRefine: true,
           });
@@ -407,7 +407,6 @@ export class KyxosViewer extends EventTarget {
           ssrNode.maxDistance.value = Number(settings.maxDistance ?? 0.4);
           ssrNode.intensity.value = Number(settings.intensity ?? 1);
           ssrNode.thickness.value = Number(settings.thickness ?? 0.1);
-          if (this.scene.environment) ssrNode.setEnvMap(this.scene.environment);
 
           let reflection: any = ssrNode;
           if (this.effects.temporalReprojection.enabled) {
@@ -559,6 +558,19 @@ export class KyxosViewer extends EventTarget {
       }
     }
 
+    if (this.backend === 'webgpu' && !useSSAA) {
+      // Deterministic recovery gate: keep the real WebGPU preview on the plain
+      // lit Beauty pass until each buffer-dependent effect is re-enabled and
+      // validated independently on hardware. Capture keeps its SSAA path.
+      source = renderOutput(beauty);
+      this.warn(
+        'webgpu-safe-beauty',
+        'WebGPU Safe Beauty is active while GTAO, SSR, TRAA and the remaining post stack are revalidated.',
+      );
+    } else {
+      this.warnings.delete('webgpu-safe-beauty');
+    }
+
     this.finalNode = source;
     this.debugNodes.set('final', source);
     this.applyOutputSelection();
@@ -640,7 +652,10 @@ export class KyxosViewer extends EventTarget {
 
   setDebugView(view: DebugView) {
     this.debugView = view;
-    this.applyOutputSelection();
+    // Pass/RTT lifecycle dependencies are not reliably re-registered by a hot
+    // outputNode swap in the pinned Three.js RenderPipeline. Rebuild the small
+    // graph so Beauty and G-buffer debug passes are scheduled deterministically.
+    this.queuePipelineRebuild(`debug-view:${view}`);
   }
 
   getDebugView() {

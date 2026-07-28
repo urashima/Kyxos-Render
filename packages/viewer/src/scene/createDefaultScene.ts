@@ -2,7 +2,6 @@ import {
   BoxGeometry,
   Color,
   DirectionalLight,
-  GridHelper,
   Group,
   HemisphereLight,
   Mesh,
@@ -85,10 +84,6 @@ export function createDefaultScene(): DefaultSceneBundle {
   floor.position.y = 0;
   floor.receiveShadow = true;
   scene.add(floor);
-
-  const grid = new GridHelper(18, 36, 0x475569, 0x273244);
-  grid.position.y = 0.002;
-  scene.add(grid);
 
   const hemi = new HemisphereLight(0xdbeafe, 0x111827, 1.35);
   scene.add(hemi);
