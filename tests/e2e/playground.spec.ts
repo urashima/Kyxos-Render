@@ -152,6 +152,94 @@ test('WebGL 2 rebuilt debug outputs remain visible', async ({ page }) => {
   expect(pageErrors).toEqual([]);
 });
 
+test('TRAA and depth of field stay visible while the camera moves', async ({ page }) => {
+  test.setTimeout(180_000);
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'gpu', { configurable: true, value: undefined });
+  });
+
+  const pageErrors: string[] = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+  // The GitHub runner uses a CPU software renderer. Keep enough pixels to
+  // detect a black frame while avoiding multi-minute 80-tap DoF frames.
+  await page.setViewportSize({ width: 320, height: 180 });
+  await page.goto('/overview/');
+  await page.waitForFunction(() => window.__kyxosTestApi?.ready(), null, { timeout: 90_000 });
+  await page.evaluate(() => {
+    window.__kyxosTestApi.setQuality('low');
+    window.__kyxosTestApi.setEffect('fxaa', { enabled: false });
+    window.__kyxosTestApi.setEffect('gtao', { enabled: false });
+    window.__kyxosTestApi.setEffect('traa', { enabled: true });
+    window.__kyxosTestApi.setEffect('dof', {
+      enabled: true,
+      focusDistance: 4,
+      focalLength: 45,
+      bokehScale: 1.5,
+    });
+  });
+  await page.waitForTimeout(2500);
+
+  const canvas = page.locator('#viewport');
+  const bounds = await canvas.boundingBox();
+  if (!bounds) throw new Error('Viewport bounds unavailable.');
+
+  const sampleVisibleRatio = async () => {
+    // WebGL does not preserve the previous drawing buffer, so copying the
+    // source canvas outside its render callback can return all zeroes even
+    // while the browser visibly composites a correct frame. Sample the
+    // composited bottom-right canvas region instead of the discarded buffer.
+    const clip = {
+      x: bounds.x + bounds.width * 0.58,
+      y: bounds.y + bounds.height * 0.48,
+      width: bounds.width * 0.38,
+      height: bounds.height * 0.46,
+    };
+    const screenshot = await page.screenshot({ clip });
+    return page.evaluate(async (encoded) => {
+      const image = new Image();
+      image.src = `data:image/png;base64,${encoded}`;
+      await image.decode();
+      const copy = document.createElement('canvas');
+      copy.width = 96;
+      copy.height = 54;
+      const context = copy.getContext('2d', { willReadFrequently: true });
+      if (!context) throw new Error('2D verification context unavailable.');
+      context.drawImage(image, 0, 0, copy.width, copy.height);
+      const data = context.getImageData(0, 0, copy.width, copy.height).data;
+      let visible = 0;
+      for (let index = 0; index < data.length; index += 4) {
+        if (data[index] + data[index + 1] + data[index + 2] > 24 && data[index + 3] > 0) {
+          visible += 1;
+        }
+      }
+      return visible / (copy.width * copy.height);
+    }, screenshot.toString('base64'));
+  };
+
+  const centerX = bounds.x + bounds.width * 0.5;
+  const centerY = bounds.y + bounds.height * 0.5;
+  const ratios: number[] = [];
+  await page.mouse.move(centerX, centerY);
+  await page.mouse.down();
+  for (let step = 1; step <= 12; step += 1) {
+    await page.mouse.move(centerX + step * 10, centerY + Math.sin(step * 0.5) * 24);
+    await page.waitForTimeout(90);
+    ratios.push(await sampleVisibleRatio());
+  }
+  await page.mouse.up();
+  await page.waitForTimeout(1000);
+  ratios.push(await sampleVisibleRatio());
+
+  const state = await page.evaluate(() => ({
+    error: window.__kyxosTestApi.getLastError(),
+    warnings: window.__kyxosTestApi.getWarnings(),
+  }));
+  expect(Math.min(...ratios), `camera-motion visible ratios: ${ratios.join(', ')}`).toBeGreaterThan(0.03);
+  expect(state.error).toBeNull();
+  expect(state.warnings.join('\n')).not.toContain('Render pipeline error');
+  expect(pageErrors).toEqual([]);
+});
+
 test.describe('full lifecycle acceptance', () => {
   test.skip(!process.env.FULL_ACCEPTANCE, 'Run with FULL_ACCEPTANCE=1 for the release gate.');
   test.setTimeout(20 * 60_000);
