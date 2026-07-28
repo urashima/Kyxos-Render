@@ -7,9 +7,25 @@ const dist = resolve(root, 'apps/playground/dist');
 const site = resolve(root, 'site');
 const latest = resolve(site, 'latest');
 const routes = [
-  'overview', 'pbr', 'buffers', 'aa', 'traa', 'temporal', 'gtao', 'ssao', 'ssr', 'ssgi',
-  'motion-blur', 'denoise', 'sharpness', 'lens-distortion', 'background', 'sparkle',
-  'full-stack', 'performance', 'lifecycle',
+  'overview',
+  'pbr',
+  'buffers',
+  'aa',
+  'traa',
+  'temporal',
+  'gtao',
+  'ssao',
+  'ssr',
+  'ssgi',
+  'motion-blur',
+  'denoise',
+  'sharpness',
+  'lens-distortion',
+  'background',
+  'sparkle',
+  'full-stack',
+  'performance',
+  'lifecycle',
 ];
 
 await rm(site, { recursive: true, force: true });

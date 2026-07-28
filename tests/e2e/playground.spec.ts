@@ -107,6 +107,51 @@ test('buffer views, AA exclusivity and lifecycle hooks remain callable', async (
   expect(result.error).toBeNull();
 });
 
+test('WebGL 2 rebuilt debug outputs remain visible', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'gpu', { configurable: true, value: undefined });
+  });
+  const pageErrors: string[] = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+
+  await page.goto('/overview/');
+  await page.waitForFunction(() => window.__kyxosTestApi?.ready());
+  await page.evaluate(() => {
+    window.__kyxosTestApi.setQuality('low');
+    window.__kyxosTestApi.setEffect('fxaa', { enabled: false });
+    window.__kyxosTestApi.setEffect('gtao', { enabled: false });
+  });
+  await page.waitForTimeout(1500);
+
+  const views = ['beauty', 'normal', 'diffuseColor', 'depth', 'velocity', 'metalness', 'roughness'] as const;
+  for (const view of views) {
+    await page.evaluate((nextView) => window.__kyxosTestApi.setDebugView(nextView), view);
+    await page.waitForTimeout(1200);
+    const pixels = await page.evaluate(async () => {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      const source = document.querySelector<HTMLCanvasElement>('#viewport');
+      if (!source) throw new Error('Viewport canvas not found.');
+      const copy = document.createElement('canvas');
+      copy.width = 96;
+      copy.height = 64;
+      const context = copy.getContext('2d', { willReadFrequently: true });
+      if (!context) throw new Error('2D verification context unavailable.');
+      context.drawImage(source, 0, 0, copy.width, copy.height);
+      const data = context.getImageData(0, 0, copy.width, copy.height).data;
+      let visible = 0;
+      for (let index = 0; index < data.length; index += 4) {
+        if (data[index] + data[index + 1] + data[index + 2] > 12 && data[index + 3] > 0) {
+          visible += 1;
+        }
+      }
+      return { visible, total: copy.width * copy.height };
+    });
+    expect(pixels.visible, `${view} visible pixels`).toBeGreaterThan(pixels.total * 0.02);
+  }
+  expect(pageErrors).toEqual([]);
+});
+
 test.describe('full lifecycle acceptance', () => {
   test.skip(!process.env.FULL_ACCEPTANCE, 'Run with FULL_ACCEPTANCE=1 for the release gate.');
   test.setTimeout(20 * 60_000);
