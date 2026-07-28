@@ -25,7 +25,6 @@ jobs:
           python scripts/fix-webgpu-test-escape.py
           python scripts/fix-ssr-env-sampling.py
           python scripts/fix-ssr-stochastic-fallback.py
-          python scripts/fix-beauty-pass-source.py
           python scripts/isolate-webgpu-effect-tests.py
           python scripts/collect-webgpu-matrix-results.py
           python scripts/fix-low-preset-baseline.py
