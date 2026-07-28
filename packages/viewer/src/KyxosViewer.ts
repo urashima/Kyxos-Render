@@ -42,7 +42,13 @@ import { smaa } from 'three/addons/tsl/display/SMAANode.js';
 import { lut3D } from 'three/addons/tsl/display/Lut3DNode.js';
 import { sharpen } from 'three/addons/tsl/display/SharpenNode.js';
 
-import { beforeAfterNode, createWarmLutTexture, gradualBackgroundNode, lensDistortionNode, sparkleNode } from './effects/customNodes';
+import {
+  beforeAfterNode,
+  createWarmLutTexture,
+  gradualBackgroundNode,
+  lensDistortionNode,
+  sparkleNode,
+} from './effects/customNodes';
 import { createQualityPreset, mergeEffectSettings } from './presets';
 import { createDefaultScene } from './scene/createDefaultScene';
 import type {
@@ -133,7 +139,9 @@ export class KyxosViewer extends EventTarget {
     this.autoStart = options.autoStart ?? true;
     this.quality = options.quality ?? 'high';
     this.effects = createQualityPreset(this.quality);
-    this.metrics.pixelRatio = clampPixelRatio(options.pixelRatio ?? Math.min(window.devicePixelRatio || 1, 1.5));
+    this.metrics.pixelRatio = clampPixelRatio(
+      options.pixelRatio ?? Math.min(window.devicePixelRatio || 1, 1.5),
+    );
   }
 
   private async initialize() {
@@ -218,7 +226,10 @@ export class KyxosViewer extends EventTarget {
       this.renderPipeline.render();
     } catch (error) {
       this.dispatchEvent(new CustomEvent('error', { detail: { error } }));
-      this.warn('pipeline', `Render pipeline error: ${error instanceof Error ? error.message : String(error)}`);
+      this.warn(
+        'pipeline',
+        `Render pipeline error: ${error instanceof Error ? error.message : String(error)}`,
+      );
       return;
     }
 
@@ -259,15 +270,23 @@ export class KyxosViewer extends EventTarget {
     const scenePass = pass(this.scene, this.camera);
     scenePass.name = 'Kyxos.SceneMRT';
     scenePass.options.samples = 0;
-    scenePass.setMRT(
-      mrt({
-        output,
-        normal: vec4(packNormalToRGB(normalView).rgb, materialRoughness),
-        diffuseColor: vec4(diffuseColor.rgb, materialMetalness),
-        velocity,
-        emissive: vec4(emissive.rgb, 1),
-      }),
-    );
+    const hasEmissiveAttachment = this.backend === 'webgpu';
+    const mrtOutputs: Record<string, any> = {
+      output,
+      normal: vec4(packNormalToRGB(normalView).rgb, materialRoughness),
+      diffuseColor: vec4(diffuseColor.rgb, materialMetalness),
+      velocity,
+    };
+    if (hasEmissiveAttachment) {
+      mrtOutputs.emissive = vec4(emissive.rgb, 1);
+      this.warnings.delete('webgl2-mrt');
+    } else {
+      this.warn(
+        'webgl2-mrt',
+        'WebGL 2 uses a four-attachment Scene MRT for guaranteed compatibility; emissive debug output is unavailable.',
+      );
+    }
+    scenePass.setMRT(mrt(mrtOutputs));
     this.nodes.push(scenePass);
 
     const beauty = scenePass.getTextureNode('output');
@@ -276,15 +295,17 @@ export class KyxosViewer extends EventTarget {
     const normalPacked = scenePass.getTextureNode('normal');
     const diffuseMetal = scenePass.getTextureNode('diffuseColor');
     const velocityNode = scenePass.getTextureNode('velocity');
-    const emissiveNode = scenePass.getTextureNode('emissive');
+    const emissiveNode = hasEmissiveAttachment ? scenePass.getTextureNode('emissive') : null;
     const viewZ = scenePass.getViewZNode();
 
     const normalTexture = scenePass.getTexture('normal');
     normalTexture.type = THREE.UnsignedByteType;
     const diffuseTexture = scenePass.getTexture('diffuseColor');
     diffuseTexture.type = THREE.UnsignedByteType;
-    const emissiveTexture = scenePass.getTexture('emissive');
-    emissiveTexture.type = THREE.UnsignedByteType;
+    if (hasEmissiveAttachment) {
+      const emissiveTexture = scenePass.getTexture('emissive');
+      emissiveTexture.type = THREE.UnsignedByteType;
+    }
 
     const sceneNormal = sample((uv: any) => unpackRGBToNormal(normalPacked.sample(uv).rgb));
     const metalRoughness = sample((uv: any) => vec2(diffuseMetal.sample(uv).a, normalPacked.sample(uv).a));
@@ -296,7 +317,7 @@ export class KyxosViewer extends EventTarget {
     this.debugNodes.set('diffuseColor', vec4(diffuseMetal.rgb, 1));
     this.debugNodes.set('metalness', vec4(vec3(diffuseMetal.a), 1));
     this.debugNodes.set('roughness', vec4(vec3(normalPacked.a), 1));
-    this.debugNodes.set('emissive', vec4(emissiveNode.rgb, 1));
+    this.debugNodes.set('emissive', hasEmissiveAttachment ? vec4(emissiveNode.rgb, 1) : vec4(0, 0, 0, 1));
 
     let source: any = beauty;
     const useSSAA = this.effects.ssaa.enabled;
@@ -356,7 +377,10 @@ export class KyxosViewer extends EventTarget {
           gi.giIntensity.value = Number(settings.intensity ?? 1);
           gi.resolutionScale = Number(settings.resolutionScale ?? 0.5);
           gi.useTemporalFiltering = settings.temporalFiltering !== false;
-          source = vec4(source.rgb.mul(gi.getAONode()).add(diffuseMetal.rgb.mul(gi.getGINode().rgb)), source.a);
+          source = vec4(
+            source.rgb.mul(gi.getAONode()).add(diffuseMetal.rgb.mul(gi.getGINode().rgb)),
+            source.a,
+          );
           this.nodes.push(gi);
         } catch (error) {
           this.effectFailure('ssgi', error);
@@ -366,7 +390,8 @@ export class KyxosViewer extends EventTarget {
       if (this.effects.ssr.enabled) {
         try {
           const settings = this.effects.ssr;
-          const ssrNode = ssr(source, depth, sceneNormal, {
+          // SSR internally samples its color input, so keep the original Scene Pass texture here.
+          const ssrNode = ssr(beauty, depth, sceneNormal, {
             camera: this.camera,
             stochastic: true,
             diffuseNode: diffuseMetal,
@@ -744,7 +769,8 @@ export class KyxosViewer extends EventTarget {
         if (!input) return [key, null] as const;
         if (typeof input !== 'string') return [key, input] as const;
         const texture = await textureLoader.loadAsync(input);
-        texture.colorSpace = key === 'baseColor' || key === 'emissive' ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+        texture.colorSpace =
+          key === 'baseColor' || key === 'emissive' ? THREE.SRGBColorSpace : THREE.NoColorSpace;
         texture.wrapS = THREE.RepeatWrapping;
         texture.wrapT = THREE.RepeatWrapping;
         this.materialTextures.add(texture);
@@ -754,7 +780,11 @@ export class KyxosViewer extends EventTarget {
     const textures = Object.fromEntries(entries) as Record<string, THREE.Texture | null>;
 
     this.modelRoot.traverse((object: any) => {
-      const materials = Array.isArray(object.material) ? object.material : object.material ? [object.material] : [];
+      const materials = Array.isArray(object.material)
+        ? object.material
+        : object.material
+          ? [object.material]
+          : [];
       for (const material of materials) {
         if (!material.isMeshStandardMaterial && !material.isMeshPhysicalMaterial) continue;
         if ('baseColor' in textures) material.map = textures.baseColor;
@@ -785,7 +815,11 @@ export class KyxosViewer extends EventTarget {
 
     this.renderPipeline.render();
     const blob = await new Promise<Blob>((resolve, reject) => {
-      this.canvas.toBlob((value) => (value ? resolve(value) : reject(new Error('Canvas capture failed.'))), mimeType, quality);
+      this.canvas.toBlob(
+        (value) => (value ? resolve(value) : reject(new Error('Canvas capture failed.'))),
+        mimeType,
+        quality,
+      );
     });
 
     if (scale !== 1) {
@@ -796,7 +830,10 @@ export class KyxosViewer extends EventTarget {
     return blob;
   }
 
-  async runStressTest(name: 'resize' | 'toggle' | 'model' | 'environment', iterations: number): Promise<StressResult> {
+  async runStressTest(
+    name: 'resize' | 'toggle' | 'model' | 'environment',
+    iterations: number,
+  ): Promise<StressResult> {
     const before = this.getMetrics();
     const started = performance.now();
 
