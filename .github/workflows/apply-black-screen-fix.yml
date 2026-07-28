@@ -3,12 +3,15 @@ name: Apply isolated black-screen fix
 on:
   push:
     branches: ['agent/fix-black-mrt-ssr']
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: write
 
 jobs:
   patch-verify-publish:
+    if: github.head_ref == 'agent/fix-black-mrt-ssr' || github.ref == 'refs/heads/agent/fix-black-mrt-ssr'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
