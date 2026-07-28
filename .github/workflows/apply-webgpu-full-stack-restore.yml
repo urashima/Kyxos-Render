@@ -25,6 +25,7 @@ jobs:
           python scripts/fix-webgpu-test-escape.py
           python scripts/fix-ssr-env-sampling.py
           python scripts/fix-ssr-stochastic-fallback.py
+          python scripts/fix-beauty-pass-source.py
           python scripts/isolate-webgpu-effect-tests.py
           python scripts/fix-low-preset-baseline.py
           python scripts/fix-low-preset-test.py
@@ -71,9 +72,9 @@ jobs:
       - name: Commit verified full stack restoration
         shell: bash
         run: |
-          rm .github/workflows/apply-webgpu-full-stack-restore.yml scripts/apply-webgpu-full-stack-restore.py scripts/fix-webgpu-test-escape.py scripts/fix-ssr-env-sampling.py scripts/fix-ssr-stochastic-fallback.py scripts/isolate-webgpu-effect-tests.py scripts/fix-low-preset-baseline.py scripts/fix-low-preset-test.py
+          rm .github/workflows/apply-webgpu-full-stack-restore.yml scripts/apply-webgpu-full-stack-restore.py scripts/fix-webgpu-test-escape.py scripts/fix-ssr-env-sampling.py scripts/fix-ssr-stochastic-fallback.py scripts/fix-beauty-pass-source.py scripts/isolate-webgpu-effect-tests.py scripts/fix-low-preset-baseline.py scripts/fix-low-preset-test.py
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add packages/viewer/src/KyxosViewer.ts packages/viewer/src/presets.ts playwright.config.ts tests/unit/presets.test.ts tests/e2e/webgpu.spec.ts .github/workflows/apply-webgpu-full-stack-restore.yml scripts/apply-webgpu-full-stack-restore.py scripts/fix-webgpu-test-escape.py scripts/fix-ssr-env-sampling.py scripts/fix-ssr-stochastic-fallback.py scripts/isolate-webgpu-effect-tests.py scripts/fix-low-preset-baseline.py scripts/fix-low-preset-test.py
+          git add packages/viewer/src/KyxosViewer.ts packages/viewer/src/presets.ts playwright.config.ts tests/unit/presets.test.ts tests/e2e/webgpu.spec.ts .github/workflows/apply-webgpu-full-stack-restore.yml scripts/apply-webgpu-full-stack-restore.py scripts/fix-webgpu-test-escape.py scripts/fix-ssr-env-sampling.py scripts/fix-ssr-stochastic-fallback.py scripts/fix-beauty-pass-source.py scripts/isolate-webgpu-effect-tests.py scripts/fix-low-preset-baseline.py scripts/fix-low-preset-test.py
           git commit -m "fix: restore full WebGPU post-processing stack"
           git push origin HEAD:agent/fix-black-mrt-ssr
