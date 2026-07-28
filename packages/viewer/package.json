@@ -1,0 +1,19 @@
+{
+  "name": "@kyxos/viewer",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "three": "github:mrdoob/three.js#3cc8908cad65fe9a75c4fcf29c4f897c593443d5"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3"
+  }
+}
