@@ -10,9 +10,8 @@ needle = """  if (name === 'low') {
   }
 """
 replacement = """  if (name === 'low') {
-    // Low is the deterministic single-pass AA baseline. GTAO remains available
-    // independently and is enabled by the higher quality presets.
-    state.fxaa.enabled = true;
+    // Low is the deterministic plain Beauty baseline. Every post effect is
+    // validated independently before being assigned to a shipping preset.
     return state;
   }
 """
