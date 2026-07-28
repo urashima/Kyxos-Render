@@ -1,0 +1,49 @@
+name: Apply official prepass repair
+
+on:
+  pull_request:
+    branches: [main]
+    types: [reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  patch-verify-publish:
+    if: ${{ github.head_ref == 'agent/fix-black-mrt-ssr' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/fix-black-mrt-ssr
+          fetch-depth: 0
+
+      - run: python scripts/apply-official-prepass-fix.py
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: pnpm install --no-frozen-lockfile
+      - run: pnpm format
+      - run: pnpm verify
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: Verify visible final and Beauty outputs
+        run: pnpm test:e2e --grep "WebGL 2 medium mode renders visible final pixels"
+        env:
+          CI: true
+
+      - name: Commit verified repair and remove bootstrap files
+        shell: bash
+        run: |
+          rm .github/workflows/apply-official-prepass-fix.yml scripts/apply-official-prepass-fix.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/viewer/src/KyxosViewer.ts packages/viewer/src/scene/createDefaultScene.ts tests/e2e/playground.spec.ts .github/workflows/apply-official-prepass-fix.yml scripts/apply-official-prepass-fix.py
+          git commit -m "fix: separate beauty from official material prepass"
+          git push origin HEAD:agent/fix-black-mrt-ssr
