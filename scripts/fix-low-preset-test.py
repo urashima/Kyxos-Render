@@ -6,8 +6,9 @@ needle = """    expect(preset.fxaa.enabled || preset.smaa.enabled).toBe(true);
     expect(preset.gtao.enabled).toBe(true);
     expect(preset.gtao.resolutionScale).toBe(0.5);
 """
-replacement = """    expect(preset.fxaa.enabled).toBe(true);
+replacement = """    expect(preset.fxaa.enabled).toBe(false);
     expect(preset.smaa.enabled).toBe(false);
+    expect(preset.traa.enabled).toBe(false);
     expect(preset.gtao.enabled).toBe(false);
 """
 if text.count(needle) != 1:
