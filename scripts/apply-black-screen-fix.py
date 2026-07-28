@@ -61,10 +61,13 @@ visual_test = """test('WebGL 2 medium mode renders visible final pixels', async 
     if (message.type() === 'error') consoleErrors.push(message.text());
   });
 
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'gpu', { configurable: true, value: undefined });
+  });
   await page.goto('/overview/');
   await page.waitForFunction(() => window.__kyxosTestApi?.ready(), null, { timeout: 90_000 });
-  await page.selectOption('#backend-select', 'webgl2');
-  await page.waitForFunction(() => window.__kyxosTestApi?.ready(), null, { timeout: 90_000 });
+  const backend = await page.evaluate(() => window.__kyxosTestApi.getMetrics()?.backend);
+  expect(backend).toBe('webgl2');
   await page.waitForTimeout(750);
 
   const pixels = await page.evaluate(async () => {
