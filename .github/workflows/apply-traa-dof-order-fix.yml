@@ -23,6 +23,7 @@ jobs:
         run: |
           python scripts/apply-traa-dof-order-fix.py
           python scripts/fix-traa-dof-regression-readback.py
+          python scripts/fix-traa-dof-regression-viewport.py
 
       - uses: pnpm/action-setup@v4
         with:
@@ -57,11 +58,13 @@ jobs:
         run: |
           rm .github/workflows/apply-traa-dof-order-fix.yml \
             scripts/apply-traa-dof-order-fix.py \
-            scripts/fix-traa-dof-regression-readback.py
+            scripts/fix-traa-dof-regression-readback.py \
+            scripts/fix-traa-dof-regression-viewport.py
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add packages/viewer/src/KyxosViewer.ts tests/e2e/playground.spec.ts \
             .github/workflows/apply-traa-dof-order-fix.yml \
-            scripts/apply-traa-dof-order-fix.py scripts/fix-traa-dof-regression-readback.py
+            scripts/apply-traa-dof-order-fix.py scripts/fix-traa-dof-regression-readback.py \
+            scripts/fix-traa-dof-regression-viewport.py
           git commit -m "fix: stabilize TRAA with depth of field during camera motion"
           git push origin HEAD:agent/fix-traa-dof-camera-flash
