@@ -1,0 +1,62 @@
+name: Apply TRAA DoF camera-motion fix
+
+on:
+  pull_request:
+    branches: [main]
+    types: [reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  apply-verify-publish:
+    if: ${{ github.head_ref == 'agent/fix-traa-dof-camera-flash' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/fix-traa-dof-camera-flash
+          fetch-depth: 0
+
+      - name: Apply ordering fix and regression
+        run: python scripts/apply-traa-dof-order-fix.py
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: pnpm install --no-frozen-lockfile
+      - run: pnpm format
+      - run: pnpm verify
+      - run: pnpm exec playwright install --with-deps chromium
+
+      - name: Verify camera-motion regression
+        run: pnpm exec playwright test tests/e2e/playground.spec.ts --project=chromium --grep "TRAA and depth of field stay visible while the camera moves"
+        env:
+          CI: true
+
+      - name: Upload diagnostics
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: traa-dof-camera-flash-diagnostics
+          if-no-files-found: ignore
+          path: |
+            test-results
+            playwright-report
+
+      - name: Commit verified fix and remove bootstrap files
+        shell: bash
+        run: |
+          rm .github/workflows/apply-traa-dof-order-fix.yml scripts/apply-traa-dof-order-fix.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/viewer/src/KyxosViewer.ts tests/e2e/playground.spec.ts \
+            .github/workflows/apply-traa-dof-order-fix.yml scripts/apply-traa-dof-order-fix.py
+          git commit -m "fix: stabilize TRAA with depth of field during camera motion"
+          git push origin HEAD:agent/fix-traa-dof-camera-flash
