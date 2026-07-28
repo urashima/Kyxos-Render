@@ -12,7 +12,7 @@ jobs:
   restore-verify-publish:
     if: ${{ github.head_ref == 'agent/fix-black-mrt-ssr' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:
@@ -25,6 +25,7 @@ jobs:
           python scripts/fix-webgpu-test-escape.py
           python scripts/fix-ssr-env-sampling.py
           python scripts/fix-ssr-stochastic-fallback.py
+          python scripts/isolate-webgpu-effect-tests.py
 
       - uses: pnpm/action-setup@v4
         with:
@@ -68,9 +69,9 @@ jobs:
       - name: Commit verified full stack restoration
         shell: bash
         run: |
-          rm .github/workflows/apply-webgpu-full-stack-restore.yml scripts/apply-webgpu-full-stack-restore.py scripts/fix-webgpu-test-escape.py scripts/fix-ssr-env-sampling.py scripts/fix-ssr-stochastic-fallback.py
+          rm .github/workflows/apply-webgpu-full-stack-restore.yml scripts/apply-webgpu-full-stack-restore.py scripts/fix-webgpu-test-escape.py scripts/fix-ssr-env-sampling.py scripts/fix-ssr-stochastic-fallback.py scripts/isolate-webgpu-effect-tests.py
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add packages/viewer/src/KyxosViewer.ts playwright.config.ts tests/e2e/webgpu.spec.ts .github/workflows/apply-webgpu-full-stack-restore.yml scripts/apply-webgpu-full-stack-restore.py scripts/fix-webgpu-test-escape.py scripts/fix-ssr-env-sampling.py scripts/fix-ssr-stochastic-fallback.py
+          git add packages/viewer/src/KyxosViewer.ts playwright.config.ts tests/e2e/webgpu.spec.ts .github/workflows/apply-webgpu-full-stack-restore.yml scripts/apply-webgpu-full-stack-restore.py scripts/fix-webgpu-test-escape.py scripts/fix-ssr-env-sampling.py scripts/fix-ssr-stochastic-fallback.py scripts/isolate-webgpu-effect-tests.py
           git commit -m "fix: restore full WebGPU post-processing stack"
           git push origin HEAD:agent/fix-black-mrt-ssr
