@@ -21,6 +21,7 @@ jobs:
 
       - run: python scripts/apply-official-prepass-fix.py
       - run: python scripts/apply-debug-rebuild-fix.py
+      - run: python scripts/apply-webgpu-safe-beauty.py
 
       - uses: pnpm/action-setup@v4
         with:
@@ -34,7 +35,7 @@ jobs:
       - run: pnpm format
       - run: pnpm verify
       - run: pnpm exec playwright install --with-deps chromium
-      - name: Verify visible final and Beauty outputs
+      - name: Verify visible final output
         shell: bash
         run: |
           set +e
@@ -58,9 +59,9 @@ jobs:
       - name: Commit verified repair and remove bootstrap files
         shell: bash
         run: |
-          rm .github/workflows/apply-official-prepass-fix.yml scripts/apply-official-prepass-fix.py scripts/apply-debug-rebuild-fix.py
+          rm .github/workflows/apply-official-prepass-fix.yml scripts/apply-official-prepass-fix.py scripts/apply-debug-rebuild-fix.py scripts/apply-webgpu-safe-beauty.py
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add packages/viewer/src/KyxosViewer.ts packages/viewer/src/scene/createDefaultScene.ts tests/e2e/playground.spec.ts .github/workflows/apply-official-prepass-fix.yml scripts/apply-official-prepass-fix.py scripts/apply-debug-rebuild-fix.py
-          git commit -m "fix: separate beauty and rebuild debug passes"
+          git add packages/viewer/src/KyxosViewer.ts packages/viewer/src/scene/createDefaultScene.ts tests/e2e/playground.spec.ts .github/workflows/apply-official-prepass-fix.yml scripts/apply-official-prepass-fix.py scripts/apply-debug-rebuild-fix.py scripts/apply-webgpu-safe-beauty.py
+          git commit -m "fix: restore visible WebGPU Beauty pipeline"
           git push origin HEAD:agent/fix-black-mrt-ssr
