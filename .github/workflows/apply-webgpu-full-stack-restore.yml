@@ -25,6 +25,7 @@ jobs:
           python scripts/fix-webgpu-test-escape.py
           python scripts/fix-ssr-env-sampling.py
           python scripts/fix-ssr-stochastic-fallback.py
+          python scripts/fix-finalizer-test-anchor.py
           python scripts/finalize-hardware-restoration.py
 
       - uses: pnpm/action-setup@v4
@@ -70,6 +71,7 @@ jobs:
             scripts/collect-webgpu-matrix-results.py \
             scripts/fix-low-preset-baseline.py \
             scripts/fix-low-preset-test.py \
+            scripts/fix-finalizer-test-anchor.py \
             scripts/finalize-hardware-restoration.py
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
