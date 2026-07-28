@@ -27,6 +27,7 @@ jobs:
           python scripts/fix-ssr-stochastic-fallback.py
           python scripts/fix-finalizer-test-anchor.py
           python scripts/finalize-hardware-restoration.py
+          python scripts/fix-dedicated-debug-pipeline.py
 
       - uses: pnpm/action-setup@v4
         with:
@@ -72,7 +73,8 @@ jobs:
             scripts/fix-low-preset-baseline.py \
             scripts/fix-low-preset-test.py \
             scripts/fix-finalizer-test-anchor.py \
-            scripts/finalize-hardware-restoration.py
+            scripts/finalize-hardware-restoration.py \
+            scripts/fix-dedicated-debug-pipeline.py
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add packages/viewer/src/KyxosViewer.ts playwright.config.ts tests/e2e/playground.spec.ts tests/e2e/webgpu.spec.ts \
