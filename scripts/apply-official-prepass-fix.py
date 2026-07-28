@@ -93,7 +93,7 @@ new_passes = """    // Keep the lit beauty pass independent from material-data M
     const beauty = scenePass.getTextureNode('output');
     const viewZ = scenePass.getViewZNode();
 
-    this.debugNodes.set('beauty', renderOutput(beauty));
+    this.debugNodes.set('beauty', scenePass);
     this.debugNodes.set('depth', vec4(vec3(linearDepth), 1));
     this.debugNodes.set('velocity', vec4(velocityNode.xy.mul(8).add(0.5), 0, 1));
     this.debugNodes.set('normal', vec4(normalPacked.rgb, 1));
@@ -136,8 +136,6 @@ if grid_block not in scene:
 scene = scene.replace(grid_block, '', 1)
 scene_path.write_text(scene)
 
-# Strengthen the existing browser gate: the raw Beauty output must also contain
-# visible pixels, not only the final post-processed output.
 test_path = Path('tests/e2e/playground.spec.ts')
 tests = test_path.read_text()
 needle = """  expect(pixels.visible).toBeGreaterThan(pixels.total * 0.1);
