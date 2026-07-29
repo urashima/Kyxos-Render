@@ -195,6 +195,7 @@ export class KyxosViewer extends EventTarget {
       antialias: false,
       forceWebGL: this.backendPreference === 'webgl2',
       trackTimestamp: true,
+      preserveDrawingBuffer: true,
     } as any);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
