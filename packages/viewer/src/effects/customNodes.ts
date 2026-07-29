@@ -1,4 +1,9 @@
-import { Data3DTexture, LinearFilter, RGBAFormat, UnsignedByteType } from 'three/webgpu';
+import {
+  Data3DTexture,
+  LinearFilter,
+  RGBAFormat,
+  UnsignedByteType,
+} from 'three/webgpu';
 import {
   Fn,
   abs,
@@ -40,11 +45,7 @@ export function sparkleNode(source: any, intensity: any, threshold: any) {
     const base = textureNode.sample(screenUV).toVar();
     const luma = dot(base.rgb, vec3(0.2126, 0.7152, 0.0722)).saturate();
     const cell = screenUV.mul(vec2(920, 520)).floor();
-    const noise = fract(
-      sin(dot(cell, vec2(12.9898, 78.233)))
-        .mul(43758.5453)
-        .add(time.mul(0.75)),
-    );
+    const noise = fract(sin(dot(cell, vec2(12.9898, 78.233))).mul(43758.5453).add(time.mul(0.75)));
     const gate = step(threshold, noise.mul(luma.pow(5)));
     const horizontal = smoothstep(0.035, 0, abs(fract(screenUV.x.mul(920)).sub(0.5)));
     const vertical = smoothstep(0.035, 0, abs(fract(screenUV.y.mul(520)).sub(0.5)));

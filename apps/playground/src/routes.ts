@@ -30,8 +30,7 @@ export const demoRoutes: DemoRoute[] = [
     slug: 'buffers',
     title: 'Scene MRT Buffers',
     eyebrow: 'Debug Views',
-    description:
-      'Beauty, depth, velocity, normal, diffuse, metalness, roughness and emissive from one official pass().',
+    description: 'Beauty, depth, velocity, normal, diffuse, metalness, roughness and emissive from one official pass().',
     quality: 'low',
     debugView: 'normal',
   },
@@ -56,8 +55,7 @@ export const demoRoutes: DemoRoute[] = [
     slug: 'temporal',
     title: 'Temporal Reprojection',
     eyebrow: 'History Reset',
-    description:
-      'Official TemporalReprojectNode and unified reset behavior for cuts, resize and asset changes.',
+    description: 'Official TemporalReprojectNode and unified reset behavior for cuts, resize and asset changes.',
     quality: 'high',
     focus: 'temporalReprojection',
   },
@@ -130,8 +128,7 @@ export const demoRoutes: DemoRoute[] = [
     slug: 'background',
     title: 'Gradual Background',
     eyebrow: 'Scene Background TSL',
-    description:
-      'A TSL gradient is assigned directly to Scene.backgroundNode while environment lighting remains HDR.',
+    description: 'A TSL gradient is assigned directly to Scene.backgroundNode while environment lighting remains HDR.',
     quality: 'medium',
     focus: 'gradualBackground',
   },
@@ -155,8 +152,7 @@ export const demoRoutes: DemoRoute[] = [
     slug: 'performance',
     title: 'Performance Telemetry',
     eyebrow: 'Renderer Metrics',
-    description:
-      'FPS, CPU/GPU timing, draw calls, triangles, textures, render targets and tracked GPU bytes.',
+    description: 'FPS, CPU/GPU timing, draw calls, triangles, textures, render targets and tracked GPU bytes.',
     quality: 'medium',
   },
   {
