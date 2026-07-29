@@ -27,7 +27,11 @@ describe('render activity state machine', () => {
     expect(machine.getStaticSampleCount()).toBe(3);
     render(machine);
     expect(machine.getState()).toBe('sleeping');
-    expect(machine.snapshot(false).pendingAnimationFrame).toBe(false);
+    expect(machine.snapshot(false)).toMatchObject({
+      reason: 'converged',
+      staticSampleCount: 3,
+      pendingAnimationFrame: false,
+    });
   });
 
   it('skips static accumulation when TRAA is unavailable', () => {
@@ -39,6 +43,11 @@ describe('render activity state machine', () => {
     render(machine, false);
     render(machine, false);
     expect(machine.getState()).toBe('sleeping');
+    expect(machine.snapshot(false)).toMatchObject({
+      reason: 'converged-without-static-mean',
+      staticSampleCount: 1,
+      pendingAnimationFrame: false,
+    });
   });
 
   it('wakes from sleep on dirty activity and remains interactive during animation', () => {
