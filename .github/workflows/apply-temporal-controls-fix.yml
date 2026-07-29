@@ -1,8 +1,9 @@
 name: Apply temporal controls fix
 
 on:
-  push:
-    branches: [agent/fix-temporal-controls-no-effect]
+  pull_request:
+    branches: [main]
+    types: [reopened, synchronize]
 
 permissions:
   contents: write
@@ -13,6 +14,7 @@ concurrency:
 
 jobs:
   apply-verify-publish:
+    if: ${{ github.head_ref == 'agent/fix-temporal-controls-no-effect' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
