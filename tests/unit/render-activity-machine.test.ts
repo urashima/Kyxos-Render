@@ -12,6 +12,9 @@ function render(machine: RenderActivityMachine, hasStaticAccumulator = true) {
 
 describe('render activity state machine', () => {
   it('uses the shipped convergence budgets by default', () => {
+    expect(DEFAULT_STABILIZATION_FRAMES).toBe(8);
+    expect(DEFAULT_ACCUMULATION_FRAMES).toBe(32);
+
     const machine = new RenderActivityMachine();
     expect(machine.stabilizationFrames).toBe(DEFAULT_STABILIZATION_FRAMES);
     expect(machine.accumulationFrames).toBe(DEFAULT_ACCUMULATION_FRAMES);
