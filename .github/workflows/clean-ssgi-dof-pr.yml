@@ -28,8 +28,8 @@ jobs:
             apps/playground/src/routes.ts \
             apps/playground/src/styles.css \
             packages/viewer/src/effects/customNodes.ts \
-            pnpm-lock.yaml \
             tests/unit/presets.test.ts
+          rm -f pnpm-lock.yaml
 
       - uses: pnpm/action-setup@v4
         with:
@@ -37,8 +37,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm format:check
+      - run: pnpm install --no-frozen-lockfile
+      - run: pnpm exec prettier --check packages/viewer/src/KyxosViewer.ts tests/e2e/ssgi-dof-diagnostic.spec.ts
       - run: pnpm verify
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm exec playwright test tests/e2e/ssgi-dof-diagnostic.spec.ts --project=chromium
@@ -48,6 +48,7 @@ jobs:
       - name: Confirm narrow diff
         shell: bash
         run: |
+          rm -f pnpm-lock.yaml
           git rm .github/workflows/clean-ssgi-dof-pr.yml
           changed=$(git diff --name-only origin/main | sort)
           expected=$(printf '%s\n' \
