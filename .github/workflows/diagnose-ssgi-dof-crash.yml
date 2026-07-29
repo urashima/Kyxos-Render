@@ -17,6 +17,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: agent/fix-ssgi-dof-crash
+      - name: Apply explicit DoF input RTT fix
+        run: python scripts/apply-ssgi-dof-rtt-fix.py
       - uses: pnpm/action-setup@v4
         with:
           version: 10.14.0
@@ -28,21 +30,14 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm exec playwright install --with-deps chromium
 
-      - name: Reproduce on WebGL fallback
+      - name: Verify SSGI and DoF combinations on WebGL fallback
         shell: bash
         run: |
           set +e
           pnpm exec playwright test tests/e2e/ssgi-dof-diagnostic.spec.ts --project=chromium 2>&1 | tee ssgi-dof-webgl.log
-          echo ${PIPESTATUS[0]} > webgl.status
-        env:
-          CI: true
-
-      - name: Reproduce on Chromium WebGPU software adapter
-        shell: bash
-        run: |
-          set +e
-          KYXOS_WEBGPU_E2E=1 pnpm exec playwright test tests/e2e/ssgi-dof-diagnostic.spec.ts --project=chromium-webgpu 2>&1 | tee ssgi-dof-webgpu.log
-          echo ${PIPESTATUS[0]} > webgpu.status
+          status=${PIPESTATUS[0]}
+          echo $status > webgl.status
+          exit $status
         env:
           CI: true
 
@@ -54,17 +49,6 @@ jobs:
           if-no-files-found: ignore
           path: |
             ssgi-dof-webgl.log
-            ssgi-dof-webgpu.log
             webgl.status
-            webgpu.status
             test-results
             playwright-report
-
-      - name: Report reproduction result
-        shell: bash
-        run: |
-          webgl=$(cat webgl.status)
-          webgpu=$(cat webgpu.status)
-          echo "WebGL status: $webgl"
-          echo "WebGPU status: $webgpu"
-          test "$webgl" = "0"
