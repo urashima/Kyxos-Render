@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { createQualityPreset, enforceEffectRules, mergeEffectSettings } from '../../packages/viewer/src/presets';
+import {
+  createQualityPreset,
+  enforceEffectRules,
+  mergeEffectSettings,
+} from '../../packages/viewer/src/presets';
 
 describe('quality presets', () => {
   it('matches the required low preset', () => {
@@ -41,5 +45,29 @@ describe('quality presets', () => {
     const result = enforceEffectRules(state, 'ssgi');
     expect(result.traa.enabled).toBe(true);
     expect(result.fxaa.enabled).toBe(false);
+  });
+
+  it('builds the required SSR temporal dependency chain', () => {
+    let state = createQualityPreset('low');
+    state = mergeEffectSettings(state, 'temporalReprojection', { enabled: true });
+    expect(state.ssr.enabled).toBe(true);
+    expect(state.temporalReprojection.enabled).toBe(true);
+    expect(state.temporalDenoise.enabled).toBe(false);
+
+    state = mergeEffectSettings(state, 'temporalDenoise', { enabled: true });
+    expect(state.ssr.enabled).toBe(true);
+    expect(state.temporalReprojection.enabled).toBe(true);
+    expect(state.temporalDenoise.enabled).toBe(true);
+  });
+
+  it('removes dependent temporal filters when their parent is disabled', () => {
+    let state = createQualityPreset('high');
+    state = mergeEffectSettings(state, 'temporalReprojection', { enabled: false });
+    expect(state.temporalDenoise.enabled).toBe(false);
+    expect(state.ssr.enabled).toBe(true);
+
+    state = mergeEffectSettings(createQualityPreset('high'), 'ssr', { enabled: false });
+    expect(state.temporalReprojection.enabled).toBe(false);
+    expect(state.temporalDenoise.enabled).toBe(false);
   });
 });

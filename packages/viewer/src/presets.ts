@@ -25,9 +25,28 @@ const disabled = (): EffectsState => ({
     intensity: 1,
     temporalFiltering: true,
   },
-  temporalReprojection: { enabled: false, strength: 1 },
+  temporalReprojection: {
+    enabled: false,
+    maxFrames: 16,
+    clampIntensity: 0.25,
+    flickerSuppression: 1,
+    hitPointReprojection: true,
+  },
   poissonDenoise: { enabled: false, radius: 2, strength: 1 },
-  temporalDenoise: { enabled: false, radius: 1.5, strength: 0.725 },
+  temporalDenoise: {
+    enabled: false,
+    radius: 1.5,
+    strength: 0.725,
+    lumaPhi: 0.75,
+    depthPhi: 20,
+    normalPhi: 0.3,
+    roughnessPhi: 100,
+    alphaPhi: 5,
+    adapt: 0.5,
+    smoothDisocclusions: true,
+    flickerSuppression: 1,
+    adaptiveTrust: 1,
+  },
   motionBlur: { enabled: false, amount: 1 },
   bloom: { enabled: false, threshold: 0.75, strength: 0.5, radius: 0.2 },
   dof: { enabled: false, focusDistance: 4, focalLength: 45, bokehScale: 1.5 },
@@ -127,6 +146,21 @@ export function enforceEffectRules(state: EffectsState, changed?: EffectName): E
     next.fxaa.enabled = false;
     next.smaa.enabled = false;
     next.ssaa.enabled = false;
+  }
+
+  // TemporalReprojectNode and RecurrentDenoiseNode are SSR filters, not
+  // independent full-frame post effects. Keep the public switches honest by
+  // establishing the required chain automatically.
+  if (changed === 'ssr' && !next.ssr.enabled) {
+    next.temporalReprojection.enabled = false;
+    next.temporalDenoise.enabled = false;
+  } else {
+    if (changed === 'temporalReprojection' && !next.temporalReprojection.enabled) {
+      next.temporalDenoise.enabled = false;
+    }
+    if (next.temporalDenoise.enabled) next.temporalReprojection.enabled = true;
+    if (next.temporalReprojection.enabled) next.ssr.enabled = true;
+    if (!next.temporalReprojection.enabled) next.temporalDenoise.enabled = false;
   }
 
   if (next.ssaa.enabled) {
