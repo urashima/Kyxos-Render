@@ -6,6 +6,7 @@ import {
   type EffectSettings,
   type EffectsState,
   type QualityPresetName,
+  type ViewerActivitySnapshot,
   type StressResult,
   type StressTestName,
   type ViewerMetrics,
@@ -140,6 +141,7 @@ app.innerHTML = `
       </div>
       <div class="viewport-toolbar">
         <span class="backend-pill" id="backend-pill">Initializing</span>
+        <span class="backend-pill" id="activity-pill" data-state="interactive">Interactive</span>
         <select class="select" id="quality-select" aria-label="Quality preset">
           ${(['low', 'medium', 'high', 'cinematic', 'capture'] as QualityPresetName[])
             .map(
@@ -256,6 +258,7 @@ app.innerHTML = `
 const canvas = document.querySelector<HTMLCanvasElement>('#viewport');
 const loading = document.querySelector<HTMLDivElement>('#loading');
 const backendPill = document.querySelector<HTMLSpanElement>('#backend-pill');
+const activityPill = document.querySelector<HTMLSpanElement>('#activity-pill');
 const qualitySelect = document.querySelector<HTMLSelectElement>('#quality-select');
 const debugSelect = document.querySelector<HTMLSelectElement>('#debug-select');
 const backendSelect = document.querySelector<HTMLSelectElement>('#backend-select');
@@ -269,6 +272,7 @@ if (
   !canvas ||
   !loading ||
   !backendPill ||
+  !activityPill ||
   !qualitySelect ||
   !debugSelect ||
   !backendSelect ||
@@ -309,6 +313,31 @@ function updateMetrics(metrics: ViewerMetrics) {
   const resolution = document.querySelector<HTMLElement>('#resolution-label');
   if (resolution) resolution.textContent = `${metrics.width}×${metrics.height}`;
   backendPill.textContent = metrics.backend;
+}
+
+function updateActivity(activity: ViewerActivitySnapshot) {
+  const labels = {
+    interactive: 'Interactive',
+    stabilizing: 'Stabilizing',
+    accumulating: 'Accumulating',
+    sleeping: 'Sleeping',
+  } as const;
+  const progress =
+    activity.state === 'stabilizing'
+      ? ` ${activity.stabilizationFrame}/${activity.stabilizationFrames}`
+      : activity.state === 'accumulating'
+        ? ` ${activity.staticSampleCount}/${activity.accumulationFrames}`
+        : '';
+  activityPill.textContent = `${labels[activity.state]}${progress}`;
+  activityPill.dataset.state = activity.state;
+  activityPill.title =
+    activity.state === 'interactive'
+      ? 'Camera, animation, or dirty activity'
+      : activity.state === 'stabilizing'
+        ? 'Interaction ended; temporal history prepares'
+        : activity.state === 'accumulating'
+          ? 'Dynamic TRAA feeds the static HDR mean'
+          : 'Converged; no requestAnimationFrame is pending';
 }
 
 function updateWarnings() {
@@ -434,6 +463,9 @@ async function createViewer(backend: BackendPreference = selectedBackend) {
     instance.addEventListener('metrics', (event) =>
       updateMetrics((event as CustomEvent<ViewerMetrics>).detail),
     );
+    instance.addEventListener('activity-state', (event) =>
+      updateActivity((event as CustomEvent<ViewerActivitySnapshot>).detail),
+    );
     instance.addEventListener('warning', updateWarnings);
     instance.addEventListener('error', (event) => {
       const detail = (event as CustomEvent<{ error: unknown }>).detail;
@@ -444,6 +476,7 @@ async function createViewer(backend: BackendPreference = selectedBackend) {
     renderParameterControls();
     updateWarnings();
     updateMetrics(instance.getMetrics());
+    updateActivity(instance.getActivityState());
     loading.classList.add('hidden');
   } catch (error) {
     lastError = error instanceof Error ? error.message : String(error);
@@ -587,12 +620,14 @@ document.querySelector<HTMLButtonElement>('#recreate-stress')?.addEventListener(
 type TestApi = {
   ready: () => boolean;
   getMetrics: () => ViewerMetrics | null;
+  getActivity: () => ViewerActivitySnapshot | null;
   getEffects: () => EffectsState | null;
   getWarnings: () => string[];
   getLastError: () => string | null;
   setQuality: (quality: QualityPresetName) => void;
   setEffect: (name: EffectName, settings: Partial<EffectSettings>) => void;
   setDebugView: (view: DebugView) => void;
+  setAnimation: (enabled: boolean) => void;
   runStress: (name: StressTestName, count: number) => Promise<StressResult>;
   recreate: (count: number) => Promise<{ name: string; passed: boolean; durationMs: number; note?: string }>;
 };
@@ -606,12 +641,14 @@ declare global {
 window.__kyxosTestApi = {
   ready: () => viewer !== null && loading.classList.contains('hidden'),
   getMetrics: () => viewer?.getMetrics() ?? null,
+  getActivity: () => viewer?.getActivityState() ?? null,
   getEffects: () => viewer?.getEffects() ?? null,
   getWarnings: () => viewer?.getWarnings() ?? [],
   getLastError: () => lastError,
   setQuality: (quality) => viewer?.setQualityPreset(quality),
   setEffect: (name, settings) => viewer?.setEffect(name, settings),
   setDebugView: (view) => viewer?.setDebugView(view),
+  setAnimation: (enabled) => viewer?.setAnimationEnabled(enabled),
   runStress: async (name, count) => {
     if (!viewer) throw new Error('Viewer is not ready.');
     return viewer.runStressTest(name, count);

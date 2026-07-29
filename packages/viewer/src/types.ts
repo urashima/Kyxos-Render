@@ -2,6 +2,7 @@ import type { Texture } from 'three/webgpu';
 
 export type BackendPreference = 'auto' | 'webgpu' | 'webgl2';
 export type BackendName = 'webgpu' | 'webgl2';
+export type RenderActivityState = 'interactive' | 'stabilizing' | 'accumulating' | 'sleeping';
 export type QualityPresetName = 'low' | 'medium' | 'high' | 'cinematic' | 'capture';
 export type DebugView =
   | 'final'
@@ -78,6 +79,19 @@ export interface MaterialTextureInputs {
   emissive?: TextureInput;
 }
 
+export interface ViewerActivitySnapshot {
+  state: RenderActivityState;
+  reason: string;
+  stabilizationFrame: number;
+  stabilizationFrames: number;
+  accumulationFrame: number;
+  accumulationFrames: number;
+  staticSampleCount: number;
+  pendingAnimationFrame: boolean;
+  interactionActive: boolean;
+  animationActive: boolean;
+}
+
 export interface ViewerMetrics {
   backend: BackendName;
   fps: number;
@@ -116,6 +130,7 @@ export interface StressResult {
 export interface ViewerEventMap {
   ready: CustomEvent<ViewerMetrics>;
   metrics: CustomEvent<ViewerMetrics>;
+  'activity-state': CustomEvent<ViewerActivitySnapshot>;
   warning: CustomEvent<{ effect?: EffectName; message: string }>;
   error: CustomEvent<{ effect?: EffectName; error: unknown }>;
   disposed: CustomEvent<void>;

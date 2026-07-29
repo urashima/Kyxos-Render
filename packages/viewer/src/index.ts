@@ -11,8 +11,10 @@ export type {
   KyxosViewerCreateOptions,
   MaterialTextureInputs,
   QualityPresetName,
+  RenderActivityState,
   StressResult,
   StressTestName,
   TextureInput,
+  ViewerActivitySnapshot,
   ViewerMetrics,
 } from './types';
