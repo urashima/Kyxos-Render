@@ -1,5 +1,8 @@
 import type { RenderActivityState, ViewerActivitySnapshot } from '../types';
 
+export const DEFAULT_STABILIZATION_FRAMES = 8;
+export const DEFAULT_ACCUMULATION_FRAMES = 32;
+
 export interface RenderActivityMachineOptions {
   stabilizationFrames?: number;
   accumulationFrames?: number;
@@ -18,8 +21,14 @@ export class RenderActivityMachine {
   readonly accumulationFrames: number;
 
   constructor(options: RenderActivityMachineOptions = {}) {
-    this.stabilizationFrames = Math.max(1, Math.round(options.stabilizationFrames ?? 8));
-    this.accumulationFrames = Math.max(1, Math.round(options.accumulationFrames ?? 32));
+    this.stabilizationFrames = Math.max(
+      1,
+      Math.round(options.stabilizationFrames ?? DEFAULT_STABILIZATION_FRAMES),
+    );
+    this.accumulationFrames = Math.max(
+      1,
+      Math.round(options.accumulationFrames ?? DEFAULT_ACCUMULATION_FRAMES),
+    );
   }
 
   markActivity(reason: string) {
