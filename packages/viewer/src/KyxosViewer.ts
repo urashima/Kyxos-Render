@@ -190,7 +190,7 @@ export class KyxosViewer extends EventTarget {
     this.animateScene = bundle.animate;
     this.scene.backgroundNode = gradualBackgroundNode();
 
-    const forceWebGL = this.backendPreference === 'webgl2' || navigator.gpu === undefined;
+    const forceWebGL = this.backendPreference === 'webgl2' || !('gpu' in navigator);
     const context = forceWebGL
       ? this.canvas.getContext('webgl2', {
           antialias: false,
