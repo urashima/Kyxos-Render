@@ -459,12 +459,15 @@ export class KyxosViewer extends EventTarget {
       if (this.effects.ssr.enabled) {
         try {
           const settings = this.effects.ssr;
+          const temporalEnabled = this.effects.temporalReprojection.enabled;
+          const temporalDenoiseEnabled = temporalEnabled && this.effects.temporalDenoise.enabled;
           // SSR internally samples its color input, so keep the original Scene Pass texture here.
+          // Temporal reprojection/denoise are designed for the stochastic GGX path. The
+          // deterministic mirror/blur path is already stable and makes both controls appear
+          // ineffective, so only switch to stochastic SSR when the temporal chain is active.
           const ssrNode = ssr(beauty, depth, sceneNormal, {
             camera: this.camera,
-            // Stochastic SSR requires an original equirectangular HDR texture for misses.
-            // The active studio environment is PMREM, so use the official mirror/blur path.
-            stochastic: false,
+            stochastic: temporalEnabled,
             diffuseNode: diffuseMetal,
             metalnessNode: metalRough.r,
             roughnessNode: metalRough.g,
@@ -481,15 +484,23 @@ export class KyxosViewer extends EventTarget {
           ssrNode.thickness.value = Number(settings.thickness ?? 0.1);
 
           let reflection: any = ssrNode;
-          if (this.effects.temporalReprojection.enabled) {
+          if (temporalEnabled) {
+            const temporalSettings = this.effects.temporalReprojection;
             const temporal = temporalReproject(ssrNode, depth, normalPacked, velocityNode, this.camera, {
               mode: 'specular',
-              accumulate: false,
+              // Standalone reprojection must own and update its history. When the
+              // recurrent denoiser is active, its output becomes the external history.
+              accumulate: !temporalDenoiseEnabled,
             });
+            temporal.maxFrames.value = Number(temporalSettings.maxFrames ?? 16);
+            temporal.clampIntensity.value = Number(temporalSettings.clampIntensity ?? 0.25);
+            temporal.flickerSuppression.value = Number(temporalSettings.flickerSuppression ?? 1);
+            temporal.hitPointReprojection.value = temporalSettings.hitPointReprojection !== false;
             reflection = temporal;
             this.nodes.push(temporal);
 
-            if (this.effects.temporalDenoise.enabled) {
+            if (temporalDenoiseEnabled) {
+              const denoiseSettings = this.effects.temporalDenoise;
               const denoiser = recurrentDenoise(temporal, this.camera, {
                 depth,
                 normal: normalPacked,
@@ -499,8 +510,17 @@ export class KyxosViewer extends EventTarget {
                 accumulate: true,
               });
               denoiser.alphaSource = 'raylength';
-              denoiser.radius.value = Number(this.effects.temporalDenoise.radius ?? 1.5);
-              denoiser.strength.value = Number(this.effects.temporalDenoise.strength ?? 0.725);
+              denoiser.radius.value = Number(denoiseSettings.radius ?? 1.5);
+              denoiser.strength.value = Number(denoiseSettings.strength ?? 0.725);
+              denoiser.lumaPhi.value = Number(denoiseSettings.lumaPhi ?? 0.75);
+              denoiser.depthPhi.value = Number(denoiseSettings.depthPhi ?? 20);
+              denoiser.normalPhi.value = Number(denoiseSettings.normalPhi ?? 0.3);
+              denoiser.roughnessPhi.value = Number(denoiseSettings.roughnessPhi ?? 100);
+              denoiser.alphaPhi.value = Number(denoiseSettings.alphaPhi ?? 5);
+              denoiser.adapt.value = Number(denoiseSettings.adapt ?? 0.5);
+              denoiser.smoothDisocclusions.value = denoiseSettings.smoothDisocclusions !== false;
+              denoiser.flickerSuppression.value = Number(denoiseSettings.flickerSuppression ?? 1);
+              denoiser.adaptiveTrust.value = Number(denoiseSettings.adaptiveTrust ?? 1);
               ssrNode.setHistory(denoiser, velocityNode);
               temporal.setHistoryTexture(denoiser);
               reflection = denoiser;
