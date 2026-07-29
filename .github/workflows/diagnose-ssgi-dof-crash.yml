@@ -24,7 +24,7 @@ jobs:
         with:
           node-version: 22
       - run: pnpm install --no-frozen-lockfile
-      - run: pnpm format:check
+      - run: pnpm format
       - run: pnpm typecheck
       - run: pnpm exec playwright install --with-deps chromium
 
