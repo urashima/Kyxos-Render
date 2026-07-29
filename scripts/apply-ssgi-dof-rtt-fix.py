@@ -2,43 +2,48 @@ from pathlib import Path
 
 path = Path('packages/viewer/src/KyxosViewer.ts')
 text = path.read_text()
-needle = """      try {
-        source = dof(
-          source,
-          viewZ,
-          uniform(Number(this.effects.dof.focusDistance ?? 4)),
-          uniform(Number(this.effects.dof.focalLength ?? 45)),
-          uniform(Number(this.effects.dof.bokehScale ?? 1.5)),
-        );
-      } catch (error) {
-"""
-replacement = """      try {
-        // DepthOfFieldNode updates at FRAME time and immediately reads the input
-        // texture dimensions. When the upstream result is a generic TSL expression
-        // (notably the SSGI AO/GI composite), dof() otherwise creates a hidden
-        // RTTNode that updates later at RENDER time. Materialize and initialize
-        // that texture explicitly so it is ready before DoF allocates its passes.
-        const dofInput = convertToTexture(source);
-        if (dofInput !== source) {
-          const drawingSize = this.renderer.getDrawingBufferSize(new THREE.Vector2());
-          if (typeof dofInput.setSize === 'function') {
-            dofInput.setSize(drawingSize.x, drawingSize.y);
-          }
-          dofInput.updateBeforeType = THREE.NodeUpdateType.FRAME;
-          this.nodes.push(dofInput);
-        }
 
-        const dofNode = dof(
-          dofInput,
-          viewZ,
-          uniform(Number(this.effects.dof.focusDistance ?? 4)),
-          uniform(Number(this.effects.dof.focalLength ?? 45)),
-          uniform(Number(this.effects.dof.bokehScale ?? 1.5)),
-        );
-        source = dofNode;
-        this.nodes.push(dofNode);
-      } catch (error) {
+flags_needle = """    const dofBeforeTraa = !useSSAA && this.effects.dof.enabled && this.effects.traa.enabled;
+    const applyDepthOfField = () => {
 """
-if text.count(needle) != 1:
-    raise SystemExit(f'Expected one DoF construction block, found {text.count(needle)}')
-path.write_text(text.replace(needle, replacement, 1))
+flags_replacement = """    // SSGI produces AO/GI through FRAME-updated pass textures and then
+    // combines them into a generic TSL expression. Passing that expression into
+    // DepthOfFieldNode creates a nested RTT/FRAME graph that can deadlock or crash
+    // the renderer. When SSGI and DoF are both active, blur the stable Beauty
+    // texture first, compose SSGI afterward, and let TRAA resolve the full result.
+    const dofBeforeSsgi = !useSSAA && this.effects.dof.enabled && this.effects.ssgi.enabled;
+    const dofBeforeTraa =
+      !useSSAA &&
+      this.effects.dof.enabled &&
+      this.effects.traa.enabled &&
+      !dofBeforeSsgi;
+    const dofAppliedBeforeFinal = dofBeforeSsgi || dofBeforeTraa;
+    const applyDepthOfField = () => {
+"""
+if text.count(flags_needle) != 1:
+    raise SystemExit(f'Expected one DoF ordering flag block, found {text.count(flags_needle)}')
+text = text.replace(flags_needle, flags_replacement, 1)
+
+ssgi_needle = """      this.warnings.delete('capture-ssaa');
+
+      if (this.effects.ssgi.enabled) {
+"""
+ssgi_replacement = """      this.warnings.delete('capture-ssaa');
+
+      if (dofBeforeSsgi) applyDepthOfField();
+
+      if (this.effects.ssgi.enabled) {
+"""
+if text.count(ssgi_needle) != 1:
+    raise SystemExit(f'Expected one SSGI insertion point, found {text.count(ssgi_needle)}')
+text = text.replace(ssgi_needle, ssgi_replacement, 1)
+
+final_needle = """    if (!dofBeforeTraa) applyDepthOfField();
+"""
+final_replacement = """    if (!dofAppliedBeforeFinal) applyDepthOfField();
+"""
+if text.count(final_needle) != 1:
+    raise SystemExit(f'Expected one final DoF call, found {text.count(final_needle)}')
+text = text.replace(final_needle, final_replacement, 1)
+
+path.write_text(text)
