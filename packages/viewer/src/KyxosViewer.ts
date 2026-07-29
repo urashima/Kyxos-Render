@@ -188,7 +188,11 @@ export class KyxosViewer extends EventTarget {
     this.controls.maxDistance = 18;
     this.controls.target.set(0, 0.9, 0);
     this.controls.update();
-    this.controls.addEventListener('end', () => this.resetTemporal('camera-cut'));
+    // OrbitControls emits `end` for every normal orbit, pan and zoom gesture.
+    // Rebuilding the complete RenderPipeline there reallocates TRAA and DoF
+    // half-float render targets and can expose an uninitialized bright frame.
+    // Continuous camera motion is already represented by velocity/depth; reserve
+    // resetTemporal() for explicit scene, resize and programmatic camera cuts.
 
     await this.setStudioEnvironment(false);
     this.buildPipeline('initialize');
