@@ -17,7 +17,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: agent/fix-ssgi-dof-crash
-      - name: Apply explicit DoF input RTT fix
+      - name: Apply SSGI DoF pass-order fix
         run: python scripts/apply-ssgi-dof-rtt-fix.py
       - uses: pnpm/action-setup@v4
         with:
