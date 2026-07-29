@@ -90,7 +90,6 @@ for (const temporalFiltering of [false, true]) {
     const state = await page.evaluate(() => ({
       backend: window.__kyxosTestApi.getMetrics()?.backend,
       metrics: window.__kyxosTestApi.getMetrics(),
-      effects: window.__kyxosTestApi.getEffects(),
       error: window.__kyxosTestApi.getLastError(),
       warnings: window.__kyxosTestApi.getWarnings(),
     }));
