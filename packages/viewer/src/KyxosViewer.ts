@@ -188,7 +188,11 @@ export class KyxosViewer extends EventTarget {
     this.controls.maxDistance = 18;
     this.controls.target.set(0, 0.9, 0);
     this.controls.update();
-    this.controls.addEventListener('end', () => this.resetTemporal('camera-cut'));
+    // OrbitControls emits `end` for every normal orbit, pan and zoom gesture.
+    // Rebuilding the complete RenderPipeline there reallocates TRAA and DoF
+    // half-float render targets and can expose an uninitialized bright frame.
+    // Continuous camera motion is already represented by velocity/depth; reserve
+    // resetTemporal() for explicit scene, resize and programmatic camera cuts.
 
     await this.setStudioEnvironment(false);
     this.buildPipeline('initialize');
@@ -388,6 +392,28 @@ export class KyxosViewer extends EventTarget {
 
     let source: any = beauty;
 
+    // TRAA jitters every scene pass while resolving its color back to stable
+    // screen coordinates. Feeding that resolved color into DoF together with
+    // the current jittered View-Z makes the CoC composite sample two different
+    // coordinate spaces during camera motion. Keep standalone DoF in its
+    // existing location, but when TRAA is active build DoF from the same
+    // jittered color/depth frame and let TRAA resolve the combined result.
+    const dofBeforeTraa = !useSSAA && this.effects.dof.enabled && this.effects.traa.enabled;
+    const applyDepthOfField = () => {
+      if (!this.effects.dof.enabled || useSSAA) return;
+      try {
+        source = dof(
+          source,
+          viewZ,
+          uniform(Number(this.effects.dof.focusDistance ?? 4)),
+          uniform(Number(this.effects.dof.focalLength ?? 45)),
+          uniform(Number(this.effects.dof.bokehScale ?? 1.5)),
+        );
+      } catch (error) {
+        this.effectFailure('dof', error);
+      }
+    };
+
     if (useSSAA) {
       const ssaaNode = ssaaPass(this.scene, this.camera);
       const requestedSamples = Number(this.effects.ssaa.samples ?? 8);
@@ -494,6 +520,8 @@ export class KyxosViewer extends EventTarget {
         }
       }
 
+      if (dofBeforeTraa) applyDepthOfField();
+
       if (this.effects.traa.enabled) {
         try {
           const traaNode = traa(source, depth, velocityNode, this.camera);
@@ -541,19 +569,7 @@ export class KyxosViewer extends EventTarget {
       }
     }
 
-    if (this.effects.dof.enabled && !useSSAA) {
-      try {
-        source = dof(
-          source,
-          viewZ,
-          uniform(Number(this.effects.dof.focusDistance ?? 4)),
-          uniform(Number(this.effects.dof.focalLength ?? 45)),
-          uniform(Number(this.effects.dof.bokehScale ?? 1.5)),
-        );
-      } catch (error) {
-        this.effectFailure('dof', error);
-      }
-    }
+    if (!dofBeforeTraa) applyDepthOfField();
 
     this.beforeNode = renderOutput(beauty);
     source = renderOutput(source);
