@@ -69,7 +69,7 @@ export class RenderActivityMachine {
       if (this.stabilizationFrame >= this.stabilizationFrames) {
         this.transition(
           hasStaticAccumulator ? 'accumulating' : 'sleeping',
-          hasStaticAccumulator ? 'history-ready' : 'converged',
+          hasStaticAccumulator ? 'history-ready' : 'converged-without-static-mean',
         );
       }
       return;
