@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { RenderActivityMachine } from '../../packages/viewer/src/render/RenderActivityMachine';
+import {
+  DEFAULT_ACCUMULATION_FRAMES,
+  DEFAULT_STABILIZATION_FRAMES,
+  RenderActivityMachine,
+} from '../../packages/viewer/src/render/RenderActivityMachine';
 
 function render(machine: RenderActivityMachine, hasStaticAccumulator = true) {
   const serial = machine.beginFrame();
@@ -7,6 +11,12 @@ function render(machine: RenderActivityMachine, hasStaticAccumulator = true) {
 }
 
 describe('render activity state machine', () => {
+  it('uses the shipped convergence budgets by default', () => {
+    const machine = new RenderActivityMachine();
+    expect(machine.stabilizationFrames).toBe(DEFAULT_STABILIZATION_FRAMES);
+    expect(machine.accumulationFrames).toBe(DEFAULT_ACCUMULATION_FRAMES);
+  });
+
   it('converges through stabilizing and accumulation before sleeping', () => {
     const machine = new RenderActivityMachine({
       stabilizationFrames: 2,
