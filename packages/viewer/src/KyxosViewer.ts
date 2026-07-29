@@ -398,7 +398,14 @@ export class KyxosViewer extends EventTarget {
     // coordinate spaces during camera motion. Keep standalone DoF in its
     // existing location, but when TRAA is active build DoF from the same
     // jittered color/depth frame and let TRAA resolve the combined result.
-    const dofBeforeTraa = !useSSAA && this.effects.dof.enabled && this.effects.traa.enabled;
+    // SSGI produces AO/GI through FRAME-updated pass textures and then
+    // combines them into a generic TSL expression. Passing that expression into
+    // DepthOfFieldNode creates a nested RTT/FRAME graph that can deadlock or crash
+    // the renderer. When SSGI and DoF are both active, blur the stable Beauty
+    // texture first, compose SSGI afterward, and let TRAA resolve the full result.
+    const dofBeforeSsgi = !useSSAA && this.effects.dof.enabled && this.effects.ssgi.enabled;
+    const dofBeforeTraa = !useSSAA && this.effects.dof.enabled && this.effects.traa.enabled && !dofBeforeSsgi;
+    const dofAppliedBeforeFinal = dofBeforeSsgi || dofBeforeTraa;
     const applyDepthOfField = () => {
       if (!this.effects.dof.enabled || useSSAA) return;
       try {
@@ -426,6 +433,8 @@ export class KyxosViewer extends EventTarget {
       );
     } else {
       this.warnings.delete('capture-ssaa');
+
+      if (dofBeforeSsgi) applyDepthOfField();
 
       if (this.effects.ssgi.enabled) {
         try {
@@ -569,7 +578,7 @@ export class KyxosViewer extends EventTarget {
       }
     }
 
-    if (!dofBeforeTraa) applyDepthOfField();
+    if (!dofAppliedBeforeFinal) applyDepthOfField();
 
     this.beforeNode = renderOutput(beauty);
     source = renderOutput(source);

@@ -133,12 +133,30 @@ app.innerHTML = `
         <span class="backend-pill" id="backend-pill">Initializing</span>
         <select class="select" id="quality-select" aria-label="Quality preset">
           ${(['low', 'medium', 'high', 'cinematic', 'capture'] as QualityPresetName[])
-            .map((quality) => `<option value="${quality}" ${quality === route.quality ? 'selected' : ''}>${quality}</option>`)
+            .map(
+              (quality) =>
+                `<option value="${quality}" ${quality === route.quality ? 'selected' : ''}>${quality}</option>`,
+            )
             .join('')}
         </select>
         <select class="select" id="debug-select" aria-label="Debug view">
-          ${(['final', 'beauty', 'depth', 'velocity', 'normal', 'diffuseColor', 'metalness', 'roughness', 'emissive'] as DebugView[])
-            .map((view) => `<option value="${view}" ${view === (route.debugView ?? 'final') ? 'selected' : ''}>${view}</option>`)
+          ${(
+            [
+              'final',
+              'beauty',
+              'depth',
+              'velocity',
+              'normal',
+              'diffuseColor',
+              'metalness',
+              'roughness',
+              'emissive',
+            ] as DebugView[]
+          )
+            .map(
+              (view) =>
+                `<option value="${view}" ${view === (route.debugView ?? 'final') ? 'selected' : ''}>${view}</option>`,
+            )
             .join('')}
         </select>
         <button class="btn" id="compare-button">Before / After</button>
@@ -161,7 +179,10 @@ app.innerHTML = `
         <div class="panel-title"><span>Performance</span><span id="resolution-label">—</span></div>
         <div class="panel-body metric-grid" id="metrics-grid">
           ${['FPS', 'CPU ms', 'GPU ms', 'Draw calls', 'Triangles', 'Textures', 'Targets', 'GPU memory']
-            .map((label, index) => `<div class="metric"><span>${label}</span><strong data-metric="${index}">—</strong></div>`)
+            .map(
+              (label, index) =>
+                `<div class="metric"><span>${label}</span><strong data-metric="${index}">—</strong></div>`,
+            )
             .join('')}
         </div>
       </section>
@@ -193,7 +214,10 @@ app.innerHTML = `
         <div class="panel-title"><span>Texture Lab inputs</span><span>Local</span></div>
         <div class="panel-body">
           ${['baseColor', 'normal', 'roughness', 'metalness', 'ao', 'emissive']
-            .map((name) => `<div class="control-row"><label>${name}</label><input data-texture="${name}" type="file" accept="image/*"></div>`)
+            .map(
+              (name) =>
+                `<div class="control-row"><label>${name}</label><input data-texture="${name}" type="file" accept="image/*"></div>`,
+            )
             .join('')}
         </div>
       </section>
@@ -346,7 +370,10 @@ function renderParameterControls() {
   parameterControls.querySelectorAll<HTMLInputElement>('[data-effect-parameter]').forEach((input) => {
     input.addEventListener('input', () => {
       const output = input.nextElementSibling;
-      if (output) output.textContent = Number(input.value).toFixed(Number(input.step) < 0.01 ? 4 : Number(input.step) < 1 ? 2 : 0);
+      if (output)
+        output.textContent = Number(input.value).toFixed(
+          Number(input.step) < 0.01 ? 4 : Number(input.step) < 1 ? 2 : 0,
+        );
     });
     input.addEventListener('change', () => {
       if (!viewer) return;
@@ -395,7 +422,9 @@ async function createViewer(backend: BackendPreference = selectedBackend) {
     });
     viewer = instance;
     await applyRouteConfiguration(instance);
-    instance.addEventListener('metrics', (event) => updateMetrics((event as CustomEvent<ViewerMetrics>).detail));
+    instance.addEventListener('metrics', (event) =>
+      updateMetrics((event as CustomEvent<ViewerMetrics>).detail),
+    );
     instance.addEventListener('warning', updateWarnings);
     instance.addEventListener('error', (event) => {
       const detail = (event as CustomEvent<{ error: unknown }>).detail;
@@ -432,7 +461,10 @@ backendSelect.addEventListener('change', () => {
 
 document.querySelector('#compare-button')?.addEventListener('click', () => {
   compareEnabled = !compareEnabled;
-  viewer?.setComparison(compareEnabled, Number((document.querySelector('#comparison-range') as HTMLInputElement)?.value ?? 0.5));
+  viewer?.setComparison(
+    compareEnabled,
+    Number((document.querySelector('#comparison-range') as HTMLInputElement)?.value ?? 0.5),
+  );
 });
 document.querySelector<HTMLInputElement>('#comparison-switch')?.addEventListener('change', (event) => {
   compareEnabled = (event.currentTarget as HTMLInputElement).checked;
@@ -454,7 +486,9 @@ document.querySelector<HTMLSelectElement>('#environment-select')?.addEventListen
   void viewer?.loadEnvironment((event.currentTarget as HTMLSelectElement).value);
 });
 document.querySelector('#reset-button')?.addEventListener('click', () => viewer?.resetView());
-document.querySelector('#recreate-button')?.addEventListener('click', () => void createViewer(selectedBackend));
+document
+  .querySelector('#recreate-button')
+  ?.addEventListener('click', () => void createViewer(selectedBackend));
 document.querySelector('#capture-button')?.addEventListener('click', async () => {
   if (!viewer) return;
   const blob = await viewer.capture();
@@ -475,7 +509,9 @@ document.querySelectorAll<HTMLInputElement>('[data-texture]').forEach((input) =>
   });
 });
 
-function appendStressResult(result: StressResult | { name: string; passed: boolean; durationMs: number; note?: string }) {
+function appendStressResult(
+  result: StressResult | { name: string; passed: boolean; durationMs: number; note?: string },
+) {
   stressOutput.insertAdjacentHTML(
     'afterbegin',
     `<li>${result.passed ? 'PASS' : 'CHECK'} · ${result.name} · ${result.durationMs.toFixed(0)} ms${result.note ? ` · ${result.note}` : ''}</li>`,
@@ -508,7 +544,13 @@ async function runRecreateStress(iterations = 50) {
       const testCanvas = document.createElement('canvas');
       testCanvas.style.cssText = 'width:96px;height:64px';
       host.replaceChildren(testCanvas);
-      const testViewer = await KyxosViewer.create({ canvas: testCanvas, backend: 'webgl2', quality: 'low', autoStart: false, pixelRatio: 1 });
+      const testViewer = await KyxosViewer.create({
+        canvas: testCanvas,
+        backend: 'webgl2',
+        quality: 'low',
+        autoStart: false,
+        pixelRatio: 1,
+      });
       testViewer.dispose();
       completed += 1;
     }

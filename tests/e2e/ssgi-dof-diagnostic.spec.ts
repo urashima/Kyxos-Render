@@ -94,13 +94,7 @@ for (const temporalFiltering of [false, true]) {
       warnings: window.__kyxosTestApi.getWarnings(),
     }));
 
-    console.log(
-      JSON.stringify(
-        { temporalFiltering, crashed, pageErrors, consoleErrors, state },
-        null,
-        2,
-      ),
-    );
+    console.log(JSON.stringify({ temporalFiltering, crashed, pageErrors, consoleErrors, state }, null, 2));
 
     expect(crashed).toBe(false);
     expect(state.metrics?.drawCalls).toBeGreaterThan(0);

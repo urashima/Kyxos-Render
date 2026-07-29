@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { createQualityPreset, enforceEffectRules, mergeEffectSettings } from '../../packages/viewer/src/presets';
+import {
+  createQualityPreset,
+  enforceEffectRules,
+  mergeEffectSettings,
+} from '../../packages/viewer/src/presets';
 
 describe('quality presets', () => {
   it('matches the required low preset', () => {
