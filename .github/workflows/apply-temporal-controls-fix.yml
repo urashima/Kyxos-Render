@@ -1,0 +1,65 @@
+name: Apply temporal controls fix
+
+on:
+  push:
+    branches: [agent/fix-temporal-controls-no-effect]
+
+permissions:
+  contents: write
+
+jobs:
+  apply-verify-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/fix-temporal-controls-no-effect
+          fetch-depth: 0
+
+      - name: Apply temporal controls patch
+        run: python scripts/apply-temporal-controls-fix.py
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: pnpm install --no-frozen-lockfile
+
+      - name: Format changed files
+        run: >-
+          pnpm exec prettier --write
+          packages/viewer/src/presets.ts
+          packages/viewer/src/KyxosViewer.ts
+          apps/playground/src/main.ts
+          apps/playground/src/routes.ts
+          tests/unit/presets.test.ts
+          tests/e2e/temporal-controls.spec.ts
+
+      - run: pnpm verify
+
+      - run: pnpm exec playwright install --with-deps chromium
+
+      - name: Verify temporal dependency and rendering behavior
+        run: pnpm exec playwright test tests/e2e/temporal-controls.spec.ts --project=chromium
+        env:
+          CI: true
+
+      - name: Re-run existing temporal camera regressions
+        run: pnpm exec playwright test tests/e2e/playground.spec.ts --project=chromium --grep "TRAA|DoF"
+        env:
+          CI: true
+
+      - name: Commit verified fix and remove bootstrap files
+        shell: bash
+        run: |
+          git rm .github/workflows/apply-temporal-controls-fix.yml scripts/apply-temporal-controls-fix.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix: make SSR temporal controls effective"
+          git push origin HEAD:agent/fix-temporal-controls-no-effect
