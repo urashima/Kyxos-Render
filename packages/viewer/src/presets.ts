@@ -141,13 +141,6 @@ export function enforceEffectRules(state: EffectsState, changed?: EffectName): E
     for (const name of active) next[name].enabled = name === keep;
   }
 
-  if (next.ssgi.enabled && next.ssgi.temporalFiltering !== false) {
-    next.traa.enabled = true;
-    next.fxaa.enabled = false;
-    next.smaa.enabled = false;
-    next.ssaa.enabled = false;
-  }
-
   // TemporalReprojectNode and RecurrentDenoiseNode are SSR filters, not
   // independent full-frame post effects. Keep the public switches honest by
   // establishing the required chain automatically.
