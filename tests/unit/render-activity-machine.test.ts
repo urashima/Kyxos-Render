@@ -18,6 +18,11 @@ describe('render activity state machine', () => {
     const machine = new RenderActivityMachine();
     expect(machine.stabilizationFrames).toBe(DEFAULT_STABILIZATION_FRAMES);
     expect(machine.accumulationFrames).toBe(DEFAULT_ACCUMULATION_FRAMES);
+    expect(machine.snapshot(true)).toMatchObject({
+      stabilizationFrames: DEFAULT_STABILIZATION_FRAMES,
+      accumulationFrames: DEFAULT_ACCUMULATION_FRAMES,
+      pendingAnimationFrame: true,
+    });
   });
 
   it('converges through stabilizing and accumulation before sleeping', () => {
