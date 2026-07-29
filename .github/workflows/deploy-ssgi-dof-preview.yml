@@ -1,0 +1,111 @@
+name: Deploy SSGI DoF fix preview
+
+on:
+  pull_request:
+    branches: [main]
+    types: [reopened]
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: kyxos-pages-preview-ssgi-dof-crash
+  cancel-in-progress: true
+
+jobs:
+  deploy-preview:
+    if: ${{ github.head_ref == 'agent/fix-ssgi-dof-crash' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: preview-ssgi-dof-crash
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout accepted main site
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: main-src
+
+      - name: Checkout preview branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/fix-ssgi-dof-crash
+          path: preview-src
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build accepted main Pages site
+        working-directory: main-src
+        run: |
+          pnpm install --no-frozen-lockfile
+          PAGES_BUILD=1 pnpm build:pages
+
+      - name: Build isolated SSGI DoF preview
+        working-directory: preview-src
+        env:
+          PAGES_BASE: /Kyxos-Render/preview/ssgi-dof-crash/
+        run: |
+          pnpm install --no-frozen-lockfile
+          pnpm build
+
+      - name: Compose accepted site and preview route
+        shell: bash
+        run: |
+          rm -rf combined-site
+          cp -R main-src/site combined-site
+          mkdir -p combined-site/preview/ssgi-dof-crash
+          cp -R preview-src/apps/playground/dist/. combined-site/preview/ssgi-dof-crash/
+          node <<'NODE'
+          const { copyFile, mkdir } = require('node:fs/promises');
+          const { resolve } = require('node:path');
+          const root = resolve('combined-site/preview/ssgi-dof-crash');
+          const routes = [
+            'overview', 'pbr', 'buffers', 'aa', 'traa', 'temporal', 'gtao', 'ssao', 'ssr', 'ssgi',
+            'motion-blur', 'denoise', 'sharpness', 'lens-distortion', 'background', 'sparkle',
+            'full-stack', 'performance', 'lifecycle',
+          ];
+          (async () => {
+            for (const route of routes) {
+              const target = resolve(root, route);
+              await mkdir(target, { recursive: true });
+              await copyFile(resolve(root, 'index.html'), resolve(target, 'index.html'));
+            }
+          })().catch((error) => {
+            console.error(error);
+            process.exit(1);
+          });
+          NODE
+
+      - name: Verify preview artifact structure
+        run: |
+          test -f combined-site/latest/index.html
+          test -f combined-site/preview/ssgi-dof-crash/index.html
+          test -f combined-site/preview/ssgi-dof-crash/ssgi/index.html
+          grep -R "/Kyxos-Render/preview/ssgi-dof-crash/" combined-site/preview/ssgi-dof-crash/index.html
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: combined-site
+
+      - name: Deploy combined Pages artifact
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Remove one-time preview workflow
+        working-directory: preview-src
+        run: |
+          git rm .github/workflows/deploy-ssgi-dof-preview.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "ci: remove one-time SSGI DoF preview workflow"
+          git push origin HEAD:agent/fix-ssgi-dof-crash
