@@ -31,7 +31,9 @@ test('SSGI, SSGI temporal filtering and TRAA remain independent', async ({ page 
   await expect(temporalFiltering).toHaveCount(1);
   await expect(temporalFiltering).toBeDisabled();
 
-  await ssgiToggle.check();
+  // The Playground uses visually styled switches whose native checkbox is hidden.
+  // Force the real input event instead of clicking a synthetic replacement element.
+  await ssgiToggle.check({ force: true });
   await expect(temporalFiltering).toBeEnabled();
   await expect(temporalFiltering).toBeChecked();
   await page.waitForTimeout(1500);
@@ -42,21 +44,21 @@ test('SSGI, SSGI temporal filtering and TRAA remain independent', async ({ page 
   expect(effects?.traa.enabled).toBe(false);
   expect(effects?.fxaa.enabled).toBe(true);
 
-  await temporalFiltering.uncheck();
+  await temporalFiltering.uncheck({ force: true });
   await page.waitForTimeout(1000);
   effects = await page.evaluate(() => window.__kyxosTestApi.getEffects());
   expect(effects?.ssgi.enabled).toBe(true);
   expect(effects?.ssgi.temporalFiltering).toBe(false);
   expect(effects?.traa.enabled).toBe(false);
 
-  await traaToggle.check();
+  await traaToggle.check({ force: true });
   await page.waitForTimeout(1500);
   effects = await page.evaluate(() => window.__kyxosTestApi.getEffects());
   expect(effects?.traa.enabled).toBe(true);
   expect(effects?.ssgi.enabled).toBe(true);
   expect(effects?.ssgi.temporalFiltering).toBe(false);
 
-  await traaToggle.uncheck();
+  await traaToggle.uncheck({ force: true });
   await page.waitForTimeout(1000);
   effects = await page.evaluate(() => window.__kyxosTestApi.getEffects());
   expect(effects?.traa.enabled).toBe(false);
