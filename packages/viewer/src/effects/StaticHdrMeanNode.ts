@@ -35,7 +35,7 @@ export class StaticHdrMeanNode extends TempNode {
     this.textureNode = textureNode;
     this.compositeTarget.texture.name = 'Kyxos.StaticHdrMean.composite';
     this.historyTarget.texture.name = 'Kyxos.StaticHdrMean.history';
-    this.updateBeforeType = NodeUpdateType.FRAME;
+    (this as any).updateBeforeType = NodeUpdateType.FRAME;
   }
 
   setSampleCount(sampleCount: number) {
