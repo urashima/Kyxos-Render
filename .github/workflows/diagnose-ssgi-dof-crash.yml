@@ -1,22 +1,23 @@
-name: Diagnose SSGI DoF crash
+name: Apply SSGI DoF crash fix
 
 on:
   pull_request:
     branches: [main]
-    types: [opened, reopened, synchronize]
+    types: [reopened]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  diagnose:
+  apply-verify-publish:
     if: ${{ github.head_ref == 'agent/fix-ssgi-dof-crash' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
           ref: agent/fix-ssgi-dof-crash
+          fetch-depth: 0
       - name: Apply SSGI DoF pass-order fix
         run: python scripts/apply-ssgi-dof-rtt-fix.py
       - uses: pnpm/action-setup@v4
@@ -27,28 +28,36 @@ jobs:
           node-version: 22
       - run: pnpm install --no-frozen-lockfile
       - run: pnpm format
-      - run: pnpm typecheck
+      - run: pnpm verify
       - run: pnpm exec playwright install --with-deps chromium
 
-      - name: Verify SSGI and DoF combinations on WebGL fallback
-        shell: bash
+      - name: Verify SSGI and DoF combinations
+        run: pnpm exec playwright test tests/e2e/ssgi-dof-diagnostic.spec.ts --project=chromium
+        env:
+          CI: true
+
+      - name: Verify existing temporal camera regressions
         run: |
-          set +e
-          pnpm exec playwright test tests/e2e/ssgi-dof-diagnostic.spec.ts --project=chromium 2>&1 | tee ssgi-dof-webgl.log
-          status=${PIPESTATUS[0]}
-          echo $status > webgl.status
-          exit $status
+          pnpm exec playwright test tests/e2e/playground.spec.ts --project=chromium --grep "TRAA and depth of field stay visible|standalone TRAA and DoF"
         env:
           CI: true
 
       - name: Upload diagnostics
-        if: ${{ always() }}
+        if: ${{ failure() }}
         uses: actions/upload-artifact@v4
         with:
-          name: ssgi-dof-crash-diagnostics
+          name: ssgi-dof-fix-diagnostics
           if-no-files-found: ignore
           path: |
-            ssgi-dof-webgl.log
-            webgl.status
             test-results
             playwright-report
+
+      - name: Commit verified fix and remove bootstrap files
+        shell: bash
+        run: |
+          rm .github/workflows/diagnose-ssgi-dof-crash.yml scripts/apply-ssgi-dof-rtt-fix.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix: stabilize SSGI and depth of field composition"
+          git push origin HEAD:agent/fix-ssgi-dof-crash
