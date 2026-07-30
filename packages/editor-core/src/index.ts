@@ -24,6 +24,8 @@ function pointerParts(path: string): string[] {
   if (!path.startsWith('/')) throw new Error(`Invalid JSON pointer: ${path}`);
   return path.slice(1).split('/').map(decodePointerSegment);
 }
+function encodePointerSegment(segment: string): string { return segment.replace(/~/g, '~0').replace(/\//g, '~1') }
+function pointerPath(parts: string[]): string { return `/${parts.map(encodePointerSegment).join('/')}` }
 function parentAt(root: unknown, path: string): { parent: any; key: string } {
   const parts = pointerParts(path);
   if (parts.length === 0) throw new Error('Root replacement is not supported by editor patches.');
@@ -47,8 +49,20 @@ function assign(parent: any, key: string, value: unknown, add: boolean): void {
   } else parent[key] = value;
 }
 function remove(parent: any, key: string): unknown {
-  if (Array.isArray(parent)) return parent.splice(Number(key), 1)[0];
+  if (Array.isArray(parent)) {
+    if (key === '-') throw new Error('The append token cannot be used for removal.');
+    return parent.splice(Number(key), 1)[0];
+  }
   const previous = parent[key]; delete parent[key]; return previous;
+}
+
+function concreteAddPath(root: unknown, path: string): string {
+  const parts = pointerParts(path);
+  if (parts.at(-1) !== '-') return path;
+  const parentPath = pointerPath(parts.slice(0, -1));
+  const parent = parts.length === 1 ? root : valueAt(root, parentPath);
+  if (!Array.isArray(parent)) throw new Error(`Append target is not an array: ${path}`);
+  return pointerPath([...parts.slice(0, -1), String(parent.length)]);
 }
 
 export function applyPatch<T>(input: T, patch: ScenePatch): T {
@@ -74,11 +88,17 @@ export function invertPatch(before: unknown, patch: ScenePatch): ScenePatch {
   const inverse: ScenePatch = [];
   let state = structuredClone(before);
   for (const operation of patch) {
-    if (operation.op === 'add') inverse.unshift({ op: 'remove', path: operation.path });
-    else if (operation.op === 'remove') inverse.unshift({ op: 'add', path: operation.path, value: structuredClone(valueAt(state, operation.path)) });
-    else if (operation.op === 'replace') inverse.unshift({ op: 'replace', path: operation.path, value: structuredClone(valueAt(state, operation.path)) });
-    else if (operation.op === 'move') inverse.unshift({ op: 'move', from: operation.path, path: operation.from });
-    else if (operation.op === 'copy') inverse.unshift({ op: 'remove', path: operation.path });
+    if (operation.op === 'add') {
+      inverse.unshift({ op: 'remove', path: concreteAddPath(state, operation.path) });
+    } else if (operation.op === 'remove') {
+      inverse.unshift({ op: 'add', path: operation.path, value: structuredClone(valueAt(state, operation.path)) });
+    } else if (operation.op === 'replace') {
+      inverse.unshift({ op: 'replace', path: operation.path, value: structuredClone(valueAt(state, operation.path)) });
+    } else if (operation.op === 'move') {
+      inverse.unshift({ op: 'move', from: concreteAddPath(state, operation.path), path: operation.from });
+    } else if (operation.op === 'copy') {
+      inverse.unshift({ op: 'remove', path: concreteAddPath(state, operation.path) });
+    }
     state = applyPatch(state, [operation]);
   }
   return inverse;
@@ -190,8 +210,16 @@ export class PublishService {
 }
 
 export class AutosaveController extends EventTarget {
-  private timer: number | null = null; private stateValue: SaveState = 'Saved'; private revisionValue: number;
+  private timer: number | null = null;
+  private stateValue: SaveState = 'Saved';
+  private revisionValue: number;
   private flushing: Promise<void> | null = null;
+  private dirty = false;
+  private disposed = false;
+  private readonly onDocumentChange = () => { this.dirty = true; this.setState('Dirty'); this.schedule() };
+  private readonly onOnline = () => void this.recover();
+  private readonly onOffline = () => this.setState('Offline');
+
   constructor(
     private readonly projectId: string,
     private readonly document: SceneDocument,
@@ -200,27 +228,46 @@ export class AutosaveController extends EventTarget {
     revision = 0,
     private readonly delayMs = 750,
   ) {
-    super(); this.revisionValue = revision;
-    document.addEventListener('change', () => { this.setState('Dirty'); this.schedule() });
-    window.addEventListener('online', () => void this.recover());
-    window.addEventListener('offline', () => this.setState('Offline'));
+    super();
+    this.revisionValue = revision;
+    document.addEventListener('change', this.onDocumentChange);
+    window.addEventListener('online', this.onOnline);
+    window.addEventListener('offline', this.onOffline);
   }
   get state(): SaveState { return this.stateValue }
   get revision(): number { return this.revisionValue }
-  private setState(state: SaveState, error?: unknown): void { this.stateValue = state; this.dispatchEvent(new CustomEvent('state', { detail: { state, revision: this.revisionValue, error } })) }
-  private schedule(): void { if (this.timer != null) window.clearTimeout(this.timer); this.timer = window.setTimeout(() => void this.flush(), this.delayMs) }
+  private setState(state: SaveState, error?: unknown): void {
+    if (this.disposed) return;
+    this.stateValue = state;
+    this.dispatchEvent(new CustomEvent('state', { detail: { state, revision: this.revisionValue, error } }));
+  }
+  private schedule(): void {
+    if (this.disposed) return;
+    if (this.timer != null) window.clearTimeout(this.timer);
+    this.timer = window.setTimeout(() => void this.flush(), this.delayMs);
+  }
   async flush(): Promise<void> {
+    if (this.disposed) return;
     if (this.flushing) return this.flushing;
     if (this.timer != null) { window.clearTimeout(this.timer); this.timer = null }
-    this.flushing = this.save().finally(() => { this.flushing = null }); return this.flushing;
+    if (!this.dirty) return;
+    this.flushing = this.save().finally(() => { this.flushing = null });
+    return this.flushing;
   }
   private async save(): Promise<void> {
     const draft = { contract: this.document.value, revision: this.revisionValue };
-    if (!navigator.onLine) { await this.offline.put(this.projectId, draft); this.setState('Offline'); return }
+    if (!navigator.onLine) {
+      await this.offline.put(this.projectId, draft);
+      this.setState('Offline');
+      return;
+    }
     this.setState('Saving');
     try {
       const result = await this.repository.save(this.projectId, draft.contract, this.revisionValue);
-      this.revisionValue = result.revision; await this.offline.delete(this.projectId); this.setState('Saved');
+      this.revisionValue = result.revision;
+      this.dirty = false;
+      await this.offline.delete(this.projectId);
+      this.setState('Saved');
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (/revision|conflict|409/i.test(message)) this.setState('Conflict', error);
@@ -228,11 +275,28 @@ export class AutosaveController extends EventTarget {
     }
   }
   async recover(): Promise<void> {
-    const pending = await this.offline.get(this.projectId); if (!pending) return;
-    try { const result = await this.repository.save(this.projectId, pending.contract, pending.revision); this.revisionValue = result.revision; await this.offline.delete(this.projectId); this.setState('Saved') }
-    catch (error) { this.setState(/revision|conflict|409/i.test(String(error)) ? 'Conflict' : 'Error', error) }
+    if (this.disposed) return;
+    const pending = await this.offline.get(this.projectId);
+    if (!pending) return;
+    try {
+      const result = await this.repository.save(this.projectId, pending.contract, pending.revision);
+      this.revisionValue = result.revision;
+      this.dirty = false;
+      await this.offline.delete(this.projectId);
+      this.setState('Saved');
+    } catch (error) {
+      this.setState(/revision|conflict|409/i.test(String(error)) ? 'Conflict' : 'Error', error);
+    }
   }
-  dispose(): void { if (this.timer != null) window.clearTimeout(this.timer) }
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    if (this.timer != null) window.clearTimeout(this.timer);
+    this.timer = null;
+    this.document.removeEventListener('change', this.onDocumentChange);
+    window.removeEventListener('online', this.onOnline);
+    window.removeEventListener('offline', this.onOffline);
+  }
 }
 
 export class ProjectSession {
