@@ -5,6 +5,7 @@ import {
   CommandBus,
   SceneDocument,
   applyPatch,
+  addCommand,
   replaceCommand,
   type DraftRepository,
   type OfflineDraftStore,
@@ -34,6 +35,29 @@ describe('Editor Core command and history flow', () => {
     expect(document.value.nodes[0].transform.position.x).toBe(1.5);
   });
 
+  it('undoes and redoes array append commands at the appended index', () => {
+    const document = new SceneDocument(createFixtureContract());
+    const history = new HistoryService(document);
+    const commands = new CommandBus(document, history);
+    const originalId = document.value.nodes[0].id;
+    const appended = {
+      ...structuredClone(document.value.nodes[0]),
+      id: 'appended-node',
+      name: 'Appended Node',
+      parentId: null,
+      children: [],
+    };
+
+    commands.execute(addCommand('/nodes/-', appended, 'Append node'));
+    expect(document.value.nodes.map((node) => node.id)).toEqual([originalId, 'appended-node']);
+
+    expect(history.undo()).toBe(true);
+    expect(document.value.nodes.map((node) => node.id)).toEqual([originalId]);
+
+    expect(history.redo()).toBe(true);
+    expect(document.value.nodes.map((node) => node.id)).toEqual([originalId, 'appended-node']);
+  });
+
   it('applies local JSON patches without rebuilding unrelated data', () => {
     const fixture = createFixtureContract();
     const next = applyPatch(fixture, [
@@ -47,9 +71,14 @@ describe('Editor Core command and history flow', () => {
 });
 
 describe('Autosave revision control', () => {
+  let browserWindow: EventTarget & {
+    setTimeout: typeof globalThis.setTimeout;
+    clearTimeout: typeof globalThis.clearTimeout;
+  };
+
   beforeEach(() => {
     vi.useFakeTimers();
-    const browserWindow = Object.assign(new EventTarget(), {
+    browserWindow = Object.assign(new EventTarget(), {
       setTimeout: globalThis.setTimeout.bind(globalThis),
       clearTimeout: globalThis.clearTimeout.bind(globalThis),
     });
@@ -62,14 +91,16 @@ describe('Autosave revision control', () => {
     vi.unstubAllGlobals();
   });
 
-  it('debounces saves, advances optimistic revisions and reports conflict', async () => {
+  it('debounces saves, avoids clean revision churn and reports conflict', async () => {
     const document = new SceneDocument(createFixtureContract());
     let serverRevision = 0;
+    let saveCalls = 0;
     const repository: DraftRepository = {
       async load() {
         return null;
       },
       async save(_projectId, _contract, expectedRevision) {
+        saveCalls += 1;
         if (expectedRevision !== serverRevision) throw new Error('409 revision conflict');
         serverRevision += 1;
         return { revision: serverRevision };
@@ -100,18 +131,30 @@ describe('Autosave revision control', () => {
       states.push((event as CustomEvent).detail.state),
     );
 
+    await autosave.flush();
+    expect(saveCalls).toBe(0);
+    expect(autosave.revision).toBe(0);
+
     document.apply([{ op: 'replace', path: '/nodes/0/visible', value: false }]);
     expect(autosave.state).toBe('Dirty');
     await vi.advanceTimersByTimeAsync(50);
     await autosave.flush();
+    expect(saveCalls).toBe(1);
     expect(autosave.revision).toBe(1);
     expect(autosave.state).toBe('Saved');
     expect(states).toEqual(expect.arrayContaining(['Dirty', 'Saving', 'Saved']));
+
+    await autosave.flush();
+    expect(saveCalls).toBe(1);
+    expect(autosave.revision).toBe(1);
 
     serverRevision = 3;
     document.apply([{ op: 'replace', path: '/nodes/0/visible', value: true }]);
     await autosave.flush();
     expect(autosave.state).toBe('Conflict');
+
     autosave.dispose();
+    browserWindow.dispatchEvent(new Event('offline'));
+    expect(autosave.state).toBe('Conflict');
   });
 });
