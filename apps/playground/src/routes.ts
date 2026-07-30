@@ -143,8 +143,8 @@ export const demoRoutes: DemoRoute[] = [
     title: 'Anamorphic Highlight Sparkle',
     eyebrow: 'Official Three.js BloomNode',
     description:
-      'The official Three.js WebGPU anamorphic lensflare example: luminance high-pass, RTT and horizontal multi-sample streaks.',
-    quality: 'cinematic',
+      'An isolated view of the official Three.js WebGPU anamorphic lensflare: luminance high-pass, RTT and horizontal multi-sample streaks.',
+    quality: 'low',
     focus: 'sparkle',
   },
   {
