@@ -1,5 +1,8 @@
+import './sceneApi';
+
 export { KyxosViewer } from './KyxosViewer';
 export { createQualityPreset, enforceEffectRules, mergeEffectSettings } from './presets';
+export type { AnimationState, CameraState, PickResult } from './sceneTypes';
 export type {
   BackendName,
   BackendPreference,

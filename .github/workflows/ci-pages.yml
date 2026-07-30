@@ -1,16 +1,18 @@
-name: CI and Pages
+name: CI, Studio Preview and Pages
 
 on:
   push:
-    branches: [main, feat/webgpu-realism-complete]
+    branches:
+      - main
+      - agent/kyxos-studio-playcanvas-editor-complete
   pull_request:
     branches: [main]
   workflow_dispatch:
     inputs:
-      full_acceptance:
-        description: Run the complete lifecycle release gate
+      visual_acceptance:
+        description: Run the full Studio/Public visual evidence suite
         required: false
-        default: false
+        default: true
         type: boolean
 
 permissions:
@@ -25,7 +27,7 @@ concurrency:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -35,35 +37,19 @@ jobs:
         with:
           node-version: 22
       - run: pnpm install --no-frozen-lockfile
-      - run: pnpm format
-      - run: pnpm lint
-      - name: Typecheck
+      - name: Automated gates
         shell: bash
         run: |
           set +e
-          pnpm typecheck 2>&1 | tee typecheck.log
+          pnpm verify 2>&1 | tee verify.log
           status=${PIPESTATUS[0]}
           exit $status
-      - name: Upload typecheck diagnostics
+      - name: Upload verification diagnostics
         if: ${{ failure() }}
         uses: actions/upload-artifact@v4
         with:
-          name: typecheck-diagnostics
-          path: typecheck.log
-      - name: Unit tests
-        shell: bash
-        run: |
-          set +e
-          pnpm test 2>&1 | tee unit-test.log
-          status=${PIPESTATUS[0]}
-          exit $status
-      - name: Upload unit test diagnostics
-        if: ${{ failure() }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: unit-test-diagnostics
-          path: unit-test.log
-      - run: pnpm build
+          name: verify-diagnostics
+          path: verify.log
       - run: pnpm exec playwright install --with-deps chromium
       - name: Browser acceptance
         shell: bash
@@ -74,29 +60,33 @@ jobs:
           pnpm test:e2e 2>&1 | tee e2e.log
           status=${PIPESTATUS[0]}
           exit $status
-      - name: Upload browser diagnostics
-        if: ${{ failure() }}
+      - name: Visual evidence
+        if: ${{ github.ref == 'refs/heads/agent/kyxos-studio-playcanvas-editor-complete' || github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.visual_acceptance) }}
+        run: pnpm test:visual
+        env:
+          CI: true
+      - name: Upload browser diagnostics and evidence
+        if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-diagnostics
+          name: browser-acceptance
           if-no-files-found: ignore
           path: |
             e2e.log
             test-results
             playwright-report
-      - name: Full lifecycle acceptance
-        if: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/feat/webgpu-realism-complete') || (github.event_name == 'workflow_dispatch' && inputs.full_acceptance) }}
-        run: pnpm test:e2e --grep "specified resource stability counts"
-        env:
-          CI: true
-          FULL_ACCEPTANCE: 1
-      - name: Build Pages artifact
+            playwright-visual-report
+      - name: Build Pages artifact and size report
         run: PAGES_BUILD=1 pnpm build:pages
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kyxos-build-report
+          path: site/build-report.json
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
 
-  deploy:
+  deploy-pages:
     if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
     needs: verify
     runs-on: ubuntu-latest
@@ -104,36 +94,38 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: Deploy to GitHub Pages
+      - name: Deploy Kyxos Viewer, Studio, Public Viewer and Embed
         id: deployment
         uses: actions/deploy-pages@v4
 
-  stable-tag:
+  deploy-backend:
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-    needs: [verify, deploy]
+    needs: verify
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
     steps:
-      - name: Publish v1.0.0 tag
-        uses: actions/github-script@v7
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
         with:
-          script: |
-            const tag = 'v1.0.0';
-            try {
-              await github.rest.git.getRef({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                ref: `tags/${tag}`,
-              });
-              core.info(`${tag} already exists; leaving it unchanged.`);
-            } catch (error) {
-              if (error.status !== 404) throw error;
-              await github.rest.git.createRef({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                ref: `refs/tags/${tag}`,
-                sha: context.sha,
-              });
-              core.info(`Published ${tag} at ${context.sha}.`);
-            }
+          version: latest
+      - name: Skip when production Supabase secrets are not configured
+        if: ${{ env.SUPABASE_ACCESS_TOKEN == '' || env.SUPABASE_PROJECT_ID == '' }}
+        run: echo 'Supabase deployment secrets are not configured; Pages remains on the local acceptance provider.'
+      - name: Link and validate database
+        if: ${{ env.SUPABASE_ACCESS_TOKEN != '' && env.SUPABASE_PROJECT_ID != '' }}
+        working-directory: services/backend
+        run: |
+          supabase link --project-ref "$SUPABASE_PROJECT_ID"
+          supabase db lint --linked
+          supabase db push --linked --include-seed
+      - name: Deploy authenticated API
+        if: ${{ env.SUPABASE_ACCESS_TOKEN != '' && env.SUPABASE_PROJECT_ID != '' }}
+        working-directory: services/backend
+        run: supabase functions deploy kyxos-api --project-ref "$SUPABASE_PROJECT_ID"
+      - name: Deploy anonymous immutable scene resolver
+        if: ${{ env.SUPABASE_ACCESS_TOKEN != '' && env.SUPABASE_PROJECT_ID != '' }}
+        working-directory: services/backend
+        run: supabase functions deploy public-scene --no-verify-jwt --project-ref "$SUPABASE_PROJECT_ID"
