@@ -14,9 +14,9 @@ import {
 
 import { createScreenSpaceSSSNode } from '../effects/screenSpaceSSSNode';
 import type {
+  ScreenSpaceSSSQuality,
   ScreenSpaceSSSSettings,
   ScreenSpaceSSSStatus,
-  ScreenSpaceSSSQuality,
 } from '../types';
 
 export const DEFAULT_SCREEN_SPACE_SSS_SETTINGS = Object.freeze({
@@ -32,7 +32,9 @@ export const DEFAULT_SCREEN_SPACE_SSS_SETTINGS = Object.freeze({
   materialNames: null as string[] | null,
 });
 
-type ResolvedScreenSpaceSSSSettings = typeof DEFAULT_SCREEN_SPACE_SSS_SETTINGS;
+type ResolvedScreenSpaceSSSSettings = Omit<ScreenSpaceSSSSettings, 'materialNames'> & {
+  materialNames: string[] | null;
+};
 
 type MaterialOverride = {
   material: THREE.Material & Record<string, unknown>;
@@ -40,6 +42,12 @@ type MaterialOverride = {
   previousMask: unknown;
   hadThickness: boolean;
   previousThickness: unknown;
+};
+
+type MaterialSelection = {
+  selected: boolean;
+  eligible: boolean;
+  thickness: number;
 };
 
 type ScreenSpaceSSSRuntimeState = {
@@ -201,41 +209,61 @@ function matchesMaterial(
   });
 }
 
+function belongsToModelRoot(object: THREE.Object3D, modelRoot: THREE.Group) {
+  let current: THREE.Object3D | null = object;
+  while (current) {
+    if (current === modelRoot) return true;
+    current = current.parent;
+  }
+  return false;
+}
+
 function applyMaterialMask(viewer: ViewerInternals, state: ScreenSpaceSSSRuntimeState) {
   restoreMaterialOverrides(state);
-  const touched = new Set<THREE.Material>();
+  const selections = new Map<THREE.Material, MaterialSelection>();
 
-  viewer.modelRoot.traverse((object: any) => {
+  // The SSS G-buffer renders the complete scene. Every encountered material gets
+  // explicit zero-valued custom properties so materialReference() is defined for
+  // floors, helpers and other non-SSS objects as well as the selected model.
+  viewer.scene.traverse((object: any) => {
     if (!object?.isMesh || !object.material) return;
     const materials = Array.isArray(object.material) ? object.material : [object.material];
+    const inModel = belongsToModelRoot(object, viewer.modelRoot);
 
     for (const material of materials as THREE.Material[]) {
-      if (touched.has(material) || !isEligibleMaterial(material)) continue;
-      touched.add(material);
-      state.eligibleMaterials += 1;
-
-      const record = material as THREE.Material & Record<string, unknown>;
-      const selected = matchesMaterial(object, material, state.settings.materialNames);
+      const eligible = inModel && isEligibleMaterial(material);
+      const selected = eligible && matchesMaterial(object, material, state.settings.materialNames);
       const userThickness = Number(
         (material.userData as Record<string, unknown> | undefined)?.kyxosSSSThickness,
       );
       const thickness = Number.isFinite(userThickness)
         ? Math.max(0.01, Math.min(1, userThickness))
         : state.settings.thickness;
+      const previous = selections.get(material);
 
-      state.overrides.push({
-        material: record,
-        hadMask: Object.prototype.hasOwnProperty.call(record, 'kyxosSSSMask'),
-        previousMask: record.kyxosSSSMask,
-        hadThickness: Object.prototype.hasOwnProperty.call(record, 'kyxosSSSThickness'),
-        previousThickness: record.kyxosSSSThickness,
+      selections.set(material, {
+        selected: Boolean(previous?.selected || selected),
+        eligible: Boolean(previous?.eligible || eligible),
+        thickness: selected ? thickness : (previous?.thickness ?? state.settings.thickness),
       });
-      record.kyxosSSSMask = selected ? 1 : 0;
-      record.kyxosSSSThickness = selected ? thickness : 0;
-      material.needsUpdate = true;
-      if (selected) state.markedMaterials += 1;
     }
   });
+
+  for (const [material, selection] of selections) {
+    const record = material as THREE.Material & Record<string, unknown>;
+    state.overrides.push({
+      material: record,
+      hadMask: Object.prototype.hasOwnProperty.call(record, 'kyxosSSSMask'),
+      previousMask: record.kyxosSSSMask,
+      hadThickness: Object.prototype.hasOwnProperty.call(record, 'kyxosSSSThickness'),
+      previousThickness: record.kyxosSSSThickness,
+    });
+    record.kyxosSSSMask = selection.selected ? 1 : 0;
+    record.kyxosSSSThickness = selection.selected ? selection.thickness : 0;
+    material.needsUpdate = true;
+    if (selection.eligible) state.eligibleMaterials += 1;
+    if (selection.selected) state.markedMaterials += 1;
+  }
 }
 
 function createStatus(state: ScreenSpaceSSSRuntimeState): ScreenSpaceSSSStatus {
