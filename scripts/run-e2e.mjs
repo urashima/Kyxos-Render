@@ -109,14 +109,17 @@ async function main() {
 
   const args = process.argv.slice(2);
   if (args[0] === '--') args.shift();
+  const playwrightEnv = {
+    ...process.env,
+    KYXOS_MANAGED_E2E_SERVERS: '1',
+  };
+  if (!process.env.CI) {
+    playwrightEnv.PLAYWRIGHT_BROWSERS_PATH ??= '0';
+  }
   const child = spawn(process.execPath, [playwrightCli, 'test', ...args], {
     cwd: root,
     stdio: 'inherit',
-    env: {
-      ...process.env,
-      KYXOS_MANAGED_E2E_SERVERS: '1',
-      PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH ?? '0',
-    },
+    env: playwrightEnv,
   });
   const [code] = await once(child, 'exit');
   process.exitCode = Number(code ?? 1);
