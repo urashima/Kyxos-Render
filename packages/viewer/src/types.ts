@@ -78,6 +78,26 @@ export interface MaterialTextureInputs {
   emissive?: TextureInput;
 }
 
+/**
+ * Parameters for Three.js' official MeshSSSNodeMaterial lighting model.
+ * The optional thickness map is sampled in linear space and multiplied by color.
+ */
+export interface SSSMaterialSettings {
+  enabled: boolean;
+  color: string;
+  distortion: number;
+  ambient: number;
+  attenuation: number;
+  power: number;
+  scale: number;
+  thicknessMap?: TextureInput;
+}
+
+export interface SSSMaterialStatus extends Omit<SSSMaterialSettings, 'thicknessMap'> {
+  hasThicknessMap: boolean;
+  convertedMaterials: number;
+}
+
 export interface ViewerMetrics {
   backend: BackendName;
   fps: number;

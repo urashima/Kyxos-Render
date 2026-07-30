@@ -9,6 +9,7 @@ const latest = resolve(site, 'latest');
 const routes = [
   'overview',
   'pbr',
+  'sss',
   'buffers',
   'aa',
   'traa',
