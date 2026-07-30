@@ -85,9 +85,9 @@ function applyDemoMaterial(viewer: KyxosViewer, presetName: DemoPresetName) {
     }
   });
 
-  // Re-evaluate material masks and rebuild the graph after changing the demo-only
-  // PBR parameters. The public SSS implementation itself still excludes metals.
-  viewer.setScreenSpaceSSS({ thickness: preset.thickness });
+  // Medium keeps the published seven-tap profile while avoiding the optional
+  // broad second lobe on software WebGL. Users can still select High manually.
+  viewer.setScreenSpaceSSS({ thickness: preset.thickness, quality: 'medium' });
 }
 
 if (!constructorState[patchKey]) {
