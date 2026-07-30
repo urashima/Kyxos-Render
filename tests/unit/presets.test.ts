@@ -19,7 +19,7 @@ describe('quality presets', () => {
     expect(preset.ssgi.temporalFiltering).toBe(true);
   });
 
-  it('matches the required cinematic stack', () => {
+  it('matches the required cinematic stack while leaving costly lensflares opt-in', () => {
     const preset = createQualityPreset('cinematic');
     expect(preset.traa.enabled).toBe(true);
     expect(preset.gtao.enabled).toBe(true);
@@ -31,7 +31,7 @@ describe('quality presets', () => {
     expect(preset.dof.enabled).toBe(true);
     expect(preset.lut.enabled).toBe(true);
     expect(preset.lensDistortion.enabled).toBe(true);
-    expect(preset.sparkle.enabled).toBe(true);
+    expect(preset.sparkle.enabled).toBe(false);
     expect(preset.sparkle.intensity).toBe(5);
     expect(preset.sparkle.threshold).toBe(0.3);
     expect(preset.sparkle.radius).toBe(0);
