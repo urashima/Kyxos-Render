@@ -18,6 +18,7 @@ test('Hierarchy duplicate, reparent, delete and undo remain synchronized', async
     mimeType: 'model/gltf-binary',
     buffer: Buffer.from(createTriangleGlb()),
   });
+  await expect(page.getByText(/Import complete/)).toBeVisible({ timeout: 60_000 });
   await expect(page.locator('.hierarchy-row', { hasText: 'Triangle' })).toBeVisible({
     timeout: 60_000,
   });
