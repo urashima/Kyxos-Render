@@ -51,7 +51,7 @@ When disabled, on model replacement, or during viewer disposal, Kyxos restores t
 
 ## Playground
 
-The Playground inspector includes an **SSS Material · Three.js Official** panel with:
+The dedicated `/sss/` demo route automatically loads a low-metalness material study and enables SSS. The Playground inspector includes an **SSS Material · Three.js Official** panel with:
 
 - enable/disable
 - scattering color
