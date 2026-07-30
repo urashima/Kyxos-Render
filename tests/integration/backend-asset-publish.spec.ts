@@ -15,7 +15,9 @@ describe('Supabase publish asset ownership', () => {
     expect(sql).toContain('publish revision conflict');
     expect(sql).toContain('signed URLs are forbidden in published snapshots');
     expect(sql).toContain('executable content is forbidden in published snapshots');
-    expect(sql).toContain("authoritative_digest := encode(public.digest(convert_to(snapshot::text, 'utf8'), 'sha256'), 'hex')");
+    expect(sql).toContain("digest_snapshot := jsonb_set(snapshot, '{metadata,updatedAt}'");
+    expect(sql).toContain('authoritative_digest := encode(');
+    expect(sql).toContain("convert_to(digest_snapshot::text, 'utf8')");
     expect(sql).toContain('and scene_digest = authoritative_digest');
     expect(sql).toContain('if result.id is not null then');
     expect(sql).toContain('return result;');
