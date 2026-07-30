@@ -1,14 +1,18 @@
-import {
-  replaceCommand,
-  type ProjectSession,
-  type SceneDocument,
+import type {
+  ProjectSession,
+  SceneDocument,
 } from '@kyxos/editor-core';
 import type {
   AssetResolver,
   ScenePatch,
   Transform,
+  ViewerCapabilityDescription,
 } from '@kyxos/scene-contract';
-import { KyxosViewer } from '@kyxos/viewer';
+import {
+  KyxosViewer,
+  type AnimationState,
+  type QualityPresetName,
+} from '@kyxos/viewer';
 
 export interface SnapSettings {
   translation: number;
@@ -29,6 +33,14 @@ export interface KyxosViewportAdapter {
   setTool(tool: EditorTool): void;
   setCoordinateSpace(space: CoordinateSpace): void;
   setSnap(settings: SnapSettings): void;
+  getCapabilities(): ViewerCapabilityDescription | null;
+  setAnimationState(state: AnimationState): void;
+  getAnimationState():
+    | (AnimationState & { duration: number; availableClips: string[] })
+    | null;
+  loadEnvironmentAsset(assetId?: string): Promise<void>;
+  resetCamera(): void;
+  setQualityPreset(name: QualityPresetName): void;
   captureThumbnail(): Promise<Blob>;
   dispose(): void;
 }
@@ -87,14 +99,18 @@ export class BrowserKyxosViewportAdapter
     if (!target || this.tool === 'select' || !this.document) return;
     event.preventDefault();
     event.stopPropagation();
+
     const axis = target.dataset.axis as TransformDrag['axis'];
     const transforms = new Map<string, Transform>();
     const scene = this.document.value;
     for (const nodeId of this.selected) {
       const node = scene.nodes.find((entry) => entry.id === nodeId);
-      if (node && !node.locked) transforms.set(nodeId, structuredClone(node.transform));
+      if (node && !node.locked) {
+        transforms.set(nodeId, structuredClone(node.transform));
+      }
     }
     if (!transforms.size) return;
+
     this.drag = {
       pointerId: event.pointerId,
       axis,
@@ -106,12 +122,17 @@ export class BrowserKyxosViewportAdapter
     window.addEventListener('pointermove', this.onGizmoPointerMove);
     window.addEventListener('pointerup', this.onGizmoPointerUp, { once: true });
     this.gizmo?.classList.add('is-dragging');
-    this.dispatchEvent(new CustomEvent('transform-start', { detail: { nodeIds: [...this.selected] } }));
+    this.dispatchEvent(
+      new CustomEvent('transform-start', {
+        detail: { nodeIds: [...this.selected] },
+      }),
+    );
   };
 
   private readonly onGizmoPointerMove = (event: PointerEvent) => {
     if (!this.drag || event.pointerId !== this.drag.pointerId) return;
-    const rawDelta = (event.clientX - this.drag.startX) - (event.clientY - this.drag.startY);
+    const rawDelta =
+      event.clientX - this.drag.startX - (event.clientY - this.drag.startY);
     const property =
       this.tool === 'translate'
         ? 'position'
@@ -124,7 +145,8 @@ export class BrowserKyxosViewportAdapter
 
     for (const [nodeId, transform] of this.drag.transforms) {
       const initial = transform[property][this.drag.axis];
-      let value = property === 'scale' ? Math.max(0.001, initial + delta) : initial + delta;
+      let value =
+        property === 'scale' ? Math.max(0.001, initial + delta) : initial + delta;
       value = this.applySnap(property, value);
       changes.push({
         nodeId,
@@ -149,14 +171,18 @@ export class BrowserKyxosViewportAdapter
     window.removeEventListener('pointermove', this.onGizmoPointerMove);
     this.drag = null;
     this.gizmo?.classList.remove('is-dragging');
-    this.dispatchEvent(new CustomEvent('transform-end', { detail: { nodeIds: [...this.selected] } }));
+    this.dispatchEvent(
+      new CustomEvent('transform-end', {
+        detail: { nodeIds: [...this.selected] },
+      }),
+    );
   };
 
   constructor(
     private readonly assetResolver: AssetResolver,
     private readonly createOptions: {
       backend?: 'auto' | 'webgpu' | 'webgl2';
-      quality?: 'low' | 'medium' | 'high' | 'ultra' | 'capture';
+      quality?: QualityPresetName;
     } = {},
   ) {
     super();
@@ -278,21 +304,56 @@ export class BrowserKyxosViewportAdapter
     this.dispatchEvent(new CustomEvent('tool', { detail: { snap: this.snap } }));
   }
 
+  getCapabilities(): ViewerCapabilityDescription | null {
+    return this.viewer?.getCapabilities() ?? null;
+  }
+
+  setAnimationState(animation: AnimationState): void {
+    this.viewer?.setAnimationState(animation);
+  }
+
+  getAnimationState():
+    | (AnimationState & { duration: number; availableClips: string[] })
+    | null {
+    return this.viewer?.getAnimationState() ?? null;
+  }
+
+  async loadEnvironmentAsset(assetId?: string): Promise<void> {
+    if (!this.viewer || !this.document) {
+      throw new Error('Viewport adapter is not mounted.');
+    }
+    if (!assetId) {
+      await this.viewer.loadEnvironment('');
+      return;
+    }
+    const asset = this.document.value.assets[assetId];
+    if (!asset || asset.kind !== 'environment') {
+      throw new Error(`Environment asset is missing: ${assetId}`);
+    }
+    await this.viewer.loadEnvironment(await this.assetResolver.resolve(asset));
+  }
+
+  resetCamera(): void {
+    this.viewer?.resetCamera();
+  }
+
+  setQualityPreset(name: QualityPresetName): void {
+    this.viewer?.setQualityPreset(name);
+  }
+
   async captureThumbnail(): Promise<Blob> {
     if (!this.viewer) throw new Error('Viewport adapter is not mounted.');
     return this.viewer.capture({ mimeType: 'image/png', scale: 1 });
-  }
-
-  getViewer(): KyxosViewer | null {
-    return this.viewer;
   }
 
   dispose(): void {
     if (this.canvas) {
       this.canvas.removeEventListener('pointerdown', this.onCanvasPointerDown);
     }
-    window.removeEventListener('pointermove', this.onGizmoPointerMove);
-    window.removeEventListener('pointerup', this.onGizmoPointerUp);
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('pointermove', this.onGizmoPointerMove);
+      window.removeEventListener('pointerup', this.onGizmoPointerUp);
+    }
     this.gizmo?.removeEventListener('pointerdown', this.onGizmoPointerDown);
     this.gizmo?.remove();
     this.gizmo = null;
@@ -330,8 +391,8 @@ export class BrowserKyxosViewportAdapter
       pointerEvents: 'auto',
       userSelect: 'none',
     });
-    for (const button of gizmo.querySelectorAll<HTMLButtonElement>('button')) {
-      Object.assign(button.style, {
+    for (const control of gizmo.querySelectorAll<HTMLButtonElement>('button')) {
+      Object.assign(control.style, {
         width: '28px',
         height: '28px',
         padding: '0',
@@ -339,8 +400,9 @@ export class BrowserKyxosViewportAdapter
         fontWeight: '800',
         cursor: 'grab',
       });
-      const axis = button.dataset.axis;
-      button.style.color = axis === 'x' ? '#ff7b86' : axis === 'y' ? '#72e59b' : '#77a9ff';
+      const axis = control.dataset.axis;
+      control.style.color =
+        axis === 'x' ? '#ff7b86' : axis === 'y' ? '#72e59b' : '#77a9ff';
     }
     gizmo.addEventListener('pointerdown', this.onGizmoPointerDown);
     parent.append(gizmo);
