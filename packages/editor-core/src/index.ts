@@ -1,7 +1,6 @@
 import {
   assertSceneContract,
   cloneSceneContract,
-  type JsonPatchOperation,
   type KyxosSceneContract,
   type ScenePatch,
 } from '@kyxos/scene-contract';
@@ -78,8 +77,11 @@ export function applyPatch<T>(input: T, patch: ScenePatch): T {
       const target = parentAt(output, operation.path); assign(target.parent, target.key, source, true); continue;
     }
     const target = parentAt(output, operation.path);
-    if (operation.op === 'remove') remove(target.parent, target.key);
-    else assign(target.parent, target.key, structuredClone(operation.value), operation.op === 'add');
+    if (operation.op === 'remove') {
+      remove(target.parent, target.key);
+    } else if (operation.op === 'add' || operation.op === 'replace') {
+      assign(target.parent, target.key, structuredClone(operation.value), operation.op === 'add');
+    }
   }
   return output;
 }
