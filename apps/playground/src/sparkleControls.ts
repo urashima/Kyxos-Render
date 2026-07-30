@@ -1,3 +1,5 @@
+export {};
+
 const sparkleRowSelector = '[data-effect-row="sparkle"]';
 let observer: MutationObserver | null = null;
 let syncQueued = false;
