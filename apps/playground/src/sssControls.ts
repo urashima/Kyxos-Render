@@ -18,6 +18,10 @@ let currentSettings: SSSMaterialSettings = { ...DEFAULT_SSS_MATERIAL_SETTINGS };
 let thicknessFile: File | null = null;
 let operation = Promise.resolve<SSSMaterialStatus | null>(null);
 
+function isSSSRoute() {
+  return window.location.pathname.split('/').filter(Boolean).at(-1) === 'sss';
+}
+
 async function applyPersistentSettings(viewer: KyxosViewer) {
   if (!currentSettings.enabled) return viewer.getSSSMaterialStatus();
   if (!thicknessFile) return viewer.setSSSMaterial(currentSettings);
@@ -56,6 +60,12 @@ if (!constructorState[patchKey]) {
   viewerConstructor.create = async (options: KyxosViewerCreateOptions) => {
     const viewer = await originalCreate(options);
     currentViewer = viewer;
+
+    if (isSSSRoute()) {
+      currentSettings = { ...DEFAULT_SSS_MATERIAL_SETTINGS, enabled: true };
+      await viewer.loadModel('procedural:matte');
+    }
+
     await applyPersistentSettings(viewer);
     window.dispatchEvent(new CustomEvent('kyxos-viewer-created'));
     return viewer;
