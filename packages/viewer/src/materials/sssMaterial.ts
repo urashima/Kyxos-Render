@@ -1,7 +1,6 @@
 import * as THREE from 'three/webgpu';
 import { texture, uniform } from 'three/tsl';
 
-import type { KyxosViewer } from '../KyxosViewer';
 import type { SSSMaterialSettings, SSSMaterialStatus, TextureInput } from '../types';
 
 export const DEFAULT_SSS_MATERIAL_SETTINGS = Object.freeze({
@@ -30,20 +29,22 @@ type SSSRuntimeState = {
   convertedMaterials: number;
 };
 
-type ViewerInternals = KyxosViewer & {
+type ViewerInternals = {
   modelRoot: THREE.Group;
   materialTextures: Set<THREE.Texture>;
   resetTemporal: (reason?: string) => void;
   loadModel: (url: string) => Promise<void>;
   dispose: () => void;
+  setSSSMaterial: (settings: Partial<SSSMaterialSettings>) => Promise<SSSMaterialStatus>;
+  getSSSMaterialStatus: () => SSSMaterialStatus;
 };
 
 type ViewerConstructor = {
-  prototype: ViewerInternals;
+  prototype: unknown;
 };
 
 const textureLoader = new THREE.TextureLoader();
-const states = new WeakMap<KyxosViewer, SSSRuntimeState>();
+const states = new WeakMap<object, SSSRuntimeState>();
 const installKey = Symbol.for('kyxos.viewer.threejs-sss-extension');
 
 const materialPropertyNames = [
@@ -166,7 +167,7 @@ function createState(): SSSRuntimeState {
   };
 }
 
-function getState(viewer: KyxosViewer) {
+function getState(viewer: object) {
   let state = states.get(viewer);
   if (!state) {
     state = createState();
