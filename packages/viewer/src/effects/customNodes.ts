@@ -44,12 +44,33 @@ export function sparkleNode(source: any, intensity: any, threshold: any) {
   return Fn(() => {
     const base = textureNode.sample(screenUV).toVar();
     const luma = dot(base.rgb, vec3(0.2126, 0.7152, 0.0722)).saturate();
-    const cell = screenUV.mul(vec2(920, 520)).floor();
-    const noise = fract(sin(dot(cell, vec2(12.9898, 78.233))).mul(43758.5453).add(time.mul(0.75)));
-    const gate = step(threshold, noise.mul(luma.pow(5)));
-    const horizontal = smoothstep(0.035, 0, abs(fract(screenUV.x.mul(920)).sub(0.5)));
-    const vertical = smoothstep(0.035, 0, abs(fract(screenUV.y.mul(520)).sub(0.5)));
-    const sparkle = gate.mul(horizontal.add(vertical)).mul(intensity);
+
+    // Keep sparkles sparse, but give each candidate enough screen area to be
+    // visible. The previous 920 x 520 grid made every flare substantially
+    // smaller than one pixel on a normal playground viewport.
+    const grid = vec2(96, 54);
+    const gridUv = screenUV.mul(grid);
+    const cell = gridUv.floor();
+    const local = fract(gridUv).sub(0.5).toVar();
+    const seed = fract(sin(dot(cell, vec2(12.9898, 78.233))).mul(43758.5453));
+
+    // Threshold is a highlight threshold, not a random probability. Applying it
+    // to noise * luma^5 previously required almost perfectly white pixels and a
+    // nearly-one random value at the same time, so the switch appeared inert.
+    const highlight = smoothstep(threshold, float(1), luma);
+    const candidate = step(0.72, seed);
+    const pulse = sin(time.mul(4).add(seed.mul(6.283185))).mul(0.5).add(0.5).pow(2);
+
+    // Build a stable cross without reversed smoothstep edges (undefined in GLSL).
+    const horizontal = float(1)
+      .sub(smoothstep(0.015, 0.12, abs(local.y)))
+      .mul(float(1).sub(smoothstep(0.08, 0.5, abs(local.x))));
+    const vertical = float(1)
+      .sub(smoothstep(0.015, 0.12, abs(local.x)))
+      .mul(float(1).sub(smoothstep(0.08, 0.5, abs(local.y))));
+    const flare = horizontal.add(vertical).saturate();
+    const sparkle = highlight.mul(candidate).mul(pulse).mul(flare).mul(intensity);
+
     return vec4(base.rgb.add(vec3(sparkle)), base.a);
   })();
 }
