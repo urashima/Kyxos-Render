@@ -37,6 +37,13 @@ async function readCanvasSignature(page: Page): Promise<CanvasSignature> {
 
 test('Sparkle toggle visibly changes polished highlights', async ({ page }) => {
   test.setTimeout(120_000);
+  const pageErrors: string[] = [];
+  const consoleErrors: string[] = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+  page.on('console', (message) => {
+    if (message.type() === 'error') consoleErrors.push(message.text());
+  });
+
   await page.setViewportSize({ width: 720, height: 480 });
   await page.goto('/sparkle/');
   await page.waitForFunction(() => window.__kyxosTestApi?.ready(), null, { timeout: 90_000 });
@@ -63,10 +70,16 @@ test('Sparkle toggle visibly changes polished highlights', async ({ page }) => {
     sample.luminance > best.luminance ? sample : best,
   );
   const effects = await page.evaluate(() => window.__kyxosTestApi.getEffects());
+  const lastError = await page.evaluate(() => window.__kyxosTestApi.getLastError());
 
   expect(effects?.sparkle.enabled).toBe(true);
   expect(effects?.sparkle.intensity).toBe(0.8);
   expect(effects?.sparkle.threshold).toBe(0.78);
+  expect(lastError).toBeNull();
+  expect(pageErrors).toEqual([]);
+  expect(
+    consoleErrors.filter((message) => /sparkle|shader|render pipeline|validation error/i.test(message)),
+  ).toEqual([]);
   expect(
     enabled.luminance > disabled.luminance + 1000 ||
       enabled.highlights > disabled.highlights + 2,
