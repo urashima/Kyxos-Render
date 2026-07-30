@@ -2,40 +2,50 @@ import { expect, test, type Page } from '@playwright/test';
 
 async function readCanvasVisibility(page: Page) {
   await page.waitForTimeout(350);
-  return page.evaluate(() => {
-    const canvas = document.querySelector<HTMLCanvasElement>('#viewport');
-    if (!canvas) throw new Error('Viewport canvas was not found.');
-
-    const width = 48;
-    const height = 27;
-    const verificationCanvas = document.createElement('canvas');
-    verificationCanvas.width = width;
-    verificationCanvas.height = height;
-    const context = verificationCanvas.getContext('2d', { willReadFrequently: true });
-    if (!context) throw new Error('2D verification context was unavailable.');
-
-    context.drawImage(canvas, 0, 0, width, height);
-    const pixels = context.getImageData(0, 0, width, height).data;
-    let visible = 0;
-    let luminance = 0;
-
-    for (let index = 0; index < pixels.length; index += 4) {
-      const sum = pixels[index] + pixels[index + 1] + pixels[index + 2];
-      luminance += sum / 3;
-      if (sum > 24 && pixels[index + 3] > 0) visible += 1;
-    }
-
-    return {
-      visibleRatio: visible / (width * height),
-      meanLuminance: luminance / (width * height),
-    };
+  const width = 360;
+  const height = 230;
+  const screenshot = await page.screenshot({
+    type: 'png',
+    clip: { x: 180, y: 110, width, height },
   });
+  const dataUrl = `data:image/png;base64,${screenshot.toString('base64')}`;
+
+  return page.evaluate(
+    async ({ imageUrl, imageWidth, imageHeight }) => {
+      const image = new Image();
+      image.src = imageUrl;
+      await image.decode();
+
+      const verificationCanvas = document.createElement('canvas');
+      verificationCanvas.width = imageWidth;
+      verificationCanvas.height = imageHeight;
+      const context = verificationCanvas.getContext('2d', { willReadFrequently: true });
+      if (!context) throw new Error('2D verification context was unavailable.');
+
+      context.drawImage(image, 0, 0, imageWidth, imageHeight);
+      const pixels = context.getImageData(0, 0, imageWidth, imageHeight).data;
+      let visible = 0;
+      let luminance = 0;
+
+      for (let index = 0; index < pixels.length; index += 4) {
+        const sum = pixels[index] + pixels[index + 1] + pixels[index + 2];
+        luminance += sum / 3;
+        if (sum > 24 && pixels[index + 3] > 0) visible += 1;
+      }
+
+      return {
+        visibleRatio: visible / (imageWidth * imageHeight),
+        meanLuminance: luminance / (imageWidth * imageHeight),
+      };
+    },
+    { imageUrl: dataUrl, imageWidth: width, imageHeight: height },
+  );
 }
 
 async function expectVisibleFrame(page: Page) {
   const frame = await readCanvasVisibility(page);
-  expect(frame.visibleRatio).toBeGreaterThan(0.02);
-  expect(frame.meanLuminance).toBeGreaterThan(2);
+  expect(frame.visibleRatio).toBeGreaterThan(0.2);
+  expect(frame.meanLuminance).toBeGreaterThan(10);
 }
 
 test('deferred screen-space SSS enables, updates and restores without black output', async ({ page }) => {
