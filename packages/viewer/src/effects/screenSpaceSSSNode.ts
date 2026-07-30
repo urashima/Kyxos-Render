@@ -45,6 +45,11 @@ const KERNELS: Record<ScreenSpaceSSSQuality, KernelTap[]> = {
   ],
 };
 
+// Radius is exposed to artists in screen-space pixels at this reference view
+// depth. Perspective scaling keeps the effect physically plausible without
+// shrinking the default 7.5 px profile to less than one pixel in the demo.
+const REFERENCE_VIEW_DEPTH = 8;
+
 export interface ScreenSpaceSSSNodeOptions {
   color: string;
   strength: number;
@@ -97,10 +102,17 @@ export function createScreenSpaceSSSNode(
       const centerDepth = viewZNode.sample(uv);
       const centerNormal = unpackRGBToNormal(normalPackedNode.sample(uv).rgb);
 
+      // `radius` is already a pixel-space control. The previous implementation
+      // divided it directly by View-Z and then divided by screenSize, reducing
+      // the default profile to roughly half a pixel at the demo camera distance.
+      // Scale around a stable reference depth instead, clamped for near/far views.
+      const perspectiveScale = float(REFERENCE_VIEW_DEPTH)
+        .div(max(abs(centerDepth), 1))
+        .clamp(0.5, 2);
       const projectedRadius = radius
         .mul(centerThickness)
         .mul(radiusScale)
-        .div(max(abs(centerDepth), 0.35));
+        .mul(perspectiveScale);
       const texelOffset = vec2(directionX, directionY).div(screenSize).mul(projectedRadius);
       const colorSum = vec3(centerColor.rgb.mul(kernel[0].weight)).toVar();
       const weightSum = float(kernel[0].weight).toVar();
@@ -148,7 +160,7 @@ export function createScreenSpaceSSSNode(
     const broadHorizontal = convertToTexture(blurPass(sourceTexture, 1, 0, 2.4));
     resources.push(broadHorizontal);
     const broad = blurPass(broadHorizontal, 0, 1, 2.4);
-    filtered = mix(narrow, broad, 0.32);
+    filtered = mix(narrow, broad, 0.38);
   }
 
   const deltaNode = Fn(() => {
