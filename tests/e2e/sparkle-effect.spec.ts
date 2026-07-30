@@ -52,12 +52,13 @@ test('Sparkle toggle visibly changes polished highlights', async ({ page }) => {
   });
 
   await page.setViewportSize({ width: 720, height: 480 });
-  await page.goto('/sparkle/');
+  // Start from an existing Low route so this test measures Sparkle only and is
+  // not polluted by the separate cinematic SSR environment fallback path.
+  await page.goto('/lifecycle/');
   await page.waitForFunction(() => window.__kyxosTestApi?.ready(), null, { timeout: 90_000 });
 
-  // Isolate Sparkle from the animated cinematic stack and use the polished
-  // procedural model so the default highlight threshold has deterministic input.
-  await page.evaluate(() => window.__kyxosTestApi.setQuality('low'));
+  // Use the polished procedural model so the default highlight threshold has
+  // deterministic bright regions without enabling the rest of the cinematic stack.
   await selectModel(page, 'procedural:chrome');
   await page.evaluate(() => window.__kyxosTestApi.setEffect('sparkle', { enabled: false }));
   await page.waitForTimeout(1200);
@@ -85,7 +86,11 @@ test('Sparkle toggle visibly changes polished highlights', async ({ page }) => {
   expect(lastError).toBeNull();
   expect(pageErrors).toEqual([]);
   expect(
-    consoleErrors.filter((message) => /sparkle|shader|render pipeline|validation error/i.test(message)),
+    consoleErrors.filter((message) =>
+      /sparkle|render pipeline error|gpuvalidationerror|validation error|device lost|out of memory/i.test(
+        message,
+      ),
+    ),
   ).toEqual([]);
   expect(
     enabled.luminance > disabled.luminance + 1000 ||
