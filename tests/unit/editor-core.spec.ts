@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   AutosaveController,
   HistoryService,
@@ -17,9 +17,13 @@ describe('Editor Core command and history flow', () => {
     const history = new HistoryService(document);
     const commands = new CommandBus(document, history);
     const patches: unknown[] = [];
-    document.addEventListener('change', (event) => patches.push((event as CustomEvent).detail.patch));
+    document.addEventListener('change', (event) =>
+      patches.push((event as CustomEvent).detail.patch),
+    );
 
-    commands.execute(replaceCommand('/nodes/0/transform/position/x', 1.5, 'Move X', 'node:x'));
+    commands.execute(
+      replaceCommand('/nodes/0/transform/position/x', 1.5, 'Move X', 'node:x'),
+    );
     expect(document.value.nodes[0].transform.position.x).toBe(1.5);
     expect(history.canUndo).toBe(true);
     expect(patches).toHaveLength(1);
@@ -45,33 +49,56 @@ describe('Editor Core command and history flow', () => {
 describe('Autosave revision control', () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    Object.defineProperty(globalThis, 'window', { value: globalThis, configurable: true });
-    Object.defineProperty(globalThis, 'navigator', {
-      value: { onLine: true },
-      configurable: true,
+    const browserWindow = Object.assign(new EventTarget(), {
+      setTimeout: globalThis.setTimeout.bind(globalThis),
+      clearTimeout: globalThis.clearTimeout.bind(globalThis),
     });
+    vi.stubGlobal('window', browserWindow);
+    vi.stubGlobal('navigator', { onLine: true });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
   });
 
   it('debounces saves, advances optimistic revisions and reports conflict', async () => {
     const document = new SceneDocument(createFixtureContract());
     let serverRevision = 0;
     const repository: DraftRepository = {
-      async load() { return null; },
+      async load() {
+        return null;
+      },
       async save(_projectId, _contract, expectedRevision) {
         if (expectedRevision !== serverRevision) throw new Error('409 revision conflict');
         serverRevision += 1;
         return { revision: serverRevision };
       },
     };
-    const pending = new Map<string, any>();
+    const pending = new Map<string, unknown>();
     const offline: OfflineDraftStore = {
-      async put(id, value) { pending.set(id, structuredClone(value)); },
-      async get(id) { return pending.get(id) ?? null; },
-      async delete(id) { pending.delete(id); },
+      async put(id, value) {
+        pending.set(id, structuredClone(value));
+      },
+      async get(id) {
+        return (pending.get(id) as Awaited<ReturnType<OfflineDraftStore['get']>>) ?? null;
+      },
+      async delete(id) {
+        pending.delete(id);
+      },
     };
-    const autosave = new AutosaveController('project', document, repository, offline, 0, 50);
+    const autosave = new AutosaveController(
+      'project',
+      document,
+      repository,
+      offline,
+      0,
+      50,
+    );
     const states: string[] = [];
-    autosave.addEventListener('state', (event) => states.push((event as CustomEvent).detail.state));
+    autosave.addEventListener('state', (event) =>
+      states.push((event as CustomEvent).detail.state),
+    );
 
     document.apply([{ op: 'replace', path: '/nodes/0/visible', value: false }]);
     expect(autosave.state).toBe('Dirty');
