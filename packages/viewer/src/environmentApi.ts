@@ -12,8 +12,17 @@ KyxosViewer.prototype.clearEnvironmentAsset = function clearEnvironmentAsset(): 
   this.resetTemporal('environment-cleared');
 };
 
+KyxosViewer.prototype.restoreStudioEnvironment = async function restoreStudioEnvironment(): Promise<void> {
+  const restore = internals(this).setStudioEnvironment as
+    | ((resetHistory: boolean) => Promise<void>)
+    | undefined;
+  if (!restore) throw new Error('Studio environment restoration is unavailable.');
+  await restore.call(this, true);
+};
+
 declare module './KyxosViewer' {
   interface KyxosViewer {
     clearEnvironmentAsset(): void;
+    restoreStudioEnvironment(): Promise<void>;
   }
 }
