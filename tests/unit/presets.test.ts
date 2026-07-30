@@ -31,6 +31,9 @@ describe('quality presets', () => {
     expect(preset.dof.enabled).toBe(true);
     expect(preset.lut.enabled).toBe(true);
     expect(preset.lensDistortion.enabled).toBe(true);
+    expect(preset.sparkle.enabled).toBe(true);
+    expect(preset.sparkle.intensity).toBe(0.8);
+    expect(preset.sparkle.threshold).toBe(0.78);
   });
 
   it('keeps anti-aliasing modes mutually exclusive', () => {
