@@ -27,6 +27,14 @@ export const demoRoutes: DemoRoute[] = [
     quality: 'medium',
   },
   {
+    slug: 'sss',
+    title: 'Screen-Space Subsurface Scattering',
+    eyebrow: 'Sketchfab-Style Deferred SSS',
+    description:
+      'Material-masked separable diffusion with depth, normal, thickness and albedo edge stopping for skin, wax and jade.',
+    quality: 'high',
+  },
+  {
     slug: 'buffers',
     title: 'Scene MRT Buffers',
     eyebrow: 'Debug Views',
