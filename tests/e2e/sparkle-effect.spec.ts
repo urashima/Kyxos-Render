@@ -35,6 +35,13 @@ async function readCanvasSignature(page: Page): Promise<CanvasSignature> {
   });
 }
 
+async function selectModel(page: Page, value: string) {
+  await page.locator<HTMLSelectElement>('#model-select').evaluate((element, nextValue) => {
+    element.value = String(nextValue);
+    element.dispatchEvent(new Event('change', { bubbles: true }));
+  }, value);
+}
+
 test('Sparkle toggle visibly changes polished highlights', async ({ page }) => {
   test.setTimeout(120_000);
   const pageErrors: string[] = [];
@@ -51,7 +58,7 @@ test('Sparkle toggle visibly changes polished highlights', async ({ page }) => {
   // Isolate Sparkle from the animated cinematic stack and use the polished
   // procedural model so the default highlight threshold has deterministic input.
   await page.evaluate(() => window.__kyxosTestApi.setQuality('low'));
-  await page.selectOption('#model-select', 'procedural:chrome');
+  await selectModel(page, 'procedural:chrome');
   await page.evaluate(() => window.__kyxosTestApi.setEffect('sparkle', { enabled: false }));
   await page.waitForTimeout(1200);
 
