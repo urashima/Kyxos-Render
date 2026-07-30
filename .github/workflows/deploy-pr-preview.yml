@@ -56,10 +56,10 @@ jobs:
       - name: Build pull request preview
         working-directory: preview-src
         env:
-          PAGES_BASE: /Kyxos-Render/${{ env.PREVIEW_ROUTE }}/
+          PAGES_BASE: /Kyxos-Render/${{ env.PREVIEW_ROUTE }}/latest/
         run: |
           pnpm install --no-frozen-lockfile
-          pnpm build
+          PAGES_BUILD=1 pnpm build:pages
 
       - name: Compose accepted site and preview route
         shell: bash
@@ -67,35 +67,15 @@ jobs:
           rm -rf combined-site
           cp -R main-src/site combined-site
           mkdir -p "combined-site/${PREVIEW_ROUTE}"
-          cp -R preview-src/apps/playground/dist/. "combined-site/${PREVIEW_ROUTE}/"
-          node <<'NODE'
-          const { copyFile, mkdir } = require('node:fs/promises');
-          const { resolve } = require('node:path');
-          const root = resolve('combined-site', process.env.PREVIEW_ROUTE);
-          const routes = [
-            'overview', 'pbr', 'buffers', 'aa', 'traa', 'temporal', 'gtao', 'ssao', 'ssr', 'ssgi',
-            'motion-blur', 'denoise', 'sharpness', 'lens-distortion', 'background', 'sparkle',
-            'full-stack', 'performance', 'lifecycle',
-          ];
-          (async () => {
-            for (const route of routes) {
-              const target = resolve(root, route);
-              await mkdir(target, { recursive: true });
-              await copyFile(resolve(root, 'index.html'), resolve(target, 'index.html'));
-            }
-          })().catch((error) => {
-            console.error(error);
-            process.exit(1);
-          });
-          NODE
+          cp -R preview-src/site/. "combined-site/${PREVIEW_ROUTE}/"
 
       - name: Verify preview artifact structure
         run: |
           test -f combined-site/latest/index.html
           test -f "combined-site/${PREVIEW_ROUTE}/index.html"
-          test -f "combined-site/${PREVIEW_ROUTE}/ssgi/index.html"
-          test -f "combined-site/${PREVIEW_ROUTE}/full-stack/index.html"
-          grep -R "/Kyxos-Render/${PREVIEW_ROUTE}/" "combined-site/${PREVIEW_ROUTE}/index.html"
+          test -f "combined-site/${PREVIEW_ROUTE}/latest/ssgi/index.html"
+          test -f "combined-site/${PREVIEW_ROUTE}/studio/index.html"
+          test -f "combined-site/${PREVIEW_ROUTE}/s/kyxos-acceptance-scene/index.html"
 
       - uses: actions/upload-pages-artifact@v3
         with:
@@ -108,19 +88,25 @@ jobs:
       - name: Verify deployed preview online
         shell: bash
         run: |
-          rm -f preview-index.html preview-ssgi.html
+          rm -f preview-index.html preview-ssgi.html preview-studio.html preview-public.html
           for attempt in $(seq 1 18); do
             if curl --fail --silent --show-error --location "${PREVIEW_URL}" --output preview-index.html && \
-               curl --fail --silent --show-error --location "${PREVIEW_URL}ssgi/" --output preview-ssgi.html; then
+               curl --fail --silent --show-error --location "${PREVIEW_URL}latest/ssgi/" --output preview-ssgi.html && \
+               curl --fail --silent --show-error --location "${PREVIEW_URL}studio/" --output preview-studio.html && \
+               curl --fail --silent --show-error --location "${PREVIEW_URL}s/kyxos-acceptance-scene/" --output preview-public.html; then
               break
             fi
-            rm -f preview-index.html preview-ssgi.html
+            rm -f preview-index.html preview-ssgi.html preview-studio.html preview-public.html
             sleep 5
           done
           test -s preview-index.html
           test -s preview-ssgi.html
-          grep -q "Kyxos WebGPU Realism Lab" preview-index.html
+          test -s preview-studio.html
+          test -s preview-public.html
+          grep -q "Kyxos Render" preview-index.html
           grep -q "Kyxos WebGPU Realism Lab" preview-ssgi.html
+          grep -q "Kyxos Studio" preview-studio.html
+          grep -q "Kyxos Public Viewer" preview-public.html
 
       - name: Publish preview link on pull request
         uses: actions/github-script@v7

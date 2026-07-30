@@ -5,16 +5,18 @@
   "type": "module",
   "packageManager": "pnpm@10.14.0",
   "scripts": {
-    "build": "pnpm --filter @kyxos/viewer build && pnpm --filter @kyxos/playground build",
+    "build": "pnpm --filter @kyxos/scene-contract build && pnpm --filter @kyxos/asset-importer build && pnpm --filter @kyxos/editor-core build && pnpm --filter @kyxos/api-client build && pnpm --filter @kyxos/viewer build && pnpm --filter @kyxos/studio-ui build && pnpm --filter @kyxos/playground build && pnpm --filter @kyxos/studio build && pnpm --filter @kyxos/public-viewer build",
     "build:pages": "pnpm build && node scripts/build-pages.mjs",
     "dev": "pnpm --filter @kyxos/playground dev",
     "lint": "eslint .",
+    "lint:imports": "node scripts/check-forbidden-imports.mjs",
     "format:check": "prettier --check .",
     "format": "prettier --write .",
-    "test": "vitest run tests/unit",
-    "test:e2e": "playwright test",
-    "typecheck": "pnpm --filter @kyxos/viewer typecheck && pnpm --filter @kyxos/playground typecheck",
-    "verify": "pnpm lint && pnpm typecheck && pnpm test && pnpm build"
+    "test": "vitest run tests/unit tests/integration tests/compatibility",
+    "test:compatibility": "vitest run tests/compatibility",
+    "test:e2e": "node scripts/run-e2e.mjs",
+    "typecheck": "pnpm --filter @kyxos/scene-contract typecheck && pnpm --filter @kyxos/asset-importer typecheck && pnpm --filter @kyxos/editor-core typecheck && pnpm --filter @kyxos/api-client typecheck && pnpm --filter @kyxos/viewer typecheck && pnpm --filter @kyxos/studio-ui typecheck && pnpm --filter @kyxos/playground typecheck && pnpm --filter @kyxos/studio typecheck && pnpm --filter @kyxos/public-viewer typecheck",
+    "verify": "pnpm format:check && pnpm lint && pnpm lint:imports && pnpm typecheck && pnpm test && pnpm build"
   },
   "devDependencies": {
     "@eslint/js": "^9.32.0",

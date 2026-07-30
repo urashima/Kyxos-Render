@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite';
 
 export default defineConfig({
-  base: process.env.PAGES_BASE ?? (process.env.PAGES_BUILD ? '/Kyxos-Render/latest/' : '/'),
+  base: process.env.PUBLIC_VIEWER_BASE ?? './',
   build: {
     target: 'es2022',
     sourcemap: true,

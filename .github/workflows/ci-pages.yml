@@ -35,8 +35,9 @@ jobs:
         with:
           node-version: 22
       - run: pnpm install --no-frozen-lockfile
-      - run: pnpm format
+      - run: pnpm format:check
       - run: pnpm lint
+      - run: pnpm lint:imports
       - name: Typecheck
         shell: bash
         run: |
@@ -50,7 +51,7 @@ jobs:
         with:
           name: typecheck-diagnostics
           path: typecheck.log
-      - name: Unit tests
+      - name: Unit, integration and compatibility tests
         shell: bash
         run: |
           set +e
