@@ -3,7 +3,6 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import type {
   AssetResolver,
   KyxosSceneContract,
-  ScenePatch,
 } from '@kyxos/scene-contract';
 import { KyxosViewer } from './KyxosViewer';
 import type { AnimationState } from './sceneTypes';
@@ -116,26 +115,15 @@ KyxosViewer.prototype.loadScene = async function loadSceneWithAnimation(
   }
 };
 
-const originalApplyScenePatch = KyxosViewer.prototype.applyScenePatch;
-KyxosViewer.prototype.applyScenePatch = async function applyAnimationPatch(
-  patch: ScenePatch,
-): Promise<void> {
-  await originalApplyScenePatch.call(this, patch);
-  if (patch.some((operation) => operation.path.startsWith('/animations'))) {
-    const contract = internals(this).getLoadedSceneContract?.() as
-      | KyxosSceneContract
-      | undefined;
-    if (contract) configureContractAnimations(this, contract);
-  }
-};
-
 KyxosViewer.prototype.setAnimationState = function setAnimationRuntimeState(
   animation: AnimationState,
 ): void {
   const current = state(this);
   const clip = resolveClip(current, animation.clipId);
   current.activeClipId = animation.clipId;
-  current.speed = Number.isFinite(animation.speed) ? Math.max(0, animation.speed ?? 1) : 1;
+  current.speed = Number.isFinite(animation.speed)
+    ? Math.max(0, animation.speed ?? 1)
+    : 1;
   current.loop = animation.loop !== false;
   current.time = Math.max(0, animation.time ?? current.time);
 
@@ -148,10 +136,15 @@ KyxosViewer.prototype.setAnimationState = function setAnimationRuntimeState(
   const action = current.mixer.clipAction(clip);
   action.enabled = true;
   action.clampWhenFinished = !current.loop;
-  action.setLoop(current.loop ? THREE.LoopRepeat : THREE.LoopOnce, current.loop ? Infinity : 1);
+  action.setLoop(
+    current.loop ? THREE.LoopRepeat : THREE.LoopOnce,
+    current.loop ? Infinity : 1,
+  );
   action.setEffectiveTimeScale(1);
   action.reset();
-  if (current.time > 0) action.time = Math.min(current.time, Math.max(0, clip.duration));
+  if (current.time > 0) {
+    action.time = Math.min(current.time, Math.max(0, clip.duration));
+  }
   action.play();
   action.paused = !animation.playing;
   this.setAnimationEnabled(animation.playing);
