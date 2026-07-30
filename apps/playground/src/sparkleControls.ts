@@ -1,8 +1,19 @@
 export {};
 
 const sparkleRowSelector = '[data-effect-row="sparkle"]';
+const sparkleLabel = 'Sparkle · Three.js Anamorphic';
+const sparkleTitle = 'Sparkle · Three.js Anamorphic Lensflare';
+const sparkleDescription = 'Official Three.js WebGPU anamorphic lensflare built on BloomNode.';
 let observer: MutationObserver | null = null;
 let syncQueued = false;
+
+function setText(element: Element | null | undefined, value: string) {
+  if (element && element.textContent !== value) element.textContent = value;
+}
+
+function setAttribute(element: Element | null | undefined, name: string, value: string) {
+  if (element?.getAttribute(name) !== value) element?.setAttribute(name, value);
+}
 
 function syncSparkleControls() {
   const effectControls = document.querySelector<HTMLDivElement>('#effect-controls');
@@ -11,35 +22,31 @@ function syncSparkleControls() {
   const sparkleRow = effectControls?.querySelector<HTMLElement>(sparkleRowSelector);
 
   const focusButton = sparkleRow?.querySelector<HTMLButtonElement>('[data-focus-effect="sparkle"]');
-  if (focusButton) {
-    focusButton.textContent = 'Sparkle · Three.js Anamorphic';
-    sparkleRow.title = 'Official Three.js WebGPU anamorphic lensflare built on BloomNode.';
-  }
+  setText(focusButton, sparkleLabel);
+  setAttribute(sparkleRow, 'title', sparkleDescription);
 
   if (!parameterControls || !parameterTitle || !parameterTitle.textContent?.startsWith('Sparkle')) return;
 
-  parameterTitle.textContent = 'Sparkle · Three.js Anamorphic Lensflare';
+  setText(parameterTitle, sparkleTitle);
 
   const intensity = parameterControls.querySelector<HTMLInputElement>(
     '[data-effect-parameter="intensity"]',
   );
   if (intensity) {
-    intensity.min = '0';
-    intensity.max = '10';
-    intensity.step = '0.1';
-    const output = intensity.nextElementSibling;
-    if (output) output.textContent = Number(intensity.value).toFixed(1);
+    setAttribute(intensity, 'min', '0');
+    setAttribute(intensity, 'max', '10');
+    setAttribute(intensity, 'step', '0.1');
+    setText(intensity.nextElementSibling, Number(intensity.value).toFixed(1));
   }
 
   const threshold = parameterControls.querySelector<HTMLInputElement>(
     '[data-effect-parameter="threshold"]',
   );
   if (threshold) {
-    threshold.min = '0';
-    threshold.max = '0.9';
-    threshold.step = '0.01';
-    const output = threshold.nextElementSibling;
-    if (output) output.textContent = Number(threshold.value).toFixed(2);
+    setAttribute(threshold, 'min', '0');
+    setAttribute(threshold, 'max', '0.9');
+    setAttribute(threshold, 'step', '0.01');
+    setText(threshold.nextElementSibling, Number(threshold.value).toFixed(2));
   }
 }
 
