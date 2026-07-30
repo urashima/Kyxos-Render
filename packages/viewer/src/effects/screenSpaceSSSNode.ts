@@ -94,7 +94,7 @@ export function createScreenSpaceSSSNode(
       const centerSurface = surfaceNode.sample(uv).toVar();
       const centerMask = centerData.r.saturate();
       const centerThickness = max(centerData.g, 0.01);
-      const centerDepth = viewZNode.sample(uv).r;
+      const centerDepth = viewZNode.sample(uv);
       const centerNormal = unpackRGBToNormal(normalPackedNode.sample(uv).rgb);
 
       const projectedRadius = radius
@@ -112,7 +112,7 @@ export function createScreenSpaceSSSNode(
           const sampleUv = uv.add(texelOffset.mul(tap.offset * sign)).clamp(0, 1);
           const sampleData = sssDataNode.sample(sampleUv);
           const sampleMask = sampleData.r.saturate();
-          const sampleDepth = viewZNode.sample(sampleUv).r;
+          const sampleDepth = viewZNode.sample(sampleUv);
           const sampleNormal = unpackRGBToNormal(normalPackedNode.sample(sampleUv).rgb);
           const sampleSurface = surfaceNode.sample(sampleUv);
 
