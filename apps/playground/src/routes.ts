@@ -32,7 +32,7 @@ export const demoRoutes: DemoRoute[] = [
     eyebrow: 'Sketchfab-Style Deferred SSS',
     description:
       'Material-masked separable diffusion with depth, normal, thickness and albedo edge stopping for skin, wax and jade.',
-    quality: 'high',
+    quality: 'low',
   },
   {
     slug: 'buffers',
