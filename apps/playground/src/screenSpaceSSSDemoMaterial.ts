@@ -14,7 +14,7 @@ type MaterialLike = {
   needsUpdate?: boolean;
 };
 
-type ViewerInternals = KyxosViewer & {
+type ViewerInternals = {
   modelRoot?: {
     traverse: (callback: (object: { isMesh?: boolean; material?: MaterialLike | MaterialLike[] }) => void) => void;
   };
@@ -62,7 +62,7 @@ function isSSSRoute() {
 
 function applyDemoMaterial(viewer: KyxosViewer, presetName: DemoPresetName) {
   const preset = presets[presetName];
-  const root = (viewer as ViewerInternals).modelRoot;
+  const root = (viewer as unknown as ViewerInternals).modelRoot;
   if (!root) return;
 
   root.traverse((object) => {
