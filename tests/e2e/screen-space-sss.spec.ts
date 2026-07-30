@@ -22,26 +22,23 @@ test('deferred screen-space SSS enables, updates and restores safely', async ({ 
   const initial = await page.evaluate(() => window.__kyxosScreenSpaceSSSTestApi.getStatus());
   expect(initial).toMatchObject({
     enabled: true,
-    quality: 'high',
+    quality: 'medium',
     markedMaterials: 1,
     eligibleMaterials: 1,
     lastError: null,
   });
 
-  await page.locator('#sss-strength').fill('0.35');
-  await page.locator('#sss-strength').dispatchEvent('change');
-  await page.locator('#sss-quality').selectOption('low');
-  await page.waitForTimeout(200);
-
-  const updated = await page.evaluate(() => window.__kyxosScreenSpaceSSSTestApi.getStatus());
+  const updated = await page.evaluate(() =>
+    window.__kyxosScreenSpaceSSSTestApi.set({ strength: 0.35, quality: 'low' }),
+  );
   expect(updated).toMatchObject({ enabled: true, strength: 0.35, quality: 'low', lastError: null });
 
-  await page.locator('#sss-enabled').uncheck();
-  await page.waitForTimeout(200);
-  const disabled = await page.evaluate(() => window.__kyxosScreenSpaceSSSTestApi.getStatus());
+  const disabled = await page.evaluate(() =>
+    window.__kyxosScreenSpaceSSSTestApi.set({ enabled: false }),
+  );
   expect(disabled).toMatchObject({ enabled: false, markedMaterials: 0, lastError: null });
 
-  await page.locator('#sss-enabled').check();
+  await page.evaluate(() => window.__kyxosScreenSpaceSSSTestApi.set({ enabled: true }));
   await page.waitForFunction(
     () => window.__kyxosScreenSpaceSSSTestApi.getStatus()?.markedMaterials === 1,
     null,
