@@ -1,15 +1,12 @@
 import { KyxosViewer, type KyxosViewerCreateOptions } from '@kyxos/viewer';
 
 const patchKey = Symbol.for('kyxos.playground.fresh-canvas-viewer-create');
+type ViewerCreate = (options: KyxosViewerCreateOptions) => Promise<KyxosViewer>;
 
-type PatchedViewerConstructor = typeof KyxosViewer & {
-  [patchKey]?: true;
-  create(options: KyxosViewerCreateOptions): Promise<KyxosViewer>;
-};
+const viewerConstructor = KyxosViewer as typeof KyxosViewer & { create: ViewerCreate };
+const patchState = viewerConstructor as unknown as Record<PropertyKey, unknown>;
 
-const viewerConstructor = KyxosViewer as PatchedViewerConstructor;
-
-if (!viewerConstructor[patchKey]) {
+if (!patchState[patchKey]) {
   const originalCreate = viewerConstructor.create.bind(viewerConstructor);
 
   viewerConstructor.create = async (options: KyxosViewerCreateOptions) => {
@@ -29,5 +26,5 @@ if (!viewerConstructor[patchKey]) {
     return originalCreate({ ...options, canvas: replacement });
   };
 
-  viewerConstructor[patchKey] = true;
+  patchState[patchKey] = true;
 }
