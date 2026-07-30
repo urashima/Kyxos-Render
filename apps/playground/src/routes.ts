@@ -140,9 +140,10 @@ export const demoRoutes: DemoRoute[] = [
   },
   {
     slug: 'sparkle',
-    title: 'Material Sparkle',
-    eyebrow: 'Small Kyxos TSL Node',
-    description: 'A restrained highlight sparkle layer designed for polished material presentation.',
+    title: 'Anamorphic Highlight Sparkle',
+    eyebrow: 'Official Three.js BloomNode',
+    description:
+      'The official Three.js WebGPU anamorphic lensflare example: luminance high-pass, RTT and horizontal multi-sample streaks.',
     quality: 'cinematic',
     focus: 'sparkle',
   },
@@ -150,7 +151,8 @@ export const demoRoutes: DemoRoute[] = [
     slug: 'full-stack',
     title: 'Complete Cinematic Stack',
     eyebrow: 'All Effects',
-    description: 'GTAO, SSR, SSGI, temporal filtering, motion blur, bloom, DoF, LUT and lens treatment.',
+    description:
+      'GTAO, SSR, SSGI, temporal filtering, motion blur, bloom, DoF, LUT and official anamorphic lens treatment.',
     quality: 'cinematic',
     animate: true,
   },
