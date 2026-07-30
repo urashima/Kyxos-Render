@@ -11,24 +11,30 @@ test('official Three.js SSS material enters the Kyxos beauty pipeline', async ({
   });
 
   await page.setViewportSize({ width: 960, height: 640 });
-  await page.goto('/pbr/');
+  await page.goto('/sss/');
   await page.waitForFunction(
-    () => window.__kyxosTestApi?.ready() && Boolean(window.__kyxosSSSTestApi),
+    () => {
+      const status = window.__kyxosSSSTestApi?.get();
+      return window.__kyxosTestApi?.ready() && status?.enabled && status.convertedMaterials > 0;
+    },
     null,
     { timeout: 90_000 },
   );
 
-  const enabled = await page.evaluate(async () => {
-    await window.__kyxosSSSTestApi?.demo();
-    return window.__kyxosSSSTestApi?.set({
+  const initial = await page.evaluate(() => window.__kyxosSSSTestApi?.get());
+  expect(initial?.enabled).toBe(true);
+  expect(initial?.convertedMaterials).toBeGreaterThan(0);
+
+  const enabled = await page.evaluate(async () =>
+    window.__kyxosSSSTestApi?.set({
       color: '#ff5c3a',
       distortion: 0.2,
       ambient: 0.5,
       attenuation: 1.1,
       power: 3,
       scale: 20,
-    });
-  });
+    }),
+  );
 
   expect(enabled).toMatchObject({
     enabled: true,
