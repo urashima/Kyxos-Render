@@ -2,13 +2,16 @@ import { defineConfig, devices } from '@playwright/test';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-process.env.PLAYWRIGHT_BROWSERS_PATH ??= '0';
+if (!process.env.CI) {
+  process.env.PLAYWRIGHT_BROWSERS_PATH ??= '0';
+}
 
 const localChromiumExecutable = resolve(
   process.cwd(),
   'node_modules/.pnpm/playwright-core@1.62.0/node_modules/playwright-core/.local-browsers/chromium-1234/chrome-win64/chrome.exe',
 );
-const executablePath = existsSync(localChromiumExecutable) ? localChromiumExecutable : undefined;
+const executablePath =
+  process.platform === 'win32' && existsSync(localChromiumExecutable) ? localChromiumExecutable : undefined;
 const chromiumLaunchOptions = (args: string[]) => ({
   ...(executablePath ? { executablePath } : {}),
   args,

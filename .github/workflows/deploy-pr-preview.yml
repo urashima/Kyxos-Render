@@ -88,19 +88,25 @@ jobs:
       - name: Verify deployed preview online
         shell: bash
         run: |
-          rm -f preview-index.html preview-ssgi.html
+          rm -f preview-index.html preview-ssgi.html preview-studio.html preview-public.html
           for attempt in $(seq 1 18); do
             if curl --fail --silent --show-error --location "${PREVIEW_URL}" --output preview-index.html && \
-               curl --fail --silent --show-error --location "${PREVIEW_URL}latest/ssgi/" --output preview-ssgi.html; then
+               curl --fail --silent --show-error --location "${PREVIEW_URL}latest/ssgi/" --output preview-ssgi.html && \
+               curl --fail --silent --show-error --location "${PREVIEW_URL}studio/" --output preview-studio.html && \
+               curl --fail --silent --show-error --location "${PREVIEW_URL}s/kyxos-acceptance-scene/" --output preview-public.html; then
               break
             fi
-            rm -f preview-index.html preview-ssgi.html
+            rm -f preview-index.html preview-ssgi.html preview-studio.html preview-public.html
             sleep 5
           done
           test -s preview-index.html
           test -s preview-ssgi.html
-          grep -q "Kyxos WebGPU Realism Lab" preview-index.html
+          test -s preview-studio.html
+          test -s preview-public.html
+          grep -q "Kyxos Render" preview-index.html
           grep -q "Kyxos WebGPU Realism Lab" preview-ssgi.html
+          grep -q "Kyxos Studio" preview-studio.html
+          grep -q "Kyxos Public Viewer" preview-public.html
 
       - name: Publish preview link on pull request
         uses: actions/github-script@v7
