@@ -129,8 +129,16 @@ function applyOperation(root: KyxosSceneContract, operation: JsonPatchOperation)
     return;
   }
   const target = getParent(root, operation.path);
-  if (operation.op === 'remove') removeAt(target.parent, target.key);
-  else setAt(target.parent, target.key, structuredClone(operation.value), operation.op === 'add');
+  if (operation.op === 'remove') {
+    removeAt(target.parent, target.key);
+  } else if (operation.op === 'add' || operation.op === 'replace') {
+    setAt(
+      target.parent,
+      target.key,
+      structuredClone(operation.value),
+      operation.op === 'add',
+    );
+  }
 }
 
 function applyPatchToContract(
@@ -413,7 +421,6 @@ export async function applyScenePatch(
   const current = state(this);
   if (!current.contract) throw new Error('No Scene Contract is loaded.');
   const next = applyPatchToContract(current.contract, patch);
-  const previous = current.contract;
   current.contract = next;
 
   const materialIds = new Set<string>();
@@ -471,7 +478,6 @@ export async function applyScenePatch(
   }
   if (renderChanged) this.setRenderSettings(next.renderSettings);
 
-  void previous;
   this.dispatchEvent(new CustomEvent('scene-patch', { detail: { patch } }));
 }
 
