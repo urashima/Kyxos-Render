@@ -27,6 +27,14 @@ export const demoRoutes: DemoRoute[] = [
     quality: 'medium',
   },
   {
+    slug: 'sss',
+    title: 'Subsurface Scattering Material',
+    eyebrow: 'Official MeshSSSNodeMaterial',
+    description:
+      'Thickness-driven direct-light scattering enters the Beauty pass before the existing screen-space and temporal stack.',
+    quality: 'medium',
+  },
+  {
     slug: 'buffers',
     title: 'Scene MRT Buffers',
     eyebrow: 'Debug Views',
