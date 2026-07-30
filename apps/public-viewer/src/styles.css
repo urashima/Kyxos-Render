@@ -1,0 +1,112 @@
+* {
+  box-sizing: border-box;
+}
+
+:root {
+  color-scheme: dark;
+  font-family:
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    sans-serif;
+  background: #07090d;
+  color: #edf2f7;
+}
+
+body {
+  margin: 0;
+  background: #07090d;
+}
+
+button {
+  min-height: 32px;
+  border: 1px solid #34404e;
+  border-radius: 6px;
+  background: #202834;
+  color: #edf2f7;
+  font: inherit;
+  cursor: pointer;
+}
+
+.public-shell {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background: #07090d;
+}
+
+#public-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.public-toolbar {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) auto auto auto auto auto auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px;
+  border: 1px solid #2c3440;
+  border-radius: 8px;
+  background: rgba(15, 19, 25, 0.86);
+  backdrop-filter: blur(14px);
+}
+
+#scene-state {
+  color: #a7f3d0;
+  font-size: 12px;
+}
+
+.annotation-list {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  display: grid;
+  gap: 8px;
+  width: min(360px, calc(100vw - 24px));
+}
+
+.annotation-list button {
+  display: grid;
+  gap: 4px;
+  text-align: left;
+  padding: 10px;
+  background: rgba(15, 19, 25, 0.86);
+}
+
+.annotation-list button.active {
+  border-color: #33d6a6;
+}
+
+.annotation-list span {
+  overflow: hidden;
+  color: #cbd5e1;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 12px;
+}
+
+.embed-clean .public-toolbar,
+.embed-clean .annotation-list {
+  display: none;
+}
+
+@media (max-width: 720px) {
+  .public-toolbar {
+    grid-template-columns: 1fr auto auto;
+  }
+
+  .public-toolbar button:nth-of-type(n + 4),
+  #scene-state {
+    display: none;
+  }
+}

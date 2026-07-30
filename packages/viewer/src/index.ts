@@ -1,6 +1,23 @@
 export { KyxosViewer } from './KyxosViewer';
 export { createQualityPreset, enforceEffectRules, mergeEffectSettings } from './presets';
 export type {
+  Annotation,
+  AnimationClipSummary,
+  AssetManifest,
+  AssetReference,
+  CameraState,
+  CompatibilityResult,
+  EnvironmentState,
+  KyxosResult,
+  KyxosSceneDocument,
+  MaterialOverride,
+  RuntimeMaterial,
+  SceneGraphNode,
+  SceneLight,
+  TransformState,
+  ViewerCapabilities,
+} from '@kyxos/scene-contract';
+export type {
   BackendName,
   BackendPreference,
   CaptureOptions,

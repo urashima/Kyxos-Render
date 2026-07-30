@@ -1,4 +1,18 @@
 import type { Texture } from 'three/webgpu';
+import type {
+  Annotation,
+  AnimationClipSummary,
+  CameraState,
+  CompatibilityResult,
+  EnvironmentState,
+  KyxosResult,
+  KyxosSceneDocument,
+  RuntimeMaterial,
+  SceneGraphNode,
+  SceneLight,
+  TransformState,
+  ViewerCapabilities,
+} from '@kyxos/scene-contract';
 
 export type BackendPreference = 'auto' | 'webgpu' | 'webgl2';
 export type BackendName = 'webgpu' | 'webgl2';
@@ -116,7 +130,28 @@ export interface StressResult {
 export interface ViewerEventMap {
   ready: CustomEvent<ViewerMetrics>;
   metrics: CustomEvent<ViewerMetrics>;
+  'asset-progress': CustomEvent<{ loaded: number; total?: number; url: string }>;
+  'asset-ready': CustomEvent<{ assetId: string | null }>;
+  'selection-change': CustomEvent<{ objectId: string | null }>;
+  'camera-change': CustomEvent<CameraState>;
+  'animation-change': CustomEvent<{ activeClipId: string | null; playing: boolean; time: number }>;
+  'scene-dirty': CustomEvent<{ reason: string }>;
   warning: CustomEvent<{ effect?: EffectName; message: string }>;
   error: CustomEvent<{ effect?: EffectName; error: unknown }>;
   disposed: CustomEvent<void>;
 }
+
+export type {
+  Annotation,
+  AnimationClipSummary,
+  CameraState,
+  CompatibilityResult,
+  EnvironmentState,
+  KyxosResult,
+  KyxosSceneDocument,
+  RuntimeMaterial,
+  SceneGraphNode,
+  SceneLight,
+  TransformState,
+  ViewerCapabilities,
+};

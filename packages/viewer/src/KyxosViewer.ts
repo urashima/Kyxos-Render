@@ -44,6 +44,32 @@ import { lut3D } from 'three/addons/tsl/display/Lut3DNode.js';
 import { sharpen } from 'three/addons/tsl/display/SharpenNode.js';
 
 import {
+  KYXOS_ASSET_MANIFEST_VERSION,
+  checkSceneCompatibility as checkContractCompatibility,
+  createDefaultEnvironment,
+  createDefaultSceneDocument,
+  fail,
+  getDefaultViewerCapabilities,
+  migrateSceneDocument,
+  ok,
+  okWithFallback,
+  type Annotation,
+  type AnimationClipSummary,
+  type AssetManifest,
+  type AssetReference,
+  type CameraState,
+  type CompatibilityResult,
+  type EnvironmentState,
+  type KyxosResult,
+  type KyxosSceneDocument,
+  type MaterialOverride,
+  type RuntimeMaterial,
+  type SceneGraphNode,
+  type SceneLight,
+  type TransformState,
+  type ViewerCapabilities,
+} from '@kyxos/scene-contract';
+import {
   beforeAfterNode,
   createWarmLutTexture,
   gradualBackgroundNode,
@@ -72,8 +98,63 @@ function cloneMetrics(metrics: ViewerMetrics): ViewerMetrics {
   return { ...metrics };
 }
 
+function clonePlain<T>(value: T): T {
+  return structuredClone(value);
+}
+
 function clampPixelRatio(value: number) {
   return Math.max(0.5, Math.min(2, value));
+}
+
+function vectorToTuple(vector: THREE.Vector3): [number, number, number] {
+  return [vector.x, vector.y, vector.z];
+}
+
+function transformFromObject(object: THREE.Object3D): TransformState {
+  return {
+    position: vectorToTuple(object.position),
+    rotation: [object.rotation.x, object.rotation.y, object.rotation.z],
+    scale: vectorToTuple(object.scale),
+  };
+}
+
+function applyTransform(object: THREE.Object3D, transform: TransformState) {
+  object.position.fromArray(transform.position);
+  object.rotation.set(transform.rotation[0], transform.rotation[1], transform.rotation[2]);
+  object.scale.fromArray(transform.scale);
+}
+
+function materialList(material: THREE.Material | THREE.Material[] | undefined): THREE.Material[] {
+  if (!material) return [];
+  return Array.isArray(material) ? material : [material];
+}
+
+function createMaterialSnapshot(materialId: string, material: any): MaterialOverride {
+  const color = material.color?.isColor ? material.color : null;
+  const emissive = material.emissive?.isColor ? material.emissive : null;
+  return {
+    materialId,
+    displayName: material.name || materialId,
+    baseColorFactor: color
+      ? [Number(color.r), Number(color.g), Number(color.b), Number(material.opacity ?? 1)]
+      : undefined,
+    metalness: typeof material.metalness === 'number' ? material.metalness : undefined,
+    roughness: typeof material.roughness === 'number' ? material.roughness : undefined,
+    emissiveFactor: emissive ? [Number(emissive.r), Number(emissive.g), Number(emissive.b)] : undefined,
+    opacity: typeof material.opacity === 'number' ? material.opacity : undefined,
+    alphaMode: material.transparent ? 'BLEND' : 'OPAQUE',
+    doubleSided: material.side === THREE.DoubleSide,
+    clearcoat: typeof material.clearcoat === 'number' ? material.clearcoat : undefined,
+    clearcoatRoughness:
+      typeof material.clearcoatRoughness === 'number' ? material.clearcoatRoughness : undefined,
+    transmission: typeof material.transmission === 'number' ? material.transmission : undefined,
+    thickness: typeof material.thickness === 'number' ? material.thickness : undefined,
+    ior: typeof material.ior === 'number' ? material.ior : undefined,
+    specularIntensity:
+      typeof material.specularIntensity === 'number' ? material.specularIntensity : undefined,
+    anisotropy: typeof material.anisotropy === 'number' ? material.anisotropy : undefined,
+    iridescence: typeof material.iridescence === 'number' ? material.iridescence : undefined,
+  };
 }
 
 export class KyxosViewer extends EventTarget {
@@ -134,6 +215,23 @@ export class KyxosViewer extends EventTarget {
     pixelRatio: 1,
   };
   private warnings = new Map<string, string>();
+  private sceneDocument: KyxosSceneDocument = createDefaultSceneDocument();
+  private sceneGraphNodes: SceneGraphNode[] = [];
+  private objectIndex = new Map<string, THREE.Object3D>();
+  private materialIndex = new Map<string, THREE.Material>();
+  private originalMaterialOverrides = new Map<string, MaterialOverride>();
+  private materialOverrides = new Map<string, MaterialOverride>();
+  private animationClips: AnimationClipSummary[] = [];
+  private mixer: THREE.AnimationMixer | null = null;
+  private animationActions = new Map<string, THREE.AnimationAction>();
+  private activeAnimationAction: THREE.AnimationAction | null = null;
+  private activeAnimationClipId: string | null = null;
+  private animationLoop: 'once' | 'repeat' | 'pingpong' = 'repeat';
+  private animationSpeed = 1;
+  private animationTime = 0;
+  private annotations: Annotation[] = [];
+  private userLights = new Map<string, THREE.Light>();
+  private environmentState: EnvironmentState = createDefaultEnvironment();
 
   private constructor(options: KyxosViewerCreateOptions) {
     super();
@@ -196,6 +294,7 @@ export class KyxosViewer extends EventTarget {
 
     await this.setStudioEnvironment(false);
     this.buildPipeline('initialize');
+    this.refreshSceneIndexes([]);
 
     this.resizeObserver = new ResizeObserver(() => {
       this.resizeToCanvas();
@@ -228,6 +327,11 @@ export class KyxosViewer extends EventTarget {
     this.elapsed += delta;
     this.controls.update();
     if (this.animationEnabled) this.animateScene(this.elapsed, delta);
+    if (this.mixer && this.animationEnabled) {
+      this.mixer.update(delta * this.animationSpeed);
+      this.animationTime =
+        this.activeAnimationAction?.time ?? this.animationTime + delta * this.animationSpeed;
+    }
 
     try {
       this.renderPipeline.render();
@@ -826,9 +930,456 @@ export class KyxosViewer extends EventTarget {
     return [...this.warnings.values()];
   }
 
+  getCapabilities(): ViewerCapabilities {
+    return getDefaultViewerCapabilities({
+      viewerVersion: '1.0.0',
+      apiVersion: 1,
+      features: {
+        ...getDefaultViewerCapabilities().features,
+        webgpu: this.backend === 'webgpu' || this.backendPreference !== 'webgl2',
+        webgl2: true,
+      },
+    });
+  }
+
+  checkCompatibility(sceneDocument: unknown): CompatibilityResult {
+    const migrated = migrateSceneDocument(sceneDocument);
+    if (!migrated.ok || !migrated.data) {
+      return {
+        status: 'Incompatible',
+        code: migrated.code,
+        missingRequiredCapabilities: [],
+        missingOptionalCapabilities: [],
+        message: migrated.message ?? 'Scene document migration failed.',
+      };
+    }
+    return checkContractCompatibility(migrated.data, this.getCapabilities());
+  }
+
+  async loadAsset(asset: AssetReference): Promise<KyxosResult<AssetManifest>> {
+    try {
+      if (asset.kind === 'hdr' || asset.kind === 'exr') {
+        await this.loadEnvironment(asset.url);
+        const manifest = this.createAssetManifest(asset);
+        this.sceneDocument = { ...this.sceneDocument, asset, assetManifest: manifest };
+        this.dispatchEvent(new CustomEvent('asset-ready', { detail: { assetId: asset.assetId } }));
+        return ok(manifest, 'Environment asset loaded.');
+      }
+
+      if (asset.kind === 'texture' || asset.kind === 'video' || asset.kind === 'sequence') {
+        const manifest = this.createAssetManifest(asset);
+        this.sceneDocument = { ...this.sceneDocument, asset, assetManifest: manifest };
+        return okWithFallback(
+          manifest,
+          'Texture-like assets are tracked in the manifest and applied through material overrides.',
+        );
+      }
+
+      await this.loadModel(asset.url);
+      const manifest = this.createAssetManifest(asset);
+      this.sceneDocument = { ...this.sceneDocument, asset, assetManifest: manifest };
+      this.dispatchEvent(new CustomEvent('asset-ready', { detail: { assetId: asset.assetId } }));
+      return ok(manifest, 'Model asset loaded.');
+    } catch (error) {
+      return fail('KX_RESOURCE_LOAD_FAILED', 'Asset load failed.', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  getSceneGraph(): SceneGraphNode[] {
+    return clonePlain(this.sceneGraphNodes);
+  }
+
+  getMaterials(): RuntimeMaterial[] {
+    return [...this.materialIndex.entries()].map(([id, material]: [string, any]) => ({
+      id,
+      name: material.name || id,
+      type: material.type ?? 'Material',
+      override: this.materialOverrides.get(id) ? clonePlain(this.materialOverrides.get(id) ?? null) : null,
+      baseColorFactor: material.color?.isColor
+        ? [material.color.r, material.color.g, material.color.b, Number(material.opacity ?? 1)]
+        : undefined,
+      metalness: typeof material.metalness === 'number' ? material.metalness : undefined,
+      roughness: typeof material.roughness === 'number' ? material.roughness : undefined,
+      opacity: typeof material.opacity === 'number' ? material.opacity : undefined,
+      doubleSided: material.side === THREE.DoubleSide,
+    }));
+  }
+
+  getAnimations(): AnimationClipSummary[] {
+    return clonePlain(this.animationClips);
+  }
+
+  setObjectVisibility(objectId: string, visible: boolean): KyxosResult<SceneGraphNode[]> {
+    const object = this.objectIndex.get(objectId);
+    if (!object) return fail('KX_RESOURCE_LOAD_FAILED', `Object ${objectId} was not found.`);
+    object.visible = visible;
+    const hidden = new Set(this.sceneDocument.model.hiddenObjectIds);
+    if (visible) hidden.delete(objectId);
+    else hidden.add(objectId);
+    this.sceneDocument.model.hiddenObjectIds = [...hidden];
+    this.refreshSceneIndexes(this.animationClips);
+    this.emitDirty('visibility');
+    this.resetTemporal('object-visibility');
+    return ok(this.getSceneGraph(), 'Object visibility updated.');
+  }
+
+  setObjectTransform(objectId: string, transform: TransformState): KyxosResult<TransformState> {
+    const object =
+      objectId === this.sceneDocument.model.presentationRootId
+        ? this.modelRoot
+        : this.objectIndex.get(objectId);
+    if (!object) return fail('KX_RESOURCE_LOAD_FAILED', `Object ${objectId} was not found.`);
+    applyTransform(object, transform);
+    if (object === this.modelRoot) this.sceneDocument.model.transform = clonePlain(transform);
+    this.refreshSceneIndexes(this.animationClips);
+    this.emitDirty('transform');
+    this.resetTemporal('object-transform');
+    return ok(transform, 'Object transform updated.');
+  }
+
+  updateMaterial(materialId: string, patch: Partial<MaterialOverride>): KyxosResult<RuntimeMaterial[]> {
+    const material = this.materialIndex.get(materialId) as any;
+    if (!material) return fail('KX_RESOURCE_LOAD_FAILED', `Material ${materialId} was not found.`);
+    if (!this.originalMaterialOverrides.has(materialId)) {
+      this.originalMaterialOverrides.set(materialId, createMaterialSnapshot(materialId, material));
+    }
+
+    const override: MaterialOverride = {
+      materialId,
+      ...(this.materialOverrides.get(materialId) ?? {}),
+      ...patch,
+    };
+    this.applyMaterialOverride(material, override);
+    this.materialOverrides.set(materialId, override);
+    this.sceneDocument.materials[materialId] = clonePlain(override);
+    this.emitDirty('material');
+    this.resetTemporal('material-override');
+    return ok(this.getMaterials(), 'Material override updated.');
+  }
+
+  resetMaterial(materialId: string): KyxosResult<RuntimeMaterial[]> {
+    const material = this.materialIndex.get(materialId) as any;
+    const original = this.originalMaterialOverrides.get(materialId);
+    if (!material || !original)
+      return fail('KX_RESOURCE_LOAD_FAILED', `Material ${materialId} was not found.`);
+    this.applyMaterialOverride(material, original);
+    this.materialOverrides.delete(materialId);
+    delete this.sceneDocument.materials[materialId];
+    this.emitDirty('material-reset');
+    this.resetTemporal('material-reset');
+    return ok(this.getMaterials(), 'Material override reset.');
+  }
+
+  playAnimation(
+    clipId = this.activeAnimationClipId ?? this.animationClips[0]?.id,
+  ): KyxosResult<AnimationClipSummary[]> {
+    if (!clipId || this.animationClips.length === 0) {
+      this.animationEnabled = true;
+      this.emitAnimationChange();
+      return ok(this.getAnimations(), 'Procedural scene animation enabled.');
+    }
+
+    const action = this.animationActions.get(clipId);
+    if (!action) return fail('KX_RESOURCE_LOAD_FAILED', `Animation clip ${clipId} was not found.`);
+    if (this.activeAnimationAction && this.activeAnimationAction !== action) {
+      this.activeAnimationAction.fadeOut(this.sceneDocument.animation.crossFadeSeconds);
+    }
+    this.activeAnimationAction = action;
+    this.activeAnimationClipId = clipId;
+    this.configureActionLoop(action);
+    action.reset().fadeIn(this.sceneDocument.animation.crossFadeSeconds).play();
+    action.paused = false;
+    this.animationEnabled = true;
+    this.sceneDocument.animation.activeClipId = clipId;
+    this.sceneDocument.animation.playing = true;
+    this.emitAnimationChange();
+    return ok(this.getAnimations(), 'Animation started.');
+  }
+
+  pauseAnimation(): KyxosResult<AnimationClipSummary[]> {
+    this.activeAnimationAction?.setEffectiveTimeScale(0);
+    this.animationEnabled = false;
+    this.sceneDocument.animation.playing = false;
+    this.emitAnimationChange();
+    this.resetTemporal('animation-stopped');
+    return ok(this.getAnimations(), 'Animation paused.');
+  }
+
+  seekAnimation(time: number): KyxosResult<number> {
+    this.animationTime = Math.max(0, time);
+    if (this.mixer) this.mixer.setTime(this.animationTime);
+    if (this.activeAnimationAction) this.activeAnimationAction.time = this.animationTime;
+    this.sceneDocument.animation.currentTime = this.animationTime;
+    this.emitAnimationChange();
+    this.resetTemporal('animation-seek');
+    return ok(this.animationTime, 'Animation seek applied.');
+  }
+
+  setAnimationLoop(mode: 'once' | 'repeat' | 'pingpong'): KyxosResult<string> {
+    this.animationLoop = mode;
+    this.sceneDocument.animation.loop = mode;
+    for (const action of this.animationActions.values()) this.configureActionLoop(action);
+    this.emitAnimationChange();
+    return ok(mode, 'Animation loop mode updated.');
+  }
+
+  setAnimationSpeed(speed: number): KyxosResult<number> {
+    this.animationSpeed = Math.max(-4, Math.min(4, speed));
+    this.sceneDocument.animation.speed = this.animationSpeed;
+    this.activeAnimationAction?.setEffectiveTimeScale(this.animationSpeed);
+    this.emitAnimationChange();
+    return ok(this.animationSpeed, 'Animation speed updated.');
+  }
+
+  getCameraState(): CameraState {
+    return {
+      ...clonePlain(this.sceneDocument.camera),
+      position: vectorToTuple(this.camera.position),
+      target: vectorToTuple(this.controls.target),
+      fov: this.camera.fov,
+      near: this.camera.near,
+      far: this.camera.far,
+      panEnabled: this.controls.enablePan,
+      zoomEnabled: this.controls.enableZoom,
+      autoRotate: this.controls.autoRotate,
+      autoRotateSpeed: this.controls.autoRotateSpeed,
+      damping: this.controls.dampingFactor,
+      zoomLimits: {
+        minDistance: this.controls.minDistance,
+        maxDistance: this.controls.maxDistance,
+      },
+    };
+  }
+
+  setCameraState(state: CameraState): KyxosResult<CameraState> {
+    this.camera.position.fromArray(state.position);
+    this.camera.fov = state.fov;
+    this.camera.near = state.near;
+    this.camera.far = state.far;
+    this.camera.updateProjectionMatrix();
+    this.controls.target.fromArray(state.target);
+    this.controls.enablePan = state.panEnabled;
+    this.controls.enableZoom = state.zoomEnabled;
+    this.controls.autoRotate = state.autoRotate;
+    this.controls.autoRotateSpeed = state.autoRotateSpeed;
+    this.controls.dampingFactor = state.damping;
+    if (state.zoomLimits) {
+      this.controls.minDistance = state.zoomLimits.minDistance;
+      this.controls.maxDistance = state.zoomLimits.maxDistance;
+    }
+    if (state.orbitLimits) Object.assign(this.controls, state.orbitLimits);
+    this.controls.update();
+    this.sceneDocument.camera = this.getCameraState();
+    this.emitDirty('camera');
+    this.dispatchEvent(new CustomEvent('camera-change', { detail: this.getCameraState() }));
+    this.resetTemporal('camera-state');
+    return ok(this.getCameraState(), 'Camera state updated.');
+  }
+
+  fitCamera(): KyxosResult<CameraState> {
+    const box = new THREE.Box3().setFromObject(this.modelRoot);
+    const size = box.getSize(new THREE.Vector3());
+    const center = box.getCenter(new THREE.Vector3());
+    const distance = Math.max(size.x, size.y, size.z, 1) * 2.2;
+    this.camera.position.copy(center).add(new THREE.Vector3(distance, distance * 0.62, distance));
+    this.controls.target.copy(center);
+    this.controls.update();
+    this.sceneDocument.camera = this.getCameraState();
+    this.emitDirty('camera-fit');
+    this.resetTemporal('fit-camera');
+    return ok(this.getCameraState(), 'Camera fitted to model.');
+  }
+
+  setCameraLimits(limits: CameraState['orbitLimits'] & CameraState['zoomLimits']): KyxosResult<CameraState> {
+    if (limits.minAzimuthAngle !== undefined) this.controls.minAzimuthAngle = limits.minAzimuthAngle;
+    if (limits.maxAzimuthAngle !== undefined) this.controls.maxAzimuthAngle = limits.maxAzimuthAngle;
+    if (limits.minPolarAngle !== undefined) this.controls.minPolarAngle = limits.minPolarAngle;
+    if (limits.maxPolarAngle !== undefined) this.controls.maxPolarAngle = limits.maxPolarAngle;
+    if (limits.minDistance !== undefined) this.controls.minDistance = limits.minDistance;
+    if (limits.maxDistance !== undefined) this.controls.maxDistance = limits.maxDistance;
+    this.sceneDocument.camera = this.getCameraState();
+    this.emitDirty('camera-limits');
+    return ok(this.getCameraState(), 'Camera limits updated.');
+  }
+
+  getEnvironmentState(): EnvironmentState {
+    return clonePlain(this.environmentState);
+  }
+
+  async setEnvironmentState(state: EnvironmentState): Promise<KyxosResult<EnvironmentState>> {
+    this.environmentState = clonePlain(state);
+    this.scene.environmentIntensity = state.intensity;
+    this.scene.backgroundIntensity = state.backgroundIntensity;
+    if (state.transparentBackground || !state.backgroundVisible) {
+      this.scene.background = null;
+      this.scene.backgroundNode = null;
+    } else if (state.type === 'color') {
+      this.scene.backgroundNode = null;
+      this.scene.background = new THREE.Color(state.backgroundColor);
+    } else if (state.url) {
+      await this.loadEnvironment(state.url);
+    } else {
+      await this.setStudioEnvironment(true);
+    }
+    this.sceneDocument.environment = clonePlain(state);
+    this.emitDirty('environment');
+    this.resetTemporal('environment-state');
+    return ok(this.getEnvironmentState(), 'Environment updated.');
+  }
+
+  getLights(): SceneLight[] {
+    return clonePlain(this.sceneDocument.lights);
+  }
+
+  addLight(light: SceneLight): KyxosResult<SceneLight[]> {
+    if (!this.userLights.has(light.id) && this.userLights.size >= 4) {
+      return fail('KX_EFFECT_DISABLED_BY_RULE', 'V1 supports at most four user lights.');
+    }
+    const threeLight = this.createThreeLight(light);
+    this.userLights.get(light.id)?.removeFromParent();
+    this.userLights.set(light.id, threeLight);
+    this.scene.add(threeLight);
+    this.sceneDocument.lights = [
+      ...this.sceneDocument.lights.filter((item) => item.id !== light.id),
+      clonePlain(light),
+    ];
+    this.refreshSceneIndexes(this.animationClips);
+    this.emitDirty('light-add');
+    this.resetTemporal('light-add');
+    return ok(this.getLights(), 'Light added.');
+  }
+
+  updateLight(lightId: string, patch: Partial<SceneLight>): KyxosResult<SceneLight[]> {
+    const existing = this.sceneDocument.lights.find((light) => light.id === lightId);
+    if (!existing) return fail('KX_RESOURCE_LOAD_FAILED', `Light ${lightId} was not found.`);
+    return this.addLight({ ...existing, ...patch, id: lightId });
+  }
+
+  removeLight(lightId: string): KyxosResult<SceneLight[]> {
+    const light = this.userLights.get(lightId);
+    if (!light) return fail('KX_RESOURCE_LOAD_FAILED', `Light ${lightId} was not found.`);
+    light.removeFromParent();
+    disposeUnknown(light);
+    this.userLights.delete(lightId);
+    this.sceneDocument.lights = this.sceneDocument.lights.filter((item) => item.id !== lightId);
+    this.refreshSceneIndexes(this.animationClips);
+    this.emitDirty('light-remove');
+    this.resetTemporal('light-remove');
+    return ok(this.getLights(), 'Light removed.');
+  }
+
+  async applySceneDocument(document: unknown): Promise<KyxosResult<KyxosSceneDocument>> {
+    const migrated = migrateSceneDocument(document);
+    if (!migrated.ok || !migrated.data) {
+      return fail(migrated.code, migrated.message ?? 'Scene migration failed.', migrated.details);
+    }
+    const compatibility = this.checkCompatibility(migrated.data);
+    if (compatibility.status === 'Incompatible') {
+      return fail(compatibility.code, compatibility.message, {
+        missingRequiredCapabilities: compatibility.missingRequiredCapabilities,
+      });
+    }
+
+    const next = clonePlain(migrated.data);
+    this.sceneDocument = next;
+    this.annotations = clonePlain(next.annotations);
+    if (next.asset) await this.loadAsset(next.asset);
+    applyTransform(this.modelRoot, next.model.transform);
+    for (const objectId of next.model.hiddenObjectIds) this.setObjectVisibility(objectId, false);
+    for (const material of Object.values(next.materials)) this.updateMaterial(material.materialId, material);
+    await this.setEnvironmentState(next.environment);
+    for (const existing of [...this.userLights.keys()]) this.removeLight(existing);
+    for (const light of next.lights) this.addLight(light);
+    this.setCameraState(next.camera);
+    this.setAnimationLoop(next.animation.loop);
+    this.setAnimationSpeed(next.animation.speed);
+    if (next.animation.activeClipId || next.animation.autoplay) {
+      this.playAnimation(next.animation.activeClipId ?? next.animation.defaultClipId ?? undefined);
+      this.seekAnimation(next.animation.defaultStartTime);
+    } else {
+      this.pauseAnimation();
+    }
+    this.applyContractEffects(next.effects);
+    this.emitDirty('scene-document-apply');
+    return compatibility.status === 'CompatibleWithFallback'
+      ? okWithFallback(next, compatibility.message)
+      : ok(next, 'Scene document applied.');
+  }
+
+  exportSceneDocument(): KyxosSceneDocument {
+    this.sceneDocument.model.transform = transformFromObject(this.modelRoot);
+    this.sceneDocument.materials = Object.fromEntries(
+      [...this.materialOverrides.entries()].map(([id, override]) => [id, clonePlain(override)]),
+    );
+    this.sceneDocument.camera = this.getCameraState();
+    this.sceneDocument.animation = {
+      ...this.sceneDocument.animation,
+      clips: this.getAnimations(),
+      activeClipId: this.activeAnimationClipId,
+      playing: this.animationEnabled,
+      currentTime: this.animationTime,
+      loop: this.animationLoop,
+      speed: this.animationSpeed,
+    };
+    this.sceneDocument.environment = this.getEnvironmentState();
+    this.sceneDocument.annotations = clonePlain(this.annotations);
+    this.sceneDocument.project.updatedAt = new Date().toISOString();
+    return clonePlain(this.sceneDocument);
+  }
+
+  addAnnotation(annotation: Annotation): KyxosResult<Annotation[]> {
+    this.annotations = [
+      ...this.annotations.filter((item) => item.id !== annotation.id),
+      clonePlain(annotation),
+    ].sort((a, b) => a.sortOrder - b.sortOrder);
+    this.sceneDocument.annotations = clonePlain(this.annotations);
+    this.refreshSceneIndexes(this.animationClips);
+    this.emitDirty('annotation-add');
+    return ok(this.getAnnotations(), 'Annotation added.');
+  }
+
+  updateAnnotation(id: string, patch: Partial<Annotation>): KyxosResult<Annotation[]> {
+    const existing = this.annotations.find((annotation) => annotation.id === id);
+    if (!existing) return fail('KX_RESOURCE_LOAD_FAILED', `Annotation ${id} was not found.`);
+    return this.addAnnotation({ ...existing, ...patch, id });
+  }
+
+  removeAnnotation(id: string): KyxosResult<Annotation[]> {
+    this.annotations = this.annotations.filter((annotation) => annotation.id !== id);
+    this.sceneDocument.annotations = clonePlain(this.annotations);
+    this.refreshSceneIndexes(this.animationClips);
+    this.emitDirty('annotation-remove');
+    return ok(this.getAnnotations(), 'Annotation removed.');
+  }
+
+  getAnnotations(): Annotation[] {
+    return clonePlain(this.annotations);
+  }
+
+  async captureThumbnail(): Promise<KyxosResult<string>> {
+    try {
+      const blob = await this.capture({ mimeType: 'image/webp', quality: 0.86, scale: 1 });
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.addEventListener('load', () => resolve(String(reader.result)));
+        reader.addEventListener('error', () => reject(reader.error ?? new Error('Thumbnail read failed.')));
+        reader.readAsDataURL(blob);
+      });
+      return ok(dataUrl, 'Thumbnail captured.');
+    } catch (error) {
+      return fail('KX_RESOURCE_LOAD_FAILED', 'Thumbnail capture failed.', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   async loadModel(url: string) {
     if (url.startsWith('procedural:')) {
       this.replaceWithProceduralModel(url.slice('procedural:'.length));
+      this.clearAnimationRuntime();
+      this.refreshSceneIndexes([]);
       this.resetTemporal('model-switch');
       return;
     }
@@ -854,6 +1405,8 @@ export class KyxosViewer extends EventTarget {
     model.position.sub(center.multiplyScalar(model.scale.x));
     model.position.y -= new THREE.Box3().setFromObject(model).min.y;
     this.modelRoot.add(model);
+    this.installAnimations(gltf.animations ?? []);
+    this.refreshSceneIndexes(gltf.animations ?? []);
     this.resetTemporal('model-switch');
   }
 
@@ -877,6 +1430,7 @@ export class KyxosViewer extends EventTarget {
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     this.modelRoot.add(mesh);
+    this.refreshSceneIndexes([]);
   }
 
   async loadEnvironment(url: string) {
@@ -892,6 +1446,12 @@ export class KyxosViewer extends EventTarget {
     this.environmentResource = texture;
     this.scene.environment = texture;
     this.scene.background = this.effects.gradualBackground.enabled ? null : texture;
+    this.environmentState = {
+      ...this.environmentState,
+      environmentId: url,
+      type: /\.exr($|\?)/i.test(url) ? 'exr' : 'hdr',
+      url,
+    };
     this.updateBackground();
     this.resetTemporal('environment-switch');
   }
@@ -906,6 +1466,7 @@ export class KyxosViewer extends EventTarget {
     this.environmentResource = target;
     this.scene.environment = target.texture;
     this.scene.environmentIntensity = 0.75;
+    this.environmentState = { ...createDefaultEnvironment(), intensity: this.scene.environmentIntensity };
     this.updateBackground();
     if (resetHistory) this.resetTemporal('environment-switch');
   }
@@ -1051,6 +1612,8 @@ export class KyxosViewer extends EventTarget {
     this.camera.position.set(4.8, 3.2, 6.6);
     this.controls.target.set(0, 0.9, 0);
     this.controls.update();
+    this.sceneDocument.camera = this.getCameraState();
+    this.dispatchEvent(new CustomEvent('camera-change', { detail: this.getCameraState() }));
     this.resetTemporal('reset-view');
   }
 
@@ -1063,10 +1626,285 @@ export class KyxosViewer extends EventTarget {
     this.disposePipeline();
     disposeObject3D(this.scene);
     disposeUnknown(this.environmentResource);
+    this.clearAnimationRuntime();
     this.lutTexture.dispose();
     for (const texture of this.materialTextures) texture.dispose();
     this.materialTextures.clear();
     this.renderer?.dispose();
     this.dispatchEvent(new CustomEvent('disposed'));
+  }
+
+  private refreshSceneIndexes(clips: AnimationClipSummary[] | THREE.AnimationClip[]) {
+    this.objectIndex.clear();
+    this.materialIndex.clear();
+    this.sceneGraphNodes = [];
+
+    const seenMaterials = new Set<THREE.Material>();
+    const visit = (object: THREE.Object3D, parentId: string | null, path: number[]) => {
+      const id = object.userData.kyxosObjectId ?? `node:${path.join('.') || 'root'}`;
+      object.userData.kyxosObjectId = id;
+      this.objectIndex.set(id, object);
+      const childIds = object.children.map(
+        (child, index) => child.userData.kyxosObjectId ?? `node:${[...path, index].join('.')}`,
+      );
+      const materialIds = materialList((object as any).material).map((material, index) => {
+        if (!material.userData.kyxosMaterialId) {
+          material.userData.kyxosMaterialId = `material:${material.name || id}:${index}`.replace(/\s+/g, '-');
+        }
+        const materialId = material.userData.kyxosMaterialId;
+        this.materialIndex.set(materialId, material);
+        if (!seenMaterials.has(material)) {
+          seenMaterials.add(material);
+          if (!this.originalMaterialOverrides.has(materialId)) {
+            this.originalMaterialOverrides.set(materialId, createMaterialSnapshot(materialId, material));
+          }
+        }
+        return materialId;
+      });
+
+      const type: SceneGraphNode['type'] = (object as any).isSkinnedMesh
+        ? 'skinnedMesh'
+        : (object as any).isMesh
+          ? 'mesh'
+          : (object as any).isLight
+            ? 'light'
+            : (object as any).isCamera
+              ? 'camera'
+              : parentId === null
+                ? 'scene'
+                : 'node';
+
+      this.sceneGraphNodes.push({
+        id,
+        parentId,
+        name: this.sceneDocument.model.displayNames[id] ?? object.name ?? id,
+        type,
+        visible: object.visible,
+        locked: this.sceneDocument.model.lockedObjectIds.includes(id),
+        materialIds,
+        childIds,
+        transform: transformFromObject(object),
+      });
+
+      object.children.forEach((child, index) => visit(child, id, [...path, index]));
+    };
+
+    visit(this.modelRoot, null, []);
+    for (const annotation of this.annotations) {
+      this.sceneGraphNodes.push({
+        id: annotation.id,
+        parentId: null,
+        name: annotation.title,
+        type: 'annotation',
+        visible: annotation.visible,
+        locked: false,
+        materialIds: [],
+        childIds: [],
+        transform: {
+          position: annotation.position,
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+        },
+      });
+    }
+
+    this.sceneDocument.animation.clips = clips.map((clip: any, index) => ({
+      id: clip.id ?? `clip:${index}:${clip.name || 'Animation'}`,
+      name: clip.name || `Animation ${index + 1}`,
+      duration: Number(clip.duration ?? 0),
+      tracks: Number(clip.tracks?.length ?? clip.tracks ?? 0),
+    }));
+  }
+
+  private installAnimations(clips: THREE.AnimationClip[]) {
+    this.clearAnimationRuntime();
+    this.animationClips = clips.map((clip, index) => ({
+      id: `clip:${index}:${clip.name || 'Animation'}`.replace(/\s+/g, '-'),
+      name: clip.name || `Animation ${index + 1}`,
+      duration: clip.duration,
+      tracks: clip.tracks.length,
+    }));
+    if (this.animationClips.length === 0) return;
+    this.mixer = new THREE.AnimationMixer(this.modelRoot);
+    clips.forEach((clip, index) => {
+      const summary = this.animationClips[index];
+      if (!summary) return;
+      const action = this.mixer?.clipAction(clip);
+      if (!action) return;
+      this.configureActionLoop(action);
+      this.animationActions.set(summary.id, action);
+    });
+    this.sceneDocument.animation.clips = this.getAnimations();
+    this.sceneDocument.animation.defaultClipId = this.animationClips[0]?.id ?? null;
+  }
+
+  private clearAnimationRuntime() {
+    this.mixer?.stopAllAction();
+    this.mixer = null;
+    this.animationActions.clear();
+    this.activeAnimationAction = null;
+    this.activeAnimationClipId = null;
+    this.animationClips = [];
+    this.animationTime = 0;
+    this.sceneDocument.animation.clips = [];
+    this.sceneDocument.animation.activeClipId = null;
+    this.sceneDocument.animation.defaultClipId = null;
+  }
+
+  private configureActionLoop(action: THREE.AnimationAction) {
+    const mode =
+      this.animationLoop === 'once'
+        ? THREE.LoopOnce
+        : this.animationLoop === 'pingpong'
+          ? THREE.LoopPingPong
+          : THREE.LoopRepeat;
+    action.setLoop(mode, this.animationLoop === 'once' ? 1 : Infinity);
+    action.clampWhenFinished = this.animationLoop === 'once';
+    action.setEffectiveTimeScale(this.animationSpeed);
+  }
+
+  private emitAnimationChange() {
+    this.dispatchEvent(
+      new CustomEvent('animation-change', {
+        detail: {
+          activeClipId: this.activeAnimationClipId,
+          playing: this.animationEnabled,
+          time: this.animationTime,
+        },
+      }),
+    );
+  }
+
+  private emitDirty(reason: string) {
+    this.sceneDocument.project.updatedAt = new Date().toISOString();
+    this.dispatchEvent(new CustomEvent('scene-dirty', { detail: { reason } }));
+  }
+
+  private applyMaterialOverride(material: any, override: MaterialOverride) {
+    if (override.baseColorFactor && material.color?.isColor) {
+      material.color.setRGB(
+        override.baseColorFactor[0],
+        override.baseColorFactor[1],
+        override.baseColorFactor[2],
+      );
+      material.opacity = override.baseColorFactor[3];
+    }
+    if (override.metalness !== undefined && 'metalness' in material) material.metalness = override.metalness;
+    if (override.roughness !== undefined && 'roughness' in material) material.roughness = override.roughness;
+    if (override.opacity !== undefined) material.opacity = override.opacity;
+    if (override.emissiveFactor && material.emissive?.isColor) {
+      material.emissive.setRGB(
+        override.emissiveFactor[0],
+        override.emissiveFactor[1],
+        override.emissiveFactor[2],
+      );
+    }
+    if (override.alphaMode) material.transparent = override.alphaMode === 'BLEND';
+    if (override.alphaCutoff !== undefined) material.alphaTest = override.alphaCutoff;
+    if (override.doubleSided !== undefined)
+      material.side = override.doubleSided ? THREE.DoubleSide : THREE.FrontSide;
+    if (override.clearcoat !== undefined && 'clearcoat' in material) material.clearcoat = override.clearcoat;
+    if (override.clearcoatRoughness !== undefined && 'clearcoatRoughness' in material) {
+      material.clearcoatRoughness = override.clearcoatRoughness;
+    }
+    if (override.transmission !== undefined && 'transmission' in material)
+      material.transmission = override.transmission;
+    if (override.thickness !== undefined && 'thickness' in material) material.thickness = override.thickness;
+    if (override.ior !== undefined && 'ior' in material) material.ior = override.ior;
+    if (override.specularIntensity !== undefined && 'specularIntensity' in material) {
+      material.specularIntensity = override.specularIntensity;
+    }
+    if (override.anisotropy !== undefined && 'anisotropy' in material)
+      material.anisotropy = override.anisotropy;
+    if (override.iridescence !== undefined && 'iridescence' in material)
+      material.iridescence = override.iridescence;
+    void this.applyMaterialTextures({
+      baseColor: override.baseColorTextureUrl,
+      normal: override.normalTextureUrl,
+      ao: override.aoTextureUrl,
+      emissive: override.emissiveTextureUrl,
+    });
+    material.needsUpdate = true;
+  }
+
+  private createThreeLight(light: SceneLight): THREE.Light {
+    const color = new THREE.Color(light.color);
+    let next: THREE.Light;
+    if (light.type === 'point') {
+      next = new THREE.PointLight(color, light.intensity, light.range ?? 0);
+    } else if (light.type === 'spot') {
+      next = new THREE.SpotLight(
+        color,
+        light.intensity,
+        light.range ?? 0,
+        light.angle ?? Math.PI / 5,
+        light.penumbra ?? 0.25,
+      );
+    } else if (light.type === 'hemisphere') {
+      next = new THREE.HemisphereLight(color, 0x111827, light.intensity);
+    } else {
+      next = new THREE.DirectionalLight(color, light.intensity);
+    }
+    next.name = light.name;
+    next.userData.kyxosObjectId = light.id;
+    next.position.fromArray(light.position);
+    next.rotation.set(light.rotation[0], light.rotation[1], light.rotation[2]);
+    next.castShadow = light.castShadow;
+    if ('shadow' in next && (next as any).shadow) {
+      if (light.shadowResolution)
+        (next as any).shadow.mapSize.set(light.shadowResolution, light.shadowResolution);
+      if (light.shadowBias !== undefined) (next as any).shadow.bias = light.shadowBias;
+    }
+    return next;
+  }
+
+  private createAssetManifest(asset: AssetReference): AssetManifest {
+    return {
+      assetManifestVersion: KYXOS_ASSET_MANIFEST_VERSION,
+      assetId: asset.assetId,
+      revision: asset.revision,
+      source: asset,
+      fileSizeBytes: asset.sizeBytes,
+      meshCount: this.sceneGraphNodes.filter((node) => node.type === 'mesh' || node.type === 'skinnedMesh')
+        .length,
+      triangleCount: this.metrics.triangles,
+      drawCallEstimate: Math.max(1, this.metrics.drawCalls),
+      materialCount: this.materialIndex.size,
+      textureCount: this.metrics.textures,
+      maxTextureSize: 0,
+      gpuMemoryEstimateBytes: this.metrics.totalGpuBytes,
+      skeletonCount: this.sceneGraphNodes.filter((node) => node.type === 'skinnedMesh').length,
+      morphTargetCount: 0,
+      animationCount: this.animationClips.length,
+      animationDurationSeconds: this.animationClips.reduce((sum, clip) => Math.max(sum, clip.duration), 0),
+      cameras: this.sceneGraphNodes.filter((node) => node.type === 'camera').length,
+      nodes: this.sceneGraphNodes.length,
+      extensionsUsed: [],
+      extensionsRequired: [],
+      warnings: [],
+      errors: [],
+      missingFiles: [],
+      unsupportedExtensions: [],
+      generatedAt: new Date().toISOString(),
+    };
+  }
+
+  private applyContractEffects(effects: KyxosSceneDocument['effects']) {
+    this.setQualityPreset(effects.quality);
+    this.setEffect('traa', { enabled: effects.antiAliasing === 'traa' });
+    this.setEffect('fxaa', { enabled: effects.antiAliasing === 'fxaa' });
+    this.setEffect('smaa', { enabled: effects.antiAliasing === 'smaa' });
+    this.setEffect('ssaa', { enabled: effects.antiAliasing === 'ssaa' });
+    this.setEffect('gtao', { enabled: effects.ao === 'gtao' });
+    this.setEffect('ssao', { enabled: effects.ao === 'ssao' });
+    this.setEffect('ssr', { enabled: effects.reflection === 'ssr' });
+    this.setEffect('ssgi', { enabled: effects.gi === 'ssgi' });
+    this.setEffect('bloom', { enabled: effects.bloom.enabled, strength: effects.bloom.strength });
+    this.setEffect('dof', { enabled: effects.dof.enabled, focusDistance: effects.dof.focusDistance });
+    this.setEffect('lut', {
+      enabled: effects.colorGrading.intensity > 0,
+      intensity: effects.colorGrading.intensity,
+    });
+    this.setEffect('sharpness', { enabled: effects.sharpness.enabled, amount: effects.sharpness.amount });
   }
 }

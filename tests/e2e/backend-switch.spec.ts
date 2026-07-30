@@ -15,8 +15,9 @@ test('switching to WebGL 2 recreates the viewer on a fresh canvas', async ({ pag
   await page.waitForFunction(() => window.__kyxosTestApi?.ready(), null, { timeout: 90_000 });
 
   await page.evaluate(() => {
-    (document.querySelector('#viewport') as HTMLCanvasElement & { __kyxosContextOwner?: boolean }).__kyxosContextOwner =
-      true;
+    (
+      document.querySelector('#viewport') as HTMLCanvasElement & { __kyxosContextOwner?: boolean }
+    ).__kyxosContextOwner = true;
   });
 
   await page.selectOption('#backend-select', 'webgl2');
@@ -29,9 +30,11 @@ test('switching to WebGL 2 recreates the viewer on a fresh canvas', async ({ pag
   const result = await page.evaluate(() => ({
     backend: window.__kyxosTestApi.getMetrics()?.backend,
     lastError: window.__kyxosTestApi.getLastError(),
-    canvasWasReplaced: !(document.querySelector('#viewport') as HTMLCanvasElement & {
-      __kyxosContextOwner?: boolean;
-    }).__kyxosContextOwner,
+    canvasWasReplaced: !(
+      document.querySelector('#viewport') as HTMLCanvasElement & {
+        __kyxosContextOwner?: boolean;
+      }
+    ).__kyxosContextOwner,
   }));
 
   expect(result.backend).toBe('webgl2');
@@ -39,6 +42,8 @@ test('switching to WebGL 2 recreates the viewer on a fresh canvas', async ({ pag
   expect(result.canvasWasReplaced).toBe(true);
   expect(pageErrors).toEqual([]);
   expect(
-    consoleErrors.filter((message) => /WebGL 2 context creation failed|Viewer initialization failed/i.test(message)),
+    consoleErrors.filter((message) =>
+      /WebGL 2 context creation failed|Viewer initialization failed/i.test(message),
+    ),
   ).toEqual([]);
 });

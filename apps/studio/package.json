@@ -1,16 +1,22 @@
 {
-  "name": "@kyxos/playground",
+  "name": "@kyxos/studio",
   "version": "1.0.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite --configLoader runner --host 0.0.0.0",
-    "dev:e2e": "vite --configLoader runner --host 127.0.0.1 --port 4173",
+    "dev:e2e": "vite --configLoader runner --host 127.0.0.1 --port 4174",
     "build": "vite build --configLoader runner",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@kyxos/api-client": "workspace:*",
+    "@kyxos/studio-ui": "workspace:*",
     "@kyxos/viewer": "workspace:*",
     "three": "0.185.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3",
+    "vite": "^7.0.6"
   }
 }
