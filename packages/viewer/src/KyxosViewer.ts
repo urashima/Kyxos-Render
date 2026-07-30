@@ -51,6 +51,8 @@ import {
   sparkleNode,
 } from './effects/customNodes';
 import { createQualityPreset, mergeEffectSettings } from './presets';
+import { StaticHdrMeanNode, staticHdrMean } from './effects/StaticHdrMeanNode';
+import { RenderActivityMachine } from './render/RenderActivityMachine';
 import { createDefaultScene } from './scene/createDefaultScene';
 import type {
   BackendName,
@@ -62,6 +64,7 @@ import type {
   MaterialTextureInputs,
   QualityPresetName,
   StressResult,
+  ViewerActivitySnapshot,
   ViewerMetrics,
 } from './types';
 import { disposeObject3D, disposeUnknown } from './utils/dispose';
@@ -134,6 +137,38 @@ export class KyxosViewer extends EventTarget {
     pixelRatio: 1,
   };
   private warnings = new Map<string, string>();
+  private staticHdrMeanNode: StaticHdrMeanNode | null = null;
+  private readonly activityMachine = new RenderActivityMachine();
+  private animationFrameHandle: number | null = null;
+  private lastActivitySignature = '';
+
+  private readonly handleControlsStart = () => {
+    this.activityMachine.beginInteraction('camera');
+    this.staticHdrMeanNode?.reset();
+    this.dispatchActivityState();
+    this.scheduleNextFrame();
+  };
+
+  private readonly handleControlsChange = () => {
+    this.markDirty('camera');
+  };
+
+  private readonly handleControlsEnd = () => {
+    this.activityMachine.endInteraction('interaction-ended');
+    this.staticHdrMeanNode?.reset();
+    this.dispatchActivityState();
+    this.scheduleNextFrame();
+  };
+
+  private readonly handleVisibilityChange = () => {
+    if (document.visibilityState === 'hidden') {
+      this.cancelScheduledFrame();
+      this.activityMachine.sleep('document-hidden');
+      this.dispatchActivityState();
+    } else {
+      this.markDirty('document-visible');
+    }
+  };
 
   private constructor(options: KyxosViewerCreateOptions) {
     super();
@@ -155,10 +190,25 @@ export class KyxosViewer extends EventTarget {
     this.animateScene = bundle.animate;
     this.scene.backgroundNode = gradualBackgroundNode();
 
+    const navigatorWithGpu = navigator as Navigator & { gpu?: unknown };
+    const forceWebGL =
+      this.backendPreference === 'webgl2' || navigatorWithGpu.gpu === undefined;
+    const context = forceWebGL
+      ? this.canvas.getContext('webgl2', {
+          antialias: false,
+          alpha: true,
+          depth: true,
+          stencil: false,
+          preserveDrawingBuffer: true,
+        })
+      : undefined;
+    if (forceWebGL && !context) throw new Error('WebGL 2 context creation failed.');
+
     this.renderer = new THREE.WebGPURenderer({
       canvas: this.canvas,
       antialias: false,
-      forceWebGL: this.backendPreference === 'webgl2',
+      forceWebGL,
+      context,
       trackTimestamp: true,
     } as any);
     this.renderer.shadowMap.enabled = true;
@@ -188,11 +238,9 @@ export class KyxosViewer extends EventTarget {
     this.controls.maxDistance = 18;
     this.controls.target.set(0, 0.9, 0);
     this.controls.update();
-    // OrbitControls emits `end` for every normal orbit, pan and zoom gesture.
-    // Rebuilding the complete RenderPipeline there reallocates TRAA and DoF
-    // half-float render targets and can expose an uninitialized bright frame.
-    // Continuous camera motion is already represented by velocity/depth; reserve
-    // resetTemporal() for explicit scene, resize and programmatic camera cuts.
+    this.controls.addEventListener('start', this.handleControlsStart);
+    this.controls.addEventListener('change', this.handleControlsChange);
+    this.controls.addEventListener('end', this.handleControlsEnd);
 
     await this.setStudioEnvironment(false);
     this.buildPipeline('initialize');
@@ -203,9 +251,10 @@ export class KyxosViewer extends EventTarget {
     });
     this.resizeObserver.observe(this.canvas);
 
-    if (this.autoStart) this.renderer.setAnimationLoop((time: number) => this.renderFrame(time));
+    document.addEventListener('visibilitychange', this.handleVisibilityChange);
     this.initialized = true;
     this.dispatchEvent(new CustomEvent('ready', { detail: this.getMetrics() }));
+    if (this.autoStart) this.markDirty('initialize');
   }
 
   private resizeToCanvas() {
@@ -222,10 +271,20 @@ export class KyxosViewer extends EventTarget {
   private renderFrame(time: number) {
     if (this.disposed || !this.renderPipeline) return;
 
+    const frameActivitySerial = this.activityMachine.beginFrame();
     const frameStart = performance.now();
     const delta = Math.min(0.1, Math.max(0, (time - this.lastFrameTime) / 1000));
     this.lastFrameTime = time;
     this.elapsed += delta;
+
+    if (this.staticHdrMeanNode) {
+      if (this.activityMachine.getState() === 'accumulating') {
+        this.staticHdrMeanNode.setSampleCount(this.activityMachine.getStaticSampleCount());
+      } else {
+        this.staticHdrMeanNode.reset();
+      }
+    }
+
     this.controls.update();
     if (this.animationEnabled) this.animateScene(this.elapsed, delta);
 
@@ -264,6 +323,14 @@ export class KyxosViewer extends EventTarget {
       this.lastMetricsDispatch = time;
       this.dispatchEvent(new CustomEvent('metrics', { detail: this.getMetrics() }));
     }
+
+    this.activityMachine.completeFrame(frameActivitySerial, this.staticHdrMeanNode !== null);
+
+    if (this.activityMachine.getState() !== 'sleeping') {
+      this.scheduleNextFrame();
+    } else {
+      this.dispatchActivityState();
+    }
   }
 
   private buildPipeline(reason: string) {
@@ -271,6 +338,7 @@ export class KyxosViewer extends EventTarget {
     const generation = ++this.pipelineGeneration;
     this.disposePipeline();
     this.debugNodes.clear();
+    this.staticHdrMeanNode = null;
 
     const pipeline = new THREE.RenderPipeline(this.renderer);
     pipeline.outputColorTransform = false;
@@ -560,6 +628,11 @@ export class KyxosViewer extends EventTarget {
           traaNode.useSubpixelCorrection = this.effects.traa.useSubpixelCorrection !== false;
           source = traaNode;
           this.nodes.push(traaNode);
+
+          const meanNode = staticHdrMean(source);
+          this.staticHdrMeanNode = meanNode;
+          source = meanNode;
+          this.nodes.push(meanNode);
         } catch (error) {
           this.effectFailure('traa', error);
         }
@@ -692,32 +765,30 @@ export class KyxosViewer extends EventTarget {
         return;
       }
 
-      requestAnimationFrame(() => {
-        if (generation !== this.pipelineGeneration || this.disposed) return;
-        try {
-          const verificationCanvas = document.createElement('canvas');
-          verificationCanvas.width = 32;
-          verificationCanvas.height = 18;
-          const context = verificationCanvas.getContext('2d', { willReadFrequently: true });
-          if (!context) return;
-          context.drawImage(this.canvas, 0, 0, verificationCanvas.width, verificationCanvas.height);
-          const data = context.getImageData(0, 0, verificationCanvas.width, verificationCanvas.height).data;
-          let visible = 0;
-          for (let index = 0; index < data.length; index += 4) {
-            if (data[index] + data[index + 1] + data[index + 2] > 24 && data[index + 3] > 0) {
-              visible += 1;
-            }
+      if (generation !== this.pipelineGeneration || this.disposed) return;
+      try {
+        const verificationCanvas = document.createElement('canvas');
+        verificationCanvas.width = 32;
+        verificationCanvas.height = 18;
+        const context = verificationCanvas.getContext('2d', { willReadFrequently: true });
+        if (!context) return;
+        context.drawImage(this.canvas, 0, 0, verificationCanvas.width, verificationCanvas.height);
+        const data = context.getImageData(0, 0, verificationCanvas.width, verificationCanvas.height).data;
+        let visible = 0;
+        for (let index = 0; index < data.length; index += 4) {
+          if (data[index] + data[index + 1] + data[index + 2] > 24 && data[index + 3] > 0) {
+            visible += 1;
           }
-          if (visible <= verificationCanvas.width * verificationCanvas.height * 0.02) {
-            this.activateWebGPURecovery(`black-output:${reason}`);
-          }
-        } catch (error) {
-          this.warn(
-            'webgpu-visibility-check',
-            `WebGPU visibility check was unavailable: ${error instanceof Error ? error.message : String(error)}`,
-          );
         }
-      });
+        if (visible <= verificationCanvas.width * verificationCanvas.height * 0.02) {
+          this.activateWebGPURecovery(`black-output:${reason}`);
+        }
+      } catch (error) {
+        this.warn(
+          'webgpu-visibility-check',
+          `WebGPU visibility check was unavailable: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
     }, 4000);
   }
 
@@ -750,12 +821,62 @@ export class KyxosViewer extends EventTarget {
   }
 
   private queuePipelineRebuild(reason: string) {
-    if (this.rebuildQueued || this.disposed) return;
+    if (this.disposed) return;
+    this.markDirty(`dirty:${reason}`);
+    if (this.rebuildQueued) return;
+
     this.rebuildQueued = true;
-    requestAnimationFrame(() => {
+    queueMicrotask(() => {
       this.rebuildQueued = false;
+      if (this.disposed) return;
       this.buildPipeline(reason);
+      this.markDirty(`pipeline:${reason}`);
     });
+  }
+
+  private markDirty(reason: string) {
+    if (this.disposed) return;
+    const wasSleeping = this.activityMachine.getState() === 'sleeping';
+    this.activityMachine.markActivity(reason);
+    this.staticHdrMeanNode?.reset();
+    if (wasSleeping) this.lastFrameTime = performance.now();
+    this.dispatchActivityState();
+    this.scheduleNextFrame();
+  }
+
+  private scheduleNextFrame() {
+    if (
+      !this.autoStart ||
+      this.disposed ||
+      document.visibilityState === 'hidden' ||
+      this.animationFrameHandle !== null
+    ) {
+      return;
+    }
+
+    this.animationFrameHandle = requestAnimationFrame((time) => {
+      this.animationFrameHandle = null;
+      this.renderFrame(time);
+    });
+    this.dispatchActivityState();
+  }
+
+  private cancelScheduledFrame() {
+    if (this.animationFrameHandle === null) return;
+    cancelAnimationFrame(this.animationFrameHandle);
+    this.animationFrameHandle = null;
+  }
+
+  private dispatchActivityState(force = false) {
+    const detail = this.getActivityState();
+    const signature = JSON.stringify(detail);
+    if (!force && signature === this.lastActivitySignature) return;
+    this.lastActivitySignature = signature;
+    this.dispatchEvent(new CustomEvent('activity-state', { detail }));
+  }
+
+  getActivityState(): ViewerActivitySnapshot {
+    return this.activityMachine.snapshot(this.animationFrameHandle !== null);
   }
 
   resetTemporal(reason = 'manual') {
@@ -785,7 +906,14 @@ export class KyxosViewer extends EventTarget {
 
   setAnimationEnabled(enabled: boolean) {
     this.animationEnabled = enabled;
-    if (!enabled) this.resetTemporal('animation-stopped');
+    this.activityMachine.setAnimationActive(enabled);
+    this.staticHdrMeanNode?.reset();
+    this.dispatchActivityState();
+    if (enabled) {
+      this.scheduleNextFrame();
+    } else {
+      this.resetTemporal('animation-stopped');
+    }
   }
 
   getAnimationEnabled() {
@@ -812,10 +940,12 @@ export class KyxosViewer extends EventTarget {
     this.compareEnabled = enabled;
     this.compareSplit.value = Math.max(0.05, Math.min(0.95, split));
     this.applyOutputSelection();
+    this.markDirty('comparison');
   }
 
   setComparisonSplit(split: number) {
     this.compareSplit.value = Math.max(0.05, Math.min(0.95, split));
+    this.markDirty('comparison-split');
   }
 
   getMetrics(): ViewerMetrics {
@@ -1057,8 +1187,13 @@ export class KyxosViewer extends EventTarget {
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
+    this.cancelScheduledFrame();
     this.renderer?.setAnimationLoop(null);
+    document.removeEventListener('visibilitychange', this.handleVisibilityChange);
     this.resizeObserver?.disconnect();
+    this.controls?.removeEventListener('start', this.handleControlsStart);
+    this.controls?.removeEventListener('change', this.handleControlsChange);
+    this.controls?.removeEventListener('end', this.handleControlsEnd);
     this.controls?.dispose();
     this.disposePipeline();
     disposeObject3D(this.scene);
