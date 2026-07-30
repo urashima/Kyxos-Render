@@ -23,6 +23,7 @@ declare
   result public.published_versions;
   requested_asset_count integer := coalesce(array_length(asset_ids, 1), 0);
   owned_asset_count integer;
+  authoritative_digest text;
 begin
   if not public.is_project_owner(target_project) then
     raise exception 'forbidden' using errcode = '42501';
@@ -46,6 +47,11 @@ begin
     raise exception 'executable content is forbidden in published snapshots';
   end if;
 
+  -- jsonb text output has deterministic key ordering, so equivalent snapshots
+  -- receive the same digest regardless of client object insertion order. The
+  -- caller-provided digest is accepted for API compatibility but never trusted.
+  authoritative_digest := encode(public.digest(convert_to(snapshot::text, 'utf8'), 'sha256'), 'hex');
+
   select count(*)
     into owned_asset_count
     from public.assets
@@ -60,6 +66,33 @@ begin
   select target_project, asset_id
     from unnest(coalesce(asset_ids, '{}'::uuid[])) as asset_id
   on conflict(project_id, asset_id) do nothing;
+
+  -- A network retry of the same publish operation must not create a second
+  -- immutable version. Return the existing snapshot and restore it as current.
+  select *
+    into result
+    from public.published_versions
+   where project_id = target_project
+     and scene_digest = authoritative_digest;
+
+  if result.id is not null then
+    insert into public.public_slugs(
+      slug,
+      project_id,
+      current_version_id,
+      is_enabled
+    ) values (
+      slug_value,
+      target_project,
+      result.id,
+      true
+    )
+    on conflict(project_id) do update
+      set current_version_id = excluded.current_version_id,
+          is_enabled = true,
+          updated_at = now();
+    return result;
+  end if;
 
   select coalesce(max(version_number), 0) + 1
     into next_version
@@ -78,7 +111,7 @@ begin
     target_project,
     next_version,
     snapshot,
-    digest,
+    authoritative_digest,
     contract_version_value,
     compatibility,
     auth.uid()
