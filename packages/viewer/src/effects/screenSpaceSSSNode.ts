@@ -1,0 +1,181 @@
+import * as THREE from 'three/webgpu';
+import {
+  Fn,
+  abs,
+  convertToTexture,
+  dot,
+  exp,
+  float,
+  max,
+  mix,
+  screenSize,
+  screenUV,
+  smoothstep,
+  uniform,
+  unpackRGBToNormal,
+  vec2,
+  vec3,
+  vec4,
+} from 'three/tsl';
+
+import type { ScreenSpaceSSSQuality } from '../types';
+
+type KernelTap = { offset: number; weight: number };
+
+// The medium/high kernel is the normalized seven-tap profile published with
+// Jimenez and Gutierrez' separable screen-space SSS work. Low keeps the same
+// symmetric shape with five taps. High evaluates an additional broad lobe.
+const KERNELS: Record<ScreenSpaceSSSQuality, KernelTap[]> = {
+  low: [
+    { offset: 0, weight: 0.42 },
+    { offset: 0.5, weight: 0.24 },
+    { offset: 1, weight: 0.05 },
+  ],
+  medium: [
+    { offset: 0, weight: 0.382 },
+    { offset: 0.333333, weight: 0.242 },
+    { offset: 0.666667, weight: 0.061 },
+    { offset: 1, weight: 0.006 },
+  ],
+  high: [
+    { offset: 0, weight: 0.382 },
+    { offset: 0.333333, weight: 0.242 },
+    { offset: 0.666667, weight: 0.061 },
+    { offset: 1, weight: 0.006 },
+  ],
+};
+
+export interface ScreenSpaceSSSNodeOptions {
+  color: string;
+  strength: number;
+  radius: number;
+  falloff: readonly [number, number, number];
+  depthFalloff: number;
+  normalThreshold: number;
+  quality: ScreenSpaceSSSQuality;
+}
+
+export interface ScreenSpaceSSSNodeResult {
+  deltaNode: any;
+  resources: any[];
+}
+
+/**
+ * Builds a separable, material-masked screen-space diffusion correction.
+ *
+ * sssData layout: R = material mask, G = thickness, B = roughness.
+ * surface layout: RGB = base color, A = metalness.
+ */
+export function createScreenSpaceSSSNode(
+  colorNode: any,
+  viewZNode: any,
+  normalPackedNode: any,
+  sssDataNode: any,
+  surfaceNode: any,
+  options: ScreenSpaceSSSNodeOptions,
+): ScreenSpaceSSSNodeResult {
+  const resources: any[] = [];
+  const sourceTexture = convertToTexture(colorNode);
+  if (sourceTexture !== colorNode) resources.push(sourceTexture);
+
+  const radius = uniform(options.radius);
+  const depthFalloff = uniform(options.depthFalloff);
+  const normalThreshold = uniform(options.normalThreshold);
+  const scatteringColor = uniform(new THREE.Color(options.color));
+  const channelFalloff = uniform(new THREE.Vector3(...options.falloff));
+  const strength = uniform(options.strength);
+  const kernel = KERNELS[options.quality];
+
+  const blurPass = (inputTexture: any, directionX: number, directionY: number, radiusScale: number) =>
+    Fn(() => {
+      const uv = screenUV;
+      const centerColor = inputTexture.sample(uv).toVar();
+      const centerData = sssDataNode.sample(uv).toVar();
+      const centerSurface = surfaceNode.sample(uv).toVar();
+      const centerMask = centerData.r.saturate();
+      const centerThickness = max(centerData.g, 0.01);
+      const centerDepth = viewZNode.sample(uv).r;
+      const centerNormal = unpackRGBToNormal(normalPackedNode.sample(uv).rgb);
+
+      const projectedRadius = radius
+        .mul(centerThickness)
+        .mul(radiusScale)
+        .div(max(abs(centerDepth), 0.35));
+      const texelOffset = vec2(directionX, directionY).div(screenSize).mul(projectedRadius);
+      const colorSum = vec3(centerColor.rgb.mul(kernel[0].weight)).toVar();
+      const weightSum = float(kernel[0].weight).toVar();
+
+      for (let index = 1; index < kernel.length; index += 1) {
+        const tap = kernel[index];
+
+        for (const sign of [-1, 1]) {
+          const sampleUv = uv.add(texelOffset.mul(tap.offset * sign)).clamp(0, 1);
+          const sampleData = sssDataNode.sample(sampleUv);
+          const sampleMask = sampleData.r.saturate();
+          const sampleDepth = viewZNode.sample(sampleUv).r;
+          const sampleNormal = unpackRGBToNormal(normalPackedNode.sample(sampleUv).rgb);
+          const sampleSurface = surfaceNode.sample(sampleUv);
+
+          const relativeDepthDelta = abs(sampleDepth.sub(centerDepth)).div(max(abs(centerDepth), 0.35));
+          const depthWeight = exp(relativeDepthDelta.mul(depthFalloff).mul(-1));
+          const normalWeight = smoothstep(normalThreshold, 1, dot(centerNormal, sampleNormal));
+          const albedoDelta = dot(abs(sampleSurface.rgb.sub(centerSurface.rgb)), vec3(0.333333));
+          const albedoWeight = exp(albedoDelta.mul(-4));
+          const thicknessWeight = max(float(0.1), float(1).sub(abs(sampleData.g.sub(centerThickness))));
+          const edgeWeight = centerMask
+            .mul(sampleMask)
+            .mul(depthWeight)
+            .mul(normalWeight)
+            .mul(albedoWeight)
+            .mul(thicknessWeight);
+          const tapWeight = edgeWeight.mul(tap.weight);
+
+          colorSum.addAssign(inputTexture.sample(sampleUv).rgb.mul(tapWeight));
+          weightSum.addAssign(tapWeight);
+        }
+      }
+
+      const filtered = colorSum.div(max(weightSum, 0.0001));
+      return vec4(mix(centerColor.rgb, filtered, centerMask), centerColor.a);
+    })();
+
+  const horizontal = convertToTexture(blurPass(sourceTexture, 1, 0, 1));
+  resources.push(horizontal);
+  const narrow = blurPass(horizontal, 0, 1, 1);
+
+  let filtered: any = narrow;
+  if (options.quality === 'high') {
+    const broadHorizontal = convertToTexture(blurPass(sourceTexture, 1, 0, 2.4));
+    resources.push(broadHorizontal);
+    const broad = blurPass(broadHorizontal, 0, 1, 2.4);
+    filtered = mix(narrow, broad, 0.32);
+  }
+
+  const deltaNode = Fn(() => {
+    const uv = screenUV;
+    const source = sourceTexture.sample(uv);
+    const scattered = filtered;
+    const data = sssDataNode.sample(uv);
+    const surface = surfaceNode.sample(uv);
+    const materialMask = data.r.saturate();
+    const roughness = data.b.saturate();
+    const metalness = surface.a.saturate();
+
+    // Only the estimated diffuse share is diffused. Glossy highlights and metal
+    // response remain in the original color, matching deferred SSS practice.
+    const diffuseShare = materialMask
+      .mul(float(1).sub(metalness))
+      .mul(mix(0.45, 1, roughness))
+      .saturate();
+    const channelStrength = scatteringColor.rgb
+      .mul(channelFalloff)
+      .mul(strength)
+      .mul(diffuseShare)
+      .saturate();
+    const corrected = source.rgb.add(scattered.rgb.sub(source.rgb).mul(channelStrength));
+
+    return vec4(corrected.sub(source.rgb), 0);
+  })();
+
+  return { deltaNode, resources };
+}
