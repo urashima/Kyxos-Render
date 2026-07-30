@@ -5,8 +5,21 @@ const disabled = (): EffectsState => ({
   fxaa: { enabled: false },
   smaa: { enabled: false },
   ssaa: { enabled: false, samples: 8 },
-  gtao: { enabled: false, resolutionScale: 0.5, samples: 16, radius: 0.5, intensity: 1.2, thickness: 1 },
-  ssao: { enabled: false, resolutionScale: 0.5, samples: 16, radius: 0.5, intensity: 1.5 },
+  gtao: {
+    enabled: false,
+    resolutionScale: 0.5,
+    samples: 16,
+    radius: 0.5,
+    intensity: 1.2,
+    thickness: 1,
+  },
+  ssao: {
+    enabled: false,
+    resolutionScale: 0.5,
+    samples: 16,
+    radius: 0.5,
+    intensity: 1.5,
+  },
   ssr: {
     enabled: false,
     resolutionScale: 0.5,
@@ -90,7 +103,7 @@ export function createQualityPreset(name: QualityPresetName): EffectsState {
     return state;
   }
 
-  if (name === 'cinematic') {
+  if (name === 'cinematic' || name === 'ultra') {
     state.traa.enabled = true;
     state.gtao.enabled = true;
     state.gtao.resolutionScale = 1;
@@ -148,7 +161,10 @@ export function enforceEffectRules(state: EffectsState, changed?: EffectName): E
     next.temporalReprojection.enabled = false;
     next.temporalDenoise.enabled = false;
   } else {
-    if (changed === 'temporalReprojection' && !next.temporalReprojection.enabled) {
+    if (
+      changed === 'temporalReprojection' &&
+      !next.temporalReprojection.enabled
+    ) {
       next.temporalDenoise.enabled = false;
     }
     if (next.temporalDenoise.enabled) next.temporalReprojection.enabled = true;
