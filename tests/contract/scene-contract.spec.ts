@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   cloneSceneContract,
+  sceneDigestInput,
   validateSceneContract,
 } from '../../packages/scene-contract/src/index';
 import {
@@ -27,7 +28,24 @@ describe('Kyxos Scene Contract', () => {
     const result = validateSceneContract(fixture);
     expect(result.valid).toBe(false);
     expect(result.issues.map((issue) => issue.code)).toEqual(
-      expect.arrayContaining(['secret', 'xss', 'reference']),
+      expect.arrayContaining(['asset-uri', 'xss', 'reference']),
+    );
+  });
+
+  it('rejects broken hierarchy reciprocity and invalid material references', () => {
+    const fixture = createFixtureContract();
+    fixture.nodes.push({
+      ...structuredClone(fixture.nodes[0]),
+      id: 'child-node',
+      name: 'Child',
+      parentId: fixture.nodes[0].id,
+      children: [],
+      materialSlots: ['missing-material'],
+    });
+    const result = validateSceneContract(fixture);
+    expect(result.valid).toBe(false);
+    expect(result.issues.map((issue) => issue.code)).toEqual(
+      expect.arrayContaining(['hierarchy', 'reference']),
     );
   });
 
@@ -38,6 +56,21 @@ describe('Kyxos Scene Contract', () => {
     expect(migrated.contractVersion).toBe('1.1.0');
     expect(migrated.renderSettings.backend).toBe('auto');
     expect(legacy.contractVersion).toBe('0.9.0');
+  });
+
+  it('canonicalizes nested key order and ignores save-only updatedAt changes', () => {
+    const first = createFixtureContract('Digest Fixture');
+    first.materials['fixture-material'].metadata = {
+      zeta: { second: 2, first: 1 },
+      alpha: true,
+    };
+    const second = cloneSceneContract(first);
+    second.metadata.updatedAt = '2099-01-01T00:00:00.000Z';
+    second.materials['fixture-material'].metadata = {
+      alpha: true,
+      zeta: { first: 1, second: 2 },
+    };
+    expect(sceneDigestInput(second)).toBe(sceneDigestInput(first));
   });
 
   it('keeps published snapshots independent when cloned', () => {
