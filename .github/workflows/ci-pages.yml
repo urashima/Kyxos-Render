@@ -22,7 +22,7 @@ concurrency:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 55
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -46,10 +46,11 @@ jobs:
           name: verify-diagnostics
           path: verify.log
       - run: pnpm exec playwright install --with-deps chromium
-      - name: Browser acceptance
+      - name: WebGL 2 and WebGPU browser acceptance
         shell: bash
         env:
           CI: true
+          KYXOS_WEBGPU_E2E: '1'
         run: |
           set +e
           pnpm test:e2e 2>&1 | tee e2e.log
