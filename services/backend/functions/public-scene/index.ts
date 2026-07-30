@@ -1,44 +1,110 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 
-const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-const allowedOrigins = new Set(
-  (Deno.env.get('KYXOS_PUBLIC_ALLOWED_ORIGINS') ?? '').split(',').map((entry) => entry.trim()).filter(Boolean),
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
+const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+const ASSET_BUCKET = 'kyxos-assets';
+const ALLOWED_ORIGINS = new Set(
+  (Deno.env.get('KYXOS_PUBLIC_ALLOWED_ORIGINS') ?? '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean),
 );
 
-function headers(request: Request, cache = 'public, max-age=60, stale-while-revalidate=300') {
+function originAllowed(request: Request): boolean {
   const origin = request.headers.get('origin') ?? '';
-  const allowed = allowedOrigins.size === 0 || allowedOrigins.has(origin);
+  return !origin || ALLOWED_ORIGINS.size === 0 || ALLOWED_ORIGINS.has(origin);
+}
+
+function headers(
+  request: Request,
+  cache = 'public, max-age=60, stale-while-revalidate=300',
+): HeadersInit {
+  const origin = request.headers.get('origin') ?? '';
   return {
-    'access-control-allow-origin': allowed ? origin || '*' : '',
+    'access-control-allow-origin': originAllowed(request) ? origin || '*' : 'null',
     'access-control-allow-methods': 'GET,OPTIONS',
     'access-control-allow-headers': 'content-type',
+    'access-control-max-age': '86400',
     'cache-control': cache,
-    'content-type': 'application/json',
+    'content-type': 'application/json; charset=utf-8',
+    'x-content-type-options': 'nosniff',
+    'referrer-policy': 'no-referrer',
     vary: 'origin',
   };
 }
 
-function response(request: Request, body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), { status, headers: headers(request) });
+function response(
+  request: Request,
+  body: unknown,
+  status = 200,
+  cache?: string,
+): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: headers(request, cache),
+  });
+}
+
+function validUuid(value: string | null): value is string {
+  return Boolean(
+    value &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+        value,
+      ),
+  );
+}
+
+function expectedAssetHashes(snapshot: any): Set<string> {
+  return new Set(
+    Object.values(snapshot?.assets ?? {})
+      .map((asset: any) => String(asset.contentHash ?? ''))
+      .filter((hash) => /^[a-f0-9]{64}$/.test(hash)),
+  );
 }
 
 Deno.serve(async (request) => {
-  if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: headers(request, 'no-store') });
-  if (request.method !== 'GET') return response(request, { error: 'method not allowed' }, 405);
+  if (request.method === 'OPTIONS') {
+    return originAllowed(request)
+      ? new Response(null, { status: 204, headers: headers(request, 'no-store') })
+      : response(request, { error: 'origin not allowed' }, 403, 'no-store');
+  }
+  if (!originAllowed(request)) {
+    return response(request, { error: 'origin not allowed' }, 403, 'no-store');
+  }
+  if (request.method !== 'GET') {
+    return response(request, { error: 'method not allowed' }, 405, 'no-store');
+  }
 
   const url = new URL(request.url);
   const versionId = url.searchParams.get('version');
   const slug = url.searchParams.get('slug');
-  if (!versionId && !slug) return response(request, { error: 'version or slug is required' }, 400);
+  if ((versionId && slug) || (!versionId && !slug)) {
+    return response(
+      request,
+      { error: 'provide exactly one version or slug' },
+      400,
+      'no-store',
+    );
+  }
+  if (versionId && !validUuid(versionId)) {
+    return response(request, { error: 'invalid version id' }, 400, 'no-store');
+  }
+  if (slug && !/^[a-z0-9][a-z0-9-]{0,80}$/.test(slug)) {
+    return response(request, { error: 'invalid public slug' }, 400, 'no-store');
+  }
 
-  const admin = createClient(supabaseUrl, serviceRoleKey, {
+  const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
 
   try {
     let resolvedVersionId = versionId;
-    let slugRow: { project_id: string; slug: string; current_version_id: string; allowed_embed_origins: string[] } | null = null;
+    let slugRow: {
+      project_id: string;
+      slug: string;
+      current_version_id: string;
+      allowed_embed_origins: string[];
+    } | null = null;
 
     if (slug) {
       const { data, error } = await admin
@@ -47,17 +113,23 @@ Deno.serve(async (request) => {
         .eq('slug', slug)
         .eq('is_enabled', true)
         .single();
-      if (error || !data) return response(request, { error: 'published link not found' }, 404);
+      if (error || !data) {
+        return response(request, { error: 'published link not found' }, 404, 'no-store');
+      }
       slugRow = data;
       resolvedVersionId = data.current_version_id;
     }
 
     const { data: version, error: versionError } = await admin
       .from('published_versions')
-      .select('id,project_id,version_number,scene_snapshot,scene_digest,contract_version,viewer_compatibility,created_at')
+      .select(
+        'id,project_id,version_number,scene_snapshot,scene_digest,contract_version,viewer_compatibility,created_at',
+      )
       .eq('id', resolvedVersionId)
       .single();
-    if (versionError || !version) return response(request, { error: 'published version not found' }, 404);
+    if (versionError || !version) {
+      return response(request, { error: 'published version not found' }, 404, 'no-store');
+    }
 
     if (!slugRow) {
       const { data, error } = await admin
@@ -66,25 +138,42 @@ Deno.serve(async (request) => {
         .eq('project_id', version.project_id)
         .eq('is_enabled', true)
         .single();
-      if (error || !data) return response(request, { error: 'public access is disabled' }, 404);
+      if (error || !data) {
+        return response(request, { error: 'public access is disabled' }, 404, 'no-store');
+      }
       slugRow = data;
     }
 
     const { data: publishedAssets, error: assetsError } = await admin
       .from('published_assets')
-      .select('asset_id,assets!inner(content_hash,storage_key)')
+      .select('asset_id,assets!inner(content_hash,storage_key,metadata_json)')
       .eq('version_id', version.id);
     if (assetsError) throw assetsError;
 
     const manifest: Record<string, string> = {};
     for (const row of publishedAssets ?? []) {
       const asset = Array.isArray(row.assets) ? row.assets[0] : row.assets;
-      if (!asset) continue;
+      if (!asset || asset.metadata_json?.completed !== true) continue;
       const { data: signed, error: signedError } = await admin.storage
-        .from('kyxos-assets')
+        .from(ASSET_BUCKET)
         .createSignedUrl(asset.storage_key, 900);
-      if (signedError || !signed) throw signedError ?? new Error('Unable to sign a published asset.');
+      if (signedError || !signed?.signedUrl) {
+        throw signedError ?? new Error('Unable to sign a published asset.');
+      }
       manifest[`asset://${asset.content_hash}`] = signed.signedUrl;
+    }
+
+    const expected = expectedAssetHashes(version.scene_snapshot);
+    const resolved = new Set(
+      Object.keys(manifest).map((uri) => uri.slice('asset://'.length)),
+    );
+    if (expected.size !== resolved.size || [...expected].some((hash) => !resolved.has(hash))) {
+      return response(
+        request,
+        { error: 'published asset manifest is incomplete' },
+        503,
+        'no-store',
+      );
     }
 
     return response(request, {
@@ -103,6 +192,11 @@ Deno.serve(async (request) => {
     });
   } catch (error) {
     console.error(error);
-    return response(request, { error: 'published scene could not be resolved' }, 500);
+    return response(
+      request,
+      { error: 'published scene could not be resolved' },
+      500,
+      'no-store',
+    );
   }
 });
