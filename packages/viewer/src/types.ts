@@ -78,6 +78,33 @@ export interface MaterialTextureInputs {
   emissive?: TextureInput;
 }
 
+export type ScreenSpaceSSSQuality = 'low' | 'medium' | 'high';
+
+/**
+ * Deferred, material-selective screen-space subsurface scattering controls.
+ * `materialNames` matches mesh or material names; null/empty selects every
+ * eligible non-metal PBR material unless userData.kyxosSSS is explicitly false.
+ */
+export interface ScreenSpaceSSSSettings {
+  enabled: boolean;
+  color: string;
+  strength: number;
+  radius: number;
+  falloff: [number, number, number];
+  thickness: number;
+  depthFalloff: number;
+  normalThreshold: number;
+  quality: ScreenSpaceSSSQuality;
+  materialNames?: string[] | null;
+}
+
+export interface ScreenSpaceSSSStatus extends ScreenSpaceSSSSettings {
+  materialNames: string[] | null;
+  markedMaterials: number;
+  eligibleMaterials: number;
+  lastError: string | null;
+}
+
 export interface ViewerMetrics {
   backend: BackendName;
   fps: number;
