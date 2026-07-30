@@ -1,7 +1,4 @@
-import type {
-  ProjectSession,
-  SceneDocument,
-} from '@kyxos/editor-core';
+import type { ProjectSession, SceneDocument } from '@kyxos/editor-core';
 import type {
   AssetResolver,
   ScenePatch,
@@ -40,7 +37,7 @@ export interface KyxosViewportAdapter {
     | null;
   loadEnvironmentAsset(assetId?: string): Promise<void>;
   resetCamera(): void;
-  setQualityPreset(name: QualityPresetName): void;
+  setQualityPreset(name: QualityPresetName | 'ultra'): void;
   captureThumbnail(): Promise<Blob>;
   dispose(): void;
 }
@@ -81,6 +78,8 @@ export class BrowserKyxosViewportAdapter
   };
   private gizmo: HTMLDivElement | null = null;
   private drag: TransformDrag | null = null;
+  private operationQueue: Promise<void> = Promise.resolve();
+  private generation = 0;
 
   private readonly onCanvasPointerDown = (event: PointerEvent) => {
     if (!this.viewer || !this.canvas || event.button !== 0) return;
@@ -105,9 +104,7 @@ export class BrowserKyxosViewportAdapter
     const scene = this.document.value;
     for (const nodeId of this.selected) {
       const node = scene.nodes.find((entry) => entry.id === nodeId);
-      if (node && !node.locked) {
-        transforms.set(nodeId, structuredClone(node.transform));
-      }
+      if (node && !node.locked) transforms.set(nodeId, structuredClone(node.transform));
     }
     if (!transforms.size) return;
 
@@ -188,8 +185,25 @@ export class BrowserKyxosViewportAdapter
     super();
   }
 
+  private enqueue(operation: () => Promise<void>): Promise<void> {
+    const generation = this.generation;
+    const run = async () => {
+      if (generation !== this.generation) return;
+      await operation();
+      if (generation !== this.generation) return;
+      this.updateGizmo();
+    };
+    const result = this.operationQueue.then(run, run);
+    this.operationQueue = result.catch((error) => {
+      this.dispatchEvent(new CustomEvent('error', { detail: { error } }));
+    });
+    return result;
+  }
+
   async mount(canvas: HTMLCanvasElement): Promise<void> {
     this.dispose();
+    this.generation += 1;
+    this.operationQueue = Promise.resolve();
     this.canvas = canvas;
     this.viewer = await KyxosViewer.create({
       canvas,
@@ -203,23 +217,29 @@ export class BrowserKyxosViewportAdapter
     );
   }
 
-  async loadDocument(document: SceneDocument): Promise<void> {
-    if (!this.viewer) throw new Error('Viewport adapter is not mounted.');
+  loadDocument(document: SceneDocument): Promise<void> {
     this.document = document;
-    await this.viewer.loadScene(document.value, this.assetResolver);
-    this.updateGizmo();
+    return this.enqueue(async () => {
+      if (!this.viewer) throw new Error('Viewport adapter is not mounted.');
+      await this.viewer.loadScene(document.value, this.assetResolver);
+    });
   }
 
-  async applyPatch(patch: ScenePatch): Promise<void> {
-    if (!this.viewer) throw new Error('Viewport adapter is not mounted.');
-    await this.viewer.applyScenePatch(patch);
-    this.updateGizmo();
+  applyPatch(patch: ScenePatch): Promise<void> {
+    return this.enqueue(async () => {
+      if (!this.viewer) throw new Error('Viewport adapter is not mounted.');
+      await this.viewer.applyScenePatch(patch);
+    });
   }
 
   bindSession(session: ProjectSession): () => void {
     const onDocument = (event: Event) => {
       const detail = (event as CustomEvent<{ patch: ScenePatch }>).detail;
-      if (detail.patch.length) void this.applyPatch(detail.patch);
+      if (detail.patch.length) {
+        void this.applyPatch(detail.patch).catch((error) => {
+          this.dispatchEvent(new CustomEvent('error', { detail: { error } }));
+        });
+      }
     };
     const onSelection = (event: Event) =>
       this.select((event as CustomEvent<{ nodeIds: string[] }>).detail.nodeIds);
@@ -318,35 +338,39 @@ export class BrowserKyxosViewportAdapter
     return this.viewer?.getAnimationState() ?? null;
   }
 
-  async loadEnvironmentAsset(assetId?: string): Promise<void> {
-    if (!this.viewer || !this.document) {
-      throw new Error('Viewport adapter is not mounted.');
-    }
-    if (!assetId) {
-      await this.viewer.loadEnvironment('');
-      return;
-    }
-    const asset = this.document.value.assets[assetId];
-    if (!asset || asset.kind !== 'environment') {
-      throw new Error(`Environment asset is missing: ${assetId}`);
-    }
-    await this.viewer.loadEnvironment(await this.assetResolver.resolve(asset));
+  loadEnvironmentAsset(assetId?: string): Promise<void> {
+    return this.enqueue(async () => {
+      if (!this.viewer || !this.document) {
+        throw new Error('Viewport adapter is not mounted.');
+      }
+      if (!assetId) {
+        await this.viewer.restoreStudioEnvironment();
+        return;
+      }
+      const asset = this.document.value.assets[assetId];
+      if (!asset || asset.kind !== 'environment') {
+        throw new Error(`Environment asset is missing: ${assetId}`);
+      }
+      await this.viewer.loadEnvironment(await this.assetResolver.resolve(asset));
+    });
   }
 
   resetCamera(): void {
     this.viewer?.resetCamera();
   }
 
-  setQualityPreset(name: QualityPresetName): void {
-    this.viewer?.setQualityPreset(name);
+  setQualityPreset(name: QualityPresetName | 'ultra'): void {
+    this.viewer?.setQualityPreset(name === 'ultra' ? 'cinematic' : name);
   }
 
   async captureThumbnail(): Promise<Blob> {
+    await this.operationQueue;
     if (!this.viewer) throw new Error('Viewport adapter is not mounted.');
     return this.viewer.capture({ mimeType: 'image/png', scale: 1 });
   }
 
   dispose(): void {
+    this.generation += 1;
     if (this.canvas) {
       this.canvas.removeEventListener('pointerdown', this.onCanvasPointerDown);
     }
@@ -362,6 +386,7 @@ export class BrowserKyxosViewportAdapter
     this.viewer = null;
     this.canvas = null;
     this.document = null;
+    this.operationQueue = Promise.resolve();
   }
 
   private mountGizmo(canvas: HTMLCanvasElement): void {
@@ -433,7 +458,6 @@ export class BrowserKyxosViewportAdapter
         : property === 'rotation'
           ? (this.snap.rotation * Math.PI) / 180
           : this.snap.scale;
-    if (!Number.isFinite(step) || step <= 0) return value;
-    return Math.round(value / step) * step;
+    return step > 0 ? Math.round(value / step) * step : value;
   }
 }
