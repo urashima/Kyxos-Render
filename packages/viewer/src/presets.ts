@@ -53,7 +53,7 @@ const disabled = (): EffectsState => ({
   lut: { enabled: false, intensity: 0.65 },
   lensDistortion: { enabled: false, amount: 0.035 },
   sharpness: { enabled: false, amount: 0.25 },
-  sparkle: { enabled: false, intensity: 0.4, threshold: 0.94 },
+  sparkle: { enabled: false, intensity: 0.8, threshold: 0.78 },
   gradualBackground: { enabled: true, intensity: 1 },
 });
 
