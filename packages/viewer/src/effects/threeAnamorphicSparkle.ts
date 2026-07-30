@@ -15,6 +15,10 @@ import {
 } from 'three/tsl';
 import { bloom } from 'three/addons/tsl/display/BloomNode.js';
 
+function asNode(value: any, fallback: number) {
+  return value?.isNode ? value : uniform(Number(value ?? fallback));
+}
+
 /**
  * Three.js official WebGPU anamorphic lensflare implementation adapted from:
  * examples/webgpu_postprocessing_anamorphic.html
@@ -22,22 +26,20 @@ import { bloom } from 'three/addons/tsl/display/BloomNode.js';
  * The algorithm and defaults intentionally mirror the official example instead
  * of maintaining a Kyxos-specific procedural sparkle shader.
  */
-export function createThreeAnamorphicSparkle(
+export function threeAnamorphicSparkleNode(
   source: any,
-  settings: {
-    intensity?: number;
-    threshold?: number;
-    radius?: number;
-    samples?: number;
-  },
+  intensity: any = 5,
+  threshold: any = 0.3,
+  radius: any = 0,
+  sampleCount: any = 80,
 ) {
-  const intensity = uniform(Number(settings.intensity ?? 5));
+  const intensityNode = asNode(intensity, 5);
   const tintColor = uniform(new THREE.Color(0x7a8aff));
-  const threshold = uniform(Number(settings.threshold ?? 0.3));
-  const radius = uniform(Number(settings.radius ?? 0));
-  const samples = uniform(Number(settings.samples ?? 80));
+  const thresholdNode = asNode(threshold, 0.3);
+  const radiusNode = asNode(radius, 0);
+  const samples = asNode(sampleCount, 80);
 
-  const bloomPass = bloom(source, intensity, radius, threshold);
+  const bloomPass = bloom(source, intensityNode, radiusNode, thresholdNode);
   bloomPass.setResolutionScale(0.25);
 
   // Copied from the official Three.js anamorphic post-processing example.
@@ -63,8 +65,5 @@ export function createThreeAnamorphicSparkle(
     return total.div(samples.div(3));
   });
 
-  return {
-    bloomPass,
-    outputNode: bloomPass.mul(tintColor),
-  };
+  return bloomPass.mul(tintColor);
 }
