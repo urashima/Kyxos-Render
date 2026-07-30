@@ -17,7 +17,7 @@ test('Kyxos Studio edits, previews and publishes immutable animated releases', a
   await page.getByLabel('Email').fill('owner@kyxos.local');
   await page.getByLabel('Password').fill('test-password');
   await page.getByRole('button', { name: 'Sign in' }).click();
-  await expect(page.getByText('Projects')).toBeVisible();
+  await expect(page.getByText('Projects', { exact: true })).toBeVisible();
 
   page.once('dialog', async (dialog) => dialog.accept('Studio Acceptance'));
   await page.getByRole('button', { name: 'New project' }).click();
@@ -70,7 +70,7 @@ test('Kyxos Studio edits, previews and publishes immutable animated releases', a
   await expect(page.locator('.studio-hierarchy')).toBeVisible();
 
   await page.reload();
-  await expect(page.getByText('Projects')).toBeVisible();
+  await expect(page.getByText('Projects', { exact: true })).toBeVisible();
   await page.locator('.project-card', { hasText: 'Studio Acceptance' }).click();
   await page.locator('.hierarchy-row', { hasText: 'Animated Triangle' }).click();
   await expect(page.locator('input[aria-label="position x"]')).toHaveValue(
