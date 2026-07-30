@@ -23,6 +23,7 @@ declare
   result public.published_versions;
   requested_asset_count integer := coalesce(array_length(asset_ids, 1), 0);
   owned_asset_count integer;
+  digest_snapshot jsonb;
   authoritative_digest text;
 begin
   if not public.is_project_owner(target_project) then
@@ -47,10 +48,14 @@ begin
     raise exception 'executable content is forbidden in published snapshots';
   end if;
 
-  -- jsonb text output has deterministic key ordering, so equivalent snapshots
-  -- receive the same digest regardless of client object insertion order. The
-  -- caller-provided digest is accepted for API compatibility but never trusted.
-  authoritative_digest := encode(public.digest(convert_to(snapshot::text, 'utf8'), 'sha256'), 'hex');
+  -- jsonb text output has deterministic key ordering. updatedAt is operational
+  -- metadata, not visual content, so retries and save-only timestamp changes
+  -- receive the same digest. The caller digest is never trusted.
+  digest_snapshot := jsonb_set(snapshot, '{metadata,updatedAt}', '""'::jsonb, true);
+  authoritative_digest := encode(
+    public.digest(convert_to(digest_snapshot::text, 'utf8'), 'sha256'),
+    'hex'
+  );
 
   select count(*)
     into owned_asset_count
