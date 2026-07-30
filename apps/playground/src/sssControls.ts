@@ -18,21 +18,28 @@ let currentSettings: SSSMaterialSettings = { ...DEFAULT_SSS_MATERIAL_SETTINGS };
 let thicknessFile: File | null = null;
 let operation = Promise.resolve<SSSMaterialStatus | null>(null);
 
-function runWithThicknessFile(viewer: KyxosViewer, patch: SSSPatch) {
-  if (!Object.prototype.hasOwnProperty.call(patch, 'thicknessMap') && thicknessFile) {
-    const url = URL.createObjectURL(thicknessFile);
-    return viewer.setSSSMaterial({ ...patch, thicknessMap: url }).finally(() => URL.revokeObjectURL(url));
+async function applyPersistentSettings(viewer: KyxosViewer) {
+  if (!currentSettings.enabled) return viewer.getSSSMaterialStatus();
+  if (!thicknessFile) return viewer.setSSSMaterial(currentSettings);
+
+  const url = URL.createObjectURL(thicknessFile);
+  try {
+    return await viewer.setSSSMaterial({ ...currentSettings, thicknessMap: url });
+  } finally {
+    URL.revokeObjectURL(url);
   }
-  return viewer.setSSSMaterial(patch);
 }
 
 function queuePatch(patch: SSSPatch) {
-  currentSettings = { ...currentSettings, ...patch };
+  const persistentPatch = { ...patch };
+  delete persistentPatch.thicknessMap;
+  currentSettings = { ...currentSettings, ...persistentPatch };
+
   operation = operation
     .catch(() => null)
     .then(async () => {
       if (!currentViewer) return null;
-      const status = await runWithThicknessFile(currentViewer, patch);
+      const status = await currentViewer.setSSSMaterial(patch);
       syncPanel(status);
       return status;
     })
@@ -49,9 +56,7 @@ if (!constructorState[patchKey]) {
   viewerConstructor.create = async (options: KyxosViewerCreateOptions) => {
     const viewer = await originalCreate(options);
     currentViewer = viewer;
-    if (currentSettings.enabled) {
-      await runWithThicknessFile(viewer, currentSettings);
-    }
+    await applyPersistentSettings(viewer);
     window.dispatchEvent(new CustomEvent('kyxos-viewer-created'));
     return viewer;
   };
