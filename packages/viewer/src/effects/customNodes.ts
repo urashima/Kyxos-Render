@@ -17,6 +17,7 @@ import {
   step,
   vec4,
 } from 'three/tsl';
+import { threeAnamorphicSparkleNode } from './threeAnamorphicSparkle';
 
 export function gradualBackgroundNode() {
   const horizon = smoothstep(0.05, 0.95, screenUV.y);
@@ -32,6 +33,10 @@ export function lensDistortionNode(source: any, amount: any) {
     const distortedUv = centered.mul(scale).add(0.5).clamp(0, 1);
     return textureNode.sample(distortedUv);
   })();
+}
+
+export function sparkleNode(source: any, intensity: any, threshold: any) {
+  return source.add(threeAnamorphicSparkleNode(source, intensity, threshold));
 }
 
 export function beforeAfterNode(before: any, after: any, split: any) {
