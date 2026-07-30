@@ -7,8 +7,9 @@ import {
   normalView,
   packNormalToRGB,
   pass,
-  renderOutput,
+  perspectiveDepthToViewZ,
   roughness,
+  sample,
   vec4,
 } from 'three/tsl';
 
@@ -60,7 +61,7 @@ type ScreenSpaceSSSRuntimeState = {
 
 type ViewerInternals = {
   scene: THREE.Scene;
-  camera: THREE.Camera;
+  camera: THREE.PerspectiveCamera;
   modelRoot: THREE.Group;
   nodes: any[];
   debugView: string;
@@ -309,7 +310,10 @@ function appendScreenSpaceSSS(viewer: ViewerInternals, state: ScreenSpaceSSSRunt
   const normalPacked = gBufferPass.getTextureNode('output');
   const sssData = gBufferPass.getTextureNode('sssData');
   const surface = gBufferPass.getTextureNode('surface');
-  const viewZ = gBufferPass.getViewZNode();
+  const depth = gBufferPass.getTextureNode('depth');
+  const viewZ = sample((uv: any) =>
+    perspectiveDepthToViewZ(depth.sample(uv).r, viewer.camera.near, viewer.camera.far),
+  );
 
   gBufferPass.getTexture('output').type = THREE.UnsignedByteType;
   gBufferPass.getTexture('sssData').type = THREE.UnsignedByteType;
@@ -325,9 +329,10 @@ function appendScreenSpaceSSS(viewer: ViewerInternals, state: ScreenSpaceSSSRunt
   );
 
   viewer.nodes.push(gBufferPass, ...effect.resources);
-  viewer.finalNode = renderOutput(
-    vec4(viewer.finalNode.rgb.add(effect.deltaNode.rgb), viewer.finalNode.a),
-  );
+  // finalNode is already in display/output color space because the core pipeline
+  // owns the single renderOutput() transform. Applying renderOutput() again here
+  // double tone-maps and color-converts the frame and can produce black output.
+  viewer.finalNode = vec4(viewer.finalNode.rgb.add(effect.deltaNode.rgb), viewer.finalNode.a);
   viewer.debugNodes.set('final', viewer.finalNode);
   viewer.applyOutputSelection();
   viewer.renderPipeline.needsUpdate = true;
