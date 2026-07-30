@@ -29,6 +29,10 @@ export default tseslint.config(
         'warn',
         { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
       ],
+      '@typescript-eslint/no-unused-expressions': [
+        'error',
+        { allowShortCircuit: true, allowTernary: true },
+      ],
       'no-async-promise-executor': 'off',
       'no-console': ['warn', { allow: ['warn', 'error'] }],
     },
