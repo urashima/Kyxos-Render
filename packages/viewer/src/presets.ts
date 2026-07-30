@@ -109,7 +109,6 @@ export function createQualityPreset(name: QualityPresetName): EffectsState {
     state.lut.enabled = true;
     state.lensDistortion.enabled = true;
     state.sharpness.enabled = true;
-    state.sparkle.enabled = true;
     return state;
   }
 
@@ -120,7 +119,6 @@ export function createQualityPreset(name: QualityPresetName): EffectsState {
   state.lut.enabled = true;
   state.lensDistortion.enabled = true;
   state.sharpness.enabled = true;
-  state.sparkle.enabled = true;
   return state;
 }
 
