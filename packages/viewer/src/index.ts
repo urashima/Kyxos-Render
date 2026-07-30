@@ -1,6 +1,7 @@
 import './sceneApi';
 import './animationApi';
 import './lightingApi';
+import './capabilityApi';
 
 export { KyxosViewer } from './KyxosViewer';
 export { createQualityPreset, enforceEffectRules, mergeEffectSettings } from './presets';
