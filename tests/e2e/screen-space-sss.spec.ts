@@ -159,12 +159,8 @@ test('deferred screen-space SSS defaults to 5 tap, stays visible and exposes deb
   let previousDebugFrame: Buffer | null = null;
 
   for (const view of debugViews) {
-    await page.evaluate((debugView) => window.__kyxosTestApi.setDebugView(debugView), view);
-    await page.waitForFunction(
-      (debugView) => (document.querySelector('#debug-select') as HTMLSelectElement)?.value === debugView,
-      view,
-      { timeout: 30_000 },
-    ).catch(() => undefined);
+    await page.selectOption('#debug-select', view);
+    await expect(page.locator('#debug-select')).toHaveValue(view);
     const frame = await captureFrame(page);
     const visibility = await readFrameVisibility(page, frame);
     expect(visibility.visibleRatio).toBeGreaterThan(0.005);
@@ -177,7 +173,7 @@ test('deferred screen-space SSS defaults to 5 tap, stays visible and exposes deb
     previousDebugFrame = frame;
   }
 
-  await page.evaluate(() => window.__kyxosTestApi.setDebugView('final'));
+  await page.selectOption('#debug-select', 'final');
   await expectVisibleFrame(page);
 
   const updated = await page.evaluate(() =>
