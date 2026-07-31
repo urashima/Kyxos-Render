@@ -72,6 +72,15 @@ const TRANSLUCENCY_GAIN = 0.22;
 const HIGH_BROAD_LOBE_PROBABILITY = 0.42;
 const HIGH_BROAD_LOBE_SCALE = 2.4;
 
+// TemporalReprojectNode returns a geometrically validated/reprojected history
+// sample and stores reciprocal history length in alpha. The pinned Three.js
+// revision does not mix the current input into its accumulate=true feedback
+// path, so SSS owns the final feedback blend below. Camera/object motion raises
+// the current-frame weight quickly; still pixels retain the normal 1/N mean.
+const TEMPORAL_MOTION_START_PIXELS = 0.125;
+const TEMPORAL_MOTION_FULL_PIXELS = 1.75;
+const TEMPORAL_MOTION_CURRENT_WEIGHT = 0.95;
+
 export function getScreenSpaceSSSSamplesPerFrame(quality: ScreenSpaceSSSQuality) {
   return SAMPLE_PAIRS[quality] * 2;
 }
@@ -127,7 +136,8 @@ function selectKernelOffset(kernel: KernelTap[], randomValue: any) {
  * stochastic pass can run below full resolution; the official Three.js
  * TemporalReprojectNode reconstructs full resolution while performing motion-
  * vector reprojection, geometric history validation and YCoCg variance clipping
- * in diffuse mode.
+ * in diffuse mode. Kyxos then performs the missing current/history feedback mix
+ * with motion-adaptive current-frame weighting.
  *
  * Each invocation produces exactly one output graph. Final composition and
  * debug views must not share an invoked Fn node: Three.js TSL assignment stacks
@@ -184,7 +194,10 @@ export function createScreenSpaceSSSNode(
       .mul(thicknessScale)
       .mul(perspectiveScale)
       .clamp(0.125, 48);
-    const frameSeed = time.mul(60).floor();
+    // Temporal filtering requires a changing stochastic sequence. Without a
+    // history resolve, keep the pattern fixed so disabling the switch does not
+    // turn into an uncontrolled full-frame shimmer mode.
+    const frameSeed = options.temporalFiltering ? time.mul(60).floor() : float(0);
     const accumulated = vec3(0).toVar();
 
     const sampleSurface = (sampleUv: any) => {
@@ -284,6 +297,10 @@ export function createScreenSpaceSSSNode(
 
   let resolved: any = currentTexture;
   if (options.temporalFiltering) {
+    // Use the official pass for reprojection, geometric validation and variance
+    // clipping, but keep feedback external so the current frame is explicitly
+    // mixed into history. This avoids the pinned accumulate=true path retaining
+    // a clipped old color while only advancing its frame-count alpha.
     const temporal = temporalReproject(
       currentTexture,
       depthNode,
@@ -292,14 +309,33 @@ export function createScreenSpaceSSSNode(
       camera,
       {
         mode: 'diffuse',
-        accumulate: true,
+        accumulate: false,
       },
     );
     temporal.maxFrames.value = options.temporalMaxFrames;
     temporal.clampIntensity.value = options.temporalClamp;
     temporal.flickerSuppression.value = options.temporalFlickerSuppression;
-    resolved = temporal;
-    resources.push(temporal);
+
+    const feedbackResolve = Fn(() => {
+      const uv = screenUV;
+      const current = currentTexture.sample(uv);
+      const reprojected = temporal;
+      const velocityNdc = velocityNode.sample(uv).xy;
+      const velocityPixels = velocityNdc.mul(screenSize.mul(0.5)).length();
+      const motionCurrentWeight = smoothstep(
+        TEMPORAL_MOTION_START_PIXELS,
+        TEMPORAL_MOTION_FULL_PIXELS,
+        velocityPixels,
+      ).mul(TEMPORAL_MOTION_CURRENT_WEIGHT);
+      const currentWeight = max(reprojected.a, motionCurrentWeight).saturate();
+
+      return vec4(mix(reprojected.rgb, current.rgb, currentWeight), reprojected.a);
+    })();
+
+    const feedbackTexture = convertToTexture(feedbackResolve);
+    temporal.setHistoryTexture(feedbackTexture);
+    resolved = feedbackTexture;
+    resources.push(temporal, feedbackTexture);
   }
 
   const outputNode = Fn(() => {
