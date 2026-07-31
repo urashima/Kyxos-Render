@@ -3,7 +3,7 @@ import { expect, test, type Page } from '@playwright/test';
 const FRAME_CLIP = { x: 180, y: 110, width: 360, height: 230 } as const;
 
 async function captureFrame(page: Page) {
-  await page.waitForTimeout(500);
+  await page.waitForTimeout(650);
   return page.screenshot({ type: 'png', clip: FRAME_CLIP });
 }
 
@@ -95,10 +95,10 @@ async function expectVisibleFrame(page: Page) {
   return screenshot;
 }
 
-test('deferred screen-space SSS produces a visible toggle difference without black output', async ({
+test('deferred screen-space SSS defaults to 5 tap, stays visible and exposes debug buffers', async ({
   page,
 }) => {
-  test.setTimeout(120_000);
+  test.setTimeout(180_000);
   const pageErrors: string[] = [];
   const consoleErrors: string[] = [];
 
@@ -111,17 +111,24 @@ test('deferred screen-space SSS produces a visible toggle difference without bla
   await page.goto('/sss/');
   await page.waitForFunction(() => window.__kyxosTestApi?.ready(), null, { timeout: 90_000 });
   await page.waitForFunction(
-    () => window.__kyxosScreenSpaceSSSTestApi?.getStatus()?.markedMaterials === 1,
+    () => (window.__kyxosScreenSpaceSSSTestApi?.getStatus()?.markedMaterials ?? 0) >= 5,
     null,
     { timeout: 90_000 },
   );
 
+  await expect(page.locator('#model-select')).toHaveValue('procedural:sss-study');
+  await expect(page.locator('#sss-quality')).toHaveValue('low');
+  await expect(page.locator('#debug-select option[value="sssMask"]')).toHaveCount(1);
+  await expect(page.locator('#debug-select option[value="sssThickness"]')).toHaveCount(1);
+  await expect(page.locator('#debug-select option[value="sssDiffusion"]')).toHaveCount(1);
+  await expect(page.locator('#debug-select option[value="sssTranslucency"]')).toHaveCount(1);
+
   const initial = await page.evaluate(() => window.__kyxosScreenSpaceSSSTestApi.getStatus());
   expect(initial).toMatchObject({
     enabled: true,
-    quality: 'high',
-    markedMaterials: 1,
-    eligibleMaterials: 1,
+    quality: 'low',
+    markedMaterials: 5,
+    eligibleMaterials: 5,
     lastError: null,
   });
   const enabledFrame = await expectVisibleFrame(page);
@@ -138,16 +145,45 @@ test('deferred screen-space SSS produces a visible toggle difference without bla
 
   await page.evaluate(() => window.__kyxosScreenSpaceSSSTestApi.set({ enabled: true }));
   await page.waitForFunction(
-    () => window.__kyxosScreenSpaceSSSTestApi.getStatus()?.markedMaterials === 1,
+    () => (window.__kyxosScreenSpaceSSSTestApi.getStatus()?.markedMaterials ?? 0) >= 5,
     null,
     { timeout: 30_000 },
   );
+
+  const debugViews = [
+    'sssMask',
+    'sssThickness',
+    'sssDiffusion',
+    'sssTranslucency',
+  ] as const;
+  let previousDebugFrame: Buffer | null = null;
+
+  for (const view of debugViews) {
+    await page.evaluate((debugView) => window.__kyxosTestApi.setDebugView(debugView), view);
+    await page.waitForFunction(
+      (debugView) => (document.querySelector('#debug-select') as HTMLSelectElement)?.value === debugView,
+      view,
+      { timeout: 30_000 },
+    ).catch(() => undefined);
+    const frame = await captureFrame(page);
+    const visibility = await readFrameVisibility(page, frame);
+    expect(visibility.visibleRatio).toBeGreaterThan(0.005);
+    expect(visibility.meanLuminance).toBeGreaterThan(0.5);
+
+    if (previousDebugFrame) {
+      const difference = await measureFrameDifference(page, previousDebugFrame, frame);
+      expect(difference.meanAbsoluteDifference).toBeGreaterThan(0.05);
+    }
+    previousDebugFrame = frame;
+  }
+
+  await page.evaluate(() => window.__kyxosTestApi.setDebugView('final'));
   await expectVisibleFrame(page);
 
   const updated = await page.evaluate(() =>
-    window.__kyxosScreenSpaceSSSTestApi.set({ strength: 0.35, quality: 'low' }),
+    window.__kyxosScreenSpaceSSSTestApi.set({ strength: 0.35, quality: 'medium' }),
   );
-  expect(updated).toMatchObject({ enabled: true, strength: 0.35, quality: 'low', lastError: null });
+  expect(updated).toMatchObject({ enabled: true, strength: 0.35, quality: 'medium', lastError: null });
   await expectVisibleFrame(page);
 
   expect(await page.locator('#sss-status').textContent()).toContain('Enabled');
