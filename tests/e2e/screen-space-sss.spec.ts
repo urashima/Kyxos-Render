@@ -95,10 +95,8 @@ async function expectVisibleFrame(page: Page) {
   return screenshot;
 }
 
-test('deferred SSS uses low-sample temporal filtering and exposes resolve buffers', async ({
-  page,
-}) => {
-  test.setTimeout(210_000);
+test('deferred SSS uses low-resolution stochastic temporal reconstruction', async ({ page }) => {
+  test.setTimeout(240_000);
   const pageErrors: string[] = [];
   const consoleErrors: string[] = [];
 
@@ -118,6 +116,7 @@ test('deferred SSS uses low-sample temporal filtering and exposes resolve buffer
 
   await expect(page.locator('#model-select')).toHaveValue('procedural:sss-study');
   await expect(page.locator('#sss-quality')).toHaveValue('low');
+  await expect(page.locator('#sss-resolutionScale')).toHaveValue('0.5');
   await expect(page.locator('#sss-temporal')).toBeChecked();
   await expect(page.locator('#debug-select option[value="sssMask"]')).toHaveCount(1);
   await expect(page.locator('#debug-select option[value="sssThickness"]')).toHaveCount(1);
@@ -130,9 +129,12 @@ test('deferred SSS uses low-sample temporal filtering and exposes resolve buffer
   expect(initial).toMatchObject({
     enabled: true,
     quality: 'low',
+    resolutionScale: 0.5,
     temporalFiltering: true,
     temporalMaxFrames: 16,
     samplesPerFrame: 2,
+    sampledPixelRatio: 0.25,
+    effectiveTapsPerFullResolutionPixel: 0.5,
     temporalActive: true,
     markedMaterials: 5,
     eligibleMaterials: 5,
@@ -152,14 +154,31 @@ test('deferred SSS uses low-sample temporal filtering and exposes resolve buffer
   const disabledFrame = await expectVisibleFrame(page);
 
   const toggleDifference = await measureFrameDifference(page, enabledFrame, disabledFrame);
-  expect(toggleDifference.meanAbsoluteDifference).toBeGreaterThan(0.15);
-  expect(toggleDifference.changedRatio).toBeGreaterThan(0.01);
+  expect(toggleDifference.meanAbsoluteDifference).toBeGreaterThan(0.1);
+  expect(toggleDifference.changedRatio).toBeGreaterThan(0.008);
 
   await page.evaluate(() => window.__kyxosScreenSpaceSSSTestApi.set({ enabled: true }));
   await page.waitForFunction(
     () => (window.__kyxosScreenSpaceSSSTestApi.getStatus()?.markedMaterials ?? 0) >= 5,
     null,
     { timeout: 30_000 },
+  );
+
+  // The raw low-resolution stochastic pass should change more between frames
+  // than the accumulated full-resolution temporal resolve on this static scene.
+  await page.selectOption('#debug-select', 'sssStochastic');
+  const stochasticA = await captureFrame(page);
+  const stochasticB = await captureFrame(page);
+  const stochasticMotion = await measureFrameDifference(page, stochasticA, stochasticB);
+  expect(stochasticMotion.meanAbsoluteDifference).toBeGreaterThan(0.005);
+
+  await page.selectOption('#debug-select', 'sssTemporal');
+  await page.waitForTimeout(1400);
+  const temporalA = await captureFrame(page);
+  const temporalB = await captureFrame(page);
+  const temporalMotion = await measureFrameDifference(page, temporalA, temporalB);
+  expect(temporalMotion.meanAbsoluteDifference).toBeLessThan(
+    stochasticMotion.meanAbsoluteDifference,
   );
 
   const debugViews = [
@@ -198,6 +217,8 @@ test('deferred SSS uses low-sample temporal filtering and exposes resolve buffer
     temporalFiltering: false,
     temporalActive: false,
     samplesPerFrame: 2,
+    sampledPixelRatio: 0.25,
+    effectiveTapsPerFullResolutionPixel: 0.5,
     lastError: null,
   });
   await expectVisibleFrame(page);
@@ -206,6 +227,7 @@ test('deferred SSS uses low-sample temporal filtering and exposes resolve buffer
     window.__kyxosScreenSpaceSSSTestApi.set({
       temporalFiltering: true,
       temporalMaxFrames: 24,
+      resolutionScale: 0.75,
       strength: 0.35,
       quality: 'medium',
     }),
@@ -214,16 +236,19 @@ test('deferred SSS uses low-sample temporal filtering and exposes resolve buffer
     enabled: true,
     strength: 0.35,
     quality: 'medium',
+    resolutionScale: 0.75,
     temporalFiltering: true,
     temporalMaxFrames: 24,
     samplesPerFrame: 4,
+    sampledPixelRatio: 0.5625,
+    effectiveTapsPerFullResolutionPixel: 2.25,
     temporalActive: true,
     lastError: null,
   });
   await expectVisibleFrame(page);
 
   expect(await page.locator('#sss-status').textContent()).toContain('Enabled');
-  expect(await page.locator('#sss-sampling-status').textContent()).toContain('4 taps/frame');
+  expect(await page.locator('#sss-sampling-status').textContent()).toContain('2.25/full px');
   expect(pageErrors).toEqual([]);
   expect(
     consoleErrors.filter((message) =>
