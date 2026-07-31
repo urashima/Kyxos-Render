@@ -29,9 +29,9 @@ export const demoRoutes: DemoRoute[] = [
   {
     slug: 'sss',
     title: 'Screen-Space Subsurface Scattering',
-    eyebrow: 'Sketchfab-Style Deferred SSS',
+    eyebrow: 'Stochastic Temporal SSS',
     description:
-      'Material-masked separable diffusion with depth, normal, thickness and albedo edge stopping for skin, wax and jade.',
+      'Low-resolution 2/4/6-tap stochastic diffusion reconstructed with motion-vector temporal filtering and edge-aware history rejection.',
     quality: 'low',
   },
   {
