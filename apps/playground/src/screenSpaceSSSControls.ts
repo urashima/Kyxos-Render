@@ -17,30 +17,30 @@ type SSSPreset = Pick<
 const presets: Record<'skin' | 'wax' | 'jade', SSSPreset> = {
   skin: {
     color: '#ffb59e',
-    strength: 0.72,
-    radius: 7.5,
-    falloff: [1, 0.37, 0.3],
-    thickness: 0.55,
-    depthFalloff: 72,
-    normalThreshold: 0.35,
+    strength: 1.15,
+    radius: 18,
+    falloff: [1, 0.72, 0.5],
+    thickness: 0.78,
+    depthFalloff: 36,
+    normalThreshold: 0.05,
   },
   wax: {
     color: '#ffd2a1',
-    strength: 0.92,
-    radius: 12,
-    falloff: [1, 0.62, 0.28],
-    thickness: 0.82,
-    depthFalloff: 58,
-    normalThreshold: 0.2,
+    strength: 1.35,
+    radius: 24,
+    falloff: [1, 0.82, 0.58],
+    thickness: 0.92,
+    depthFalloff: 28,
+    normalThreshold: -0.1,
   },
   jade: {
     color: '#9fffc5',
-    strength: 0.64,
-    radius: 9.5,
-    falloff: [0.35, 1, 0.55],
-    thickness: 0.68,
-    depthFalloff: 84,
-    normalThreshold: 0.42,
+    strength: 1.05,
+    radius: 20,
+    falloff: [0.5, 1, 0.72],
+    thickness: 0.85,
+    depthFalloff: 42,
+    normalThreshold: 0.1,
   },
 };
 
@@ -84,6 +84,7 @@ if (!constructorState[patchKey]) {
           ...(structuredClone(DEFAULT_SCREEN_SPACE_SSS_SETTINGS) as ScreenSpaceSSSSettings),
           enabled: true,
           quality: 'high',
+          ...presets.skin,
         };
         routeInitialized = true;
       }
