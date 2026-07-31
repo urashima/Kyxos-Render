@@ -1,0 +1,11 @@
+.hierarchy-tree {
+  contain: strict;
+  min-height: 0;
+  overflow: auto;
+}
+
+.hierarchy-row {
+  contain: layout style paint;
+  content-visibility: auto;
+  contain-intrinsic-block-size: 28px;
+}

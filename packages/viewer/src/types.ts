@@ -2,7 +2,13 @@ import type { Texture } from 'three/webgpu';
 
 export type BackendPreference = 'auto' | 'webgpu' | 'webgl2';
 export type BackendName = 'webgpu' | 'webgl2';
-export type QualityPresetName = 'low' | 'medium' | 'high' | 'cinematic' | 'capture';
+export type QualityPresetName =
+  | 'low'
+  | 'medium'
+  | 'high'
+  | 'cinematic'
+  | 'ultra'
+  | 'capture';
 export type DebugView =
   | 'final'
   | 'beauty'
@@ -102,7 +108,7 @@ export interface CaptureOptions {
 export type StressTestName = 'resize' | 'toggle' | 'model' | 'environment';
 
 export interface StressResult {
-  name: string;
+  name: StressTestName;
   iterations: number;
   before: ViewerMetrics;
   after: ViewerMetrics;

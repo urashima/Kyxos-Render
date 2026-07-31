@@ -1,0 +1,244 @@
+.studio-panel-content {
+  min-width: 0;
+  min-height: 0;
+  padding: 8px;
+  overflow: auto;
+}
+
+.studio-hierarchy,
+.studio-inspector,
+.studio-assets {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.studio-hierarchy .pcui-panel-content,
+.studio-inspector .pcui-panel-content,
+.studio-assets .pcui-panel-content {
+  height: 100%;
+  overflow: auto;
+}
+
+.panel-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 8px;
+}
+
+.panel-toolbar input {
+  flex: 1 1 100%;
+}
+
+.node-icon {
+  flex: 0 0 18px !important;
+  width: 18px;
+  color: #7386a2;
+  font-size: 10px;
+  text-align: center;
+}
+
+.inspector-section {
+  margin: 0 -2px 7px;
+  border: 1px solid #2b3441;
+  border-radius: 5px;
+  background: #121821;
+}
+
+.inspector-section > summary,
+.effect-card > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 9px;
+  color: #b8c4d6;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  user-select: none;
+}
+
+.inspector-section[open] > summary,
+.effect-card[open] > summary {
+  border-bottom: 1px solid #27303c;
+}
+
+.inspector-section > :not(summary),
+.effect-card > :not(summary) {
+  margin-right: 9px;
+  margin-left: 9px;
+}
+
+.field-row {
+  display: grid !important;
+  grid-template-columns: minmax(92px, 1fr) minmax(0, 1.25fr);
+  align-items: center;
+  gap: 8px;
+  margin: 7px 9px !important;
+}
+
+.field-row > span {
+  overflow: hidden;
+  color: #9aa8bb;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.field-row input,
+.field-row select {
+  width: 100%;
+  min-width: 0;
+}
+
+.field-row input[type='checkbox'] {
+  width: auto;
+  justify-self: start;
+}
+
+.inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 8px !important;
+  margin-bottom: 9px !important;
+}
+
+.sub-card {
+  margin-top: 8px !important;
+  margin-bottom: 8px !important;
+  padding: 8px;
+  border: 1px solid #2b3441;
+  border-radius: 4px;
+  background: #0f141c;
+}
+
+.effect-card {
+  margin: 6px 9px !important;
+  border: 1px solid #2a3340;
+  border-radius: 4px;
+  background: #0f151d;
+}
+
+.effect-card > summary input {
+  width: auto;
+  margin: 0;
+}
+
+.muted {
+  color: #7f8da1;
+  font-size: 11px;
+}
+
+.warning,
+.error-notice {
+  color: #ff8797;
+}
+
+.danger {
+  border-color: #753748;
+  color: #ff9bad;
+}
+
+.release-dialog {
+  width: min(720px, calc(100vw - 40px));
+  max-height: min(720px, calc(100vh - 40px));
+  padding: 0;
+  overflow: auto;
+  border: 1px solid #374254;
+  border-radius: 10px;
+  background: #111720;
+  color: #eaf0f9;
+  box-shadow: 0 30px 100px #000c;
+}
+
+.release-dialog::backdrop {
+  background: #05070bba;
+  backdrop-filter: blur(4px);
+}
+
+.dialog-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid #2d3744;
+  background: #151c26f2;
+  backdrop-filter: blur(10px);
+}
+
+.dialog-header h2 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.release-dialog > p,
+.release-dialog > button {
+  margin: 14px 16px;
+}
+
+.release-card {
+  display: grid;
+  gap: 8px;
+  margin: 10px 16px;
+  padding: 12px;
+  border: 1px solid #2c3644;
+  border-radius: 6px;
+  background: #0d131b;
+}
+
+.release-card > span {
+  color: #7f8da1;
+  font-size: 11px;
+}
+
+.asset-chip {
+  appearance: none;
+  color: inherit;
+  cursor: pointer;
+}
+
+.kyxos-transform-gizmo.is-dragging {
+  outline: 2px solid #6688ff;
+}
+
+.kyxos-studio-shell.preview-mode {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: 48px minmax(0, 1fr) 24px;
+  grid-template-areas:
+    'top'
+    'viewport'
+    'status';
+}
+
+.kyxos-studio-shell.preview-mode .studio-hierarchy,
+.kyxos-studio-shell.preview-mode .studio-inspector,
+.kyxos-studio-shell.preview-mode .studio-assets {
+  display: none !important;
+}
+
+.kyxos-studio-shell.preview-mode .studio-topbar > * {
+  display: none;
+}
+
+.kyxos-studio-shell.preview-mode .studio-topbar .preview-toggle,
+.kyxos-studio-shell.preview-mode .studio-topbar .save-state {
+  display: inline-flex;
+}
+
+.kyxos-studio-shell.preview-mode .studio-topbar {
+  justify-content: flex-end;
+  background: #090d13cc;
+}
+
+@media (max-width: 900px) {
+  .field-row {
+    grid-template-columns: minmax(80px, 0.8fr) minmax(0, 1.2fr);
+  }
+}

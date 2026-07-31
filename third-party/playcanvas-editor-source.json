@@ -1,0 +1,35 @@
+{
+  "upstream": {
+    "repository": "https://github.com/playcanvas/editor",
+    "commit": "3446b0a1b7ac95912771f1431a10f804f62e814f",
+    "version": "2.29.2",
+    "license": "MIT"
+  },
+  "dependencies": [
+    { "name": "@playcanvas/pcui", "versionReference": "6.1.4", "license": "MIT" },
+    { "name": "@playcanvas/observer", "versionReference": "1.7.1", "license": "MIT" },
+    { "name": "@playcanvas/pcui-graph", "versionReference": "5.2.5", "license": "MIT" }
+  ],
+  "copiedFiles": [],
+  "adaptedPatterns": [
+    {
+      "upstreamPath": "src/editor/layout.ts",
+      "kyxosPath": "packages/studio-shell/src/index.ts",
+      "summary": "Independent implementation of the professional top/left/center/right/bottom editor layout; no source copied."
+    },
+    {
+      "upstreamPath": "src/editor/selector",
+      "kyxosPath": "packages/editor-core/src/index.ts",
+      "summary": "Independent command/selection/history data flow using Kyxos Scene Contract IDs; no PlayCanvas Entity or realtime service."
+    }
+  ],
+  "excluded": [
+    "PlayCanvas Application and Engine runtime",
+    "Entity and Component System",
+    "ViewportApplication",
+    "GraphicsDevice and Layer System",
+    "Realtime and ShareDB",
+    "PlayCanvas login, projects, assets, launch page and hosted service URLs",
+    "PlayCanvas names, logos and trademarks"
+  ]
+}
