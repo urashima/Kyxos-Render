@@ -1,7 +1,11 @@
 import { KyxosViewer } from './KyxosViewer';
 import { installScreenSpaceSSSExtension } from './materials/screenSpaceSSS';
 import { installScreenSpaceSSSDebugExtension } from './materials/screenSpaceSSSDebug';
+import { installSSSStudyModelExtension } from './scene/sssStudyModel';
 
+// Install the procedural study before the SSS load wrapper so loading the study
+// still restores and reapplies material masks through the normal Viewer API.
+installSSSStudyModelExtension(KyxosViewer);
 installScreenSpaceSSSExtension(KyxosViewer);
 installScreenSpaceSSSDebugExtension(KyxosViewer);
 
