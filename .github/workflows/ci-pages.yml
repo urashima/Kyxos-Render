@@ -25,7 +25,7 @@ concurrency:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -92,6 +92,30 @@ jobs:
           FULL_ACCEPTANCE: 1
       - name: Build Pages artifact
         run: PAGES_BUILD=1 pnpm build:pages
+
+      - name: Checkout preserved Kyxos Studio preview
+        uses: actions/checkout@v4
+        with:
+          ref: agent/kyxos-studio-playcanvas-editor-complete
+          path: studio-preview-src
+
+      - name: Build preserved Kyxos Studio preview
+        working-directory: studio-preview-src
+        run: |
+          pnpm install --no-frozen-lockfile
+          pnpm --filter @kyxos/studio build
+
+      - name: Preserve Studio in every Pages artifact
+        shell: bash
+        run: |
+          rm -rf site/studio site/preview/pr-12/studio
+          mkdir -p site/studio site/preview/pr-12/studio
+          cp -R studio-preview-src/apps/studio/dist/. site/studio/
+          cp -R studio-preview-src/apps/studio/dist/. site/preview/pr-12/studio/
+          test -f site/studio/index.html
+          test -f site/preview/pr-12/studio/index.html
+          grep -q "Kyxos Studio" site/studio/index.html
+
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
