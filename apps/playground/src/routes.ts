@@ -27,6 +27,14 @@ export const demoRoutes: DemoRoute[] = [
     quality: 'medium',
   },
   {
+    slug: 'sss',
+    title: 'Screen-Space Subsurface Scattering',
+    eyebrow: 'Stochastic Temporal SSS',
+    description:
+      'Low-resolution 2/4/6-tap stochastic diffusion reconstructed with motion-vector temporal filtering and edge-aware history rejection.',
+    quality: 'low',
+  },
+  {
     slug: 'buffers',
     title: 'Scene MRT Buffers',
     eyebrow: 'Debug Views',

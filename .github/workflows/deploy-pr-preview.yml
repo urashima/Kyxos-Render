@@ -73,8 +73,8 @@ jobs:
           const { resolve } = require('node:path');
           const root = resolve('combined-site', process.env.PREVIEW_ROUTE);
           const routes = [
-            'overview', 'pbr', 'buffers', 'aa', 'traa', 'temporal', 'gtao', 'ssao', 'ssr', 'ssgi',
-            'motion-blur', 'denoise', 'sharpness', 'lens-distortion', 'background', 'sparkle',
+            'overview', 'pbr', 'sss', 'buffers', 'aa', 'traa', 'temporal', 'gtao', 'ssao', 'ssr',
+            'ssgi', 'motion-blur', 'denoise', 'sharpness', 'lens-distortion', 'background', 'sparkle',
             'full-stack', 'performance', 'lifecycle',
           ];
           (async () => {
@@ -93,6 +93,7 @@ jobs:
         run: |
           test -f combined-site/latest/index.html
           test -f "combined-site/${PREVIEW_ROUTE}/index.html"
+          test -f "combined-site/${PREVIEW_ROUTE}/sss/index.html"
           test -f "combined-site/${PREVIEW_ROUTE}/ssgi/index.html"
           test -f "combined-site/${PREVIEW_ROUTE}/full-stack/index.html"
           grep -R "/Kyxos-Render/${PREVIEW_ROUTE}/" "combined-site/${PREVIEW_ROUTE}/index.html"
@@ -108,19 +109,19 @@ jobs:
       - name: Verify deployed preview online
         shell: bash
         run: |
-          rm -f preview-index.html preview-ssgi.html
+          rm -f preview-index.html preview-sss.html
           for attempt in $(seq 1 18); do
             if curl --fail --silent --show-error --location "${PREVIEW_URL}" --output preview-index.html && \
-               curl --fail --silent --show-error --location "${PREVIEW_URL}ssgi/" --output preview-ssgi.html; then
+               curl --fail --silent --show-error --location "${PREVIEW_URL}sss/" --output preview-sss.html; then
               break
             fi
-            rm -f preview-index.html preview-ssgi.html
+            rm -f preview-index.html preview-sss.html
             sleep 5
           done
           test -s preview-index.html
-          test -s preview-ssgi.html
+          test -s preview-sss.html
           grep -q "Kyxos WebGPU Realism Lab" preview-index.html
-          grep -q "Kyxos WebGPU Realism Lab" preview-ssgi.html
+          grep -q "Kyxos WebGPU Realism Lab" preview-sss.html
 
       - name: Publish preview link on pull request
         uses: actions/github-script@v7
@@ -129,7 +130,7 @@ jobs:
         with:
           script: |
             const marker = '<!-- kyxos-pr-preview -->';
-            const body = `${marker}\n### Online preview\n\n${process.env.PREVIEW_URL}\n\nUpdated from commit \`${context.payload.pull_request.head.sha}\`. Online smoke check passed.`;
+            const body = `${marker}\n### Online preview\n\n${process.env.PREVIEW_URL}\n\nUpdated from commit \`${context.payload.pull_request.head.sha}\`. Root and SSS routes passed online smoke checks.`;
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
