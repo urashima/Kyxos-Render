@@ -12,7 +12,11 @@ export type DebugView =
   | 'diffuseColor'
   | 'metalness'
   | 'roughness'
-  | 'emissive';
+  | 'emissive'
+  | 'sssMask'
+  | 'sssThickness'
+  | 'sssDiffusion'
+  | 'sssTranslucency';
 
 export type EffectName =
   | 'traa'
