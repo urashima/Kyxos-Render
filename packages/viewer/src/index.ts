@@ -1,7 +1,9 @@
 import { KyxosViewer } from './KyxosViewer';
 import { installScreenSpaceSSSExtension } from './materials/screenSpaceSSS';
+import { installScreenSpaceSSSDebugExtension } from './materials/screenSpaceSSSDebug';
 
 installScreenSpaceSSSExtension(KyxosViewer);
+installScreenSpaceSSSDebugExtension(KyxosViewer);
 
 export { KyxosViewer };
 export { createQualityPreset, enforceEffectRules, mergeEffectSettings } from './presets';
