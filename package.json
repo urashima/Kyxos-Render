@@ -6,7 +6,7 @@
   "packageManager": "pnpm@10.14.0",
   "scripts": {
     "build": "pnpm -r --if-present build && node scripts/compose-pr-preview.mjs",
-    "build:pages": "pnpm build && node scripts/build-pages.mjs",
+    "build:pages": "node scripts/run-build-pages.mjs",
     "dev": "pnpm --filter @kyxos/studio dev",
     "dev:viewer": "pnpm --filter @kyxos/playground dev",
     "dev:public": "pnpm --filter @kyxos/public-viewer dev",
