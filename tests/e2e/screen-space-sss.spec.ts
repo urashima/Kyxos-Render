@@ -95,10 +95,10 @@ async function expectVisibleFrame(page: Page) {
   return screenshot;
 }
 
-test('deferred screen-space SSS defaults to 5 tap, stays visible and exposes debug buffers', async ({
+test('deferred SSS uses low-sample temporal filtering and exposes resolve buffers', async ({
   page,
 }) => {
-  test.setTimeout(180_000);
+  test.setTimeout(210_000);
   const pageErrors: string[] = [];
   const consoleErrors: string[] = [];
 
@@ -118,8 +118,11 @@ test('deferred screen-space SSS defaults to 5 tap, stays visible and exposes deb
 
   await expect(page.locator('#model-select')).toHaveValue('procedural:sss-study');
   await expect(page.locator('#sss-quality')).toHaveValue('low');
+  await expect(page.locator('#sss-temporal')).toBeChecked();
   await expect(page.locator('#debug-select option[value="sssMask"]')).toHaveCount(1);
   await expect(page.locator('#debug-select option[value="sssThickness"]')).toHaveCount(1);
+  await expect(page.locator('#debug-select option[value="sssStochastic"]')).toHaveCount(1);
+  await expect(page.locator('#debug-select option[value="sssTemporal"]')).toHaveCount(1);
   await expect(page.locator('#debug-select option[value="sssDiffusion"]')).toHaveCount(1);
   await expect(page.locator('#debug-select option[value="sssTranslucency"]')).toHaveCount(1);
 
@@ -127,6 +130,10 @@ test('deferred screen-space SSS defaults to 5 tap, stays visible and exposes deb
   expect(initial).toMatchObject({
     enabled: true,
     quality: 'low',
+    temporalFiltering: true,
+    temporalMaxFrames: 16,
+    samplesPerFrame: 2,
+    temporalActive: true,
     markedMaterials: 5,
     eligibleMaterials: 5,
     lastError: null,
@@ -136,12 +143,17 @@ test('deferred screen-space SSS defaults to 5 tap, stays visible and exposes deb
   const disabled = await page.evaluate(() =>
     window.__kyxosScreenSpaceSSSTestApi.set({ enabled: false }),
   );
-  expect(disabled).toMatchObject({ enabled: false, markedMaterials: 0, lastError: null });
+  expect(disabled).toMatchObject({
+    enabled: false,
+    temporalActive: false,
+    markedMaterials: 0,
+    lastError: null,
+  });
   const disabledFrame = await expectVisibleFrame(page);
 
   const toggleDifference = await measureFrameDifference(page, enabledFrame, disabledFrame);
-  expect(toggleDifference.meanAbsoluteDifference).toBeGreaterThan(0.25);
-  expect(toggleDifference.changedRatio).toBeGreaterThan(0.015);
+  expect(toggleDifference.meanAbsoluteDifference).toBeGreaterThan(0.15);
+  expect(toggleDifference.changedRatio).toBeGreaterThan(0.01);
 
   await page.evaluate(() => window.__kyxosScreenSpaceSSSTestApi.set({ enabled: true }));
   await page.waitForFunction(
@@ -153,6 +165,8 @@ test('deferred screen-space SSS defaults to 5 tap, stays visible and exposes deb
   const debugViews = [
     'sssMask',
     'sssThickness',
+    'sssStochastic',
+    'sssTemporal',
     'sssDiffusion',
     'sssTranslucency',
   ] as const;
@@ -168,7 +182,7 @@ test('deferred screen-space SSS defaults to 5 tap, stays visible and exposes deb
 
     if (previousDebugFrame) {
       const difference = await measureFrameDifference(page, previousDebugFrame, frame);
-      expect(difference.meanAbsoluteDifference).toBeGreaterThan(0.05);
+      expect(difference.meanAbsoluteDifference).toBeGreaterThan(0.02);
     }
     previousDebugFrame = frame;
   }
@@ -176,13 +190,40 @@ test('deferred screen-space SSS defaults to 5 tap, stays visible and exposes deb
   await page.selectOption('#debug-select', 'final');
   await expectVisibleFrame(page);
 
-  const updated = await page.evaluate(() =>
-    window.__kyxosScreenSpaceSSSTestApi.set({ strength: 0.35, quality: 'medium' }),
+  const currentOnly = await page.evaluate(() =>
+    window.__kyxosScreenSpaceSSSTestApi.set({ temporalFiltering: false }),
   );
-  expect(updated).toMatchObject({ enabled: true, strength: 0.35, quality: 'medium', lastError: null });
+  expect(currentOnly).toMatchObject({
+    enabled: true,
+    temporalFiltering: false,
+    temporalActive: false,
+    samplesPerFrame: 2,
+    lastError: null,
+  });
+  await expectVisibleFrame(page);
+
+  const updated = await page.evaluate(() =>
+    window.__kyxosScreenSpaceSSSTestApi.set({
+      temporalFiltering: true,
+      temporalMaxFrames: 24,
+      strength: 0.35,
+      quality: 'medium',
+    }),
+  );
+  expect(updated).toMatchObject({
+    enabled: true,
+    strength: 0.35,
+    quality: 'medium',
+    temporalFiltering: true,
+    temporalMaxFrames: 24,
+    samplesPerFrame: 4,
+    temporalActive: true,
+    lastError: null,
+  });
   await expectVisibleFrame(page);
 
   expect(await page.locator('#sss-status').textContent()).toContain('Enabled');
+  expect(await page.locator('#sss-sampling-status').textContent()).toContain('4 taps/frame');
   expect(pageErrors).toEqual([]);
   expect(
     consoleErrors.filter((message) =>
