@@ -12,6 +12,7 @@ import {
   sample,
   vec3,
   vec4,
+  velocity,
 } from 'three/tsl';
 
 import {
@@ -40,6 +41,8 @@ const installKey = Symbol.for('kyxos.viewer.deferred-screen-space-sss-debug');
 const debugViews = new Set<DebugView>([
   'sssMask',
   'sssThickness',
+  'sssStochastic',
+  'sssTemporal',
   'sssDiffusion',
   'sssTranslucency',
 ]);
@@ -57,6 +60,7 @@ function appendScreenSpaceSSSDebug(viewer: ViewerInternals) {
   gBufferPass.setMRT(
     mrt({
       output: packNormalToRGB(normalView),
+      velocity,
       sssData: vec4(
         materialReference('kyxosSSSMask', 'float'),
         materialReference('kyxosSSSThickness', 'float'),
@@ -68,6 +72,7 @@ function appendScreenSpaceSSSDebug(viewer: ViewerInternals) {
   );
 
   const normalPacked = gBufferPass.getTextureNode('output');
+  const velocityNode = gBufferPass.getTextureNode('velocity');
   const sssData = gBufferPass.getTextureNode('sssData');
   const surface = gBufferPass.getTextureNode('surface');
   const depth = gBufferPass.getTextureNode('depth');
@@ -85,15 +90,26 @@ function appendScreenSpaceSSSDebug(viewer: ViewerInternals) {
   } else if (viewer.debugView === 'sssThickness') {
     viewer.debugNodes.set('sssThickness', vec4(vec3(sssData.g), 1));
   } else {
-    const outputMode: ScreenSpaceSSSOutputMode =
-      viewer.debugView === 'sssDiffusion' ? 'diffusion' : 'translucency';
+    let outputMode: ScreenSpaceSSSOutputMode = 'translucency';
+    if (viewer.debugView === 'sssStochastic') outputMode = 'stochastic';
+    else if (viewer.debugView === 'sssTemporal') outputMode = 'temporal';
+    else if (viewer.debugView === 'sssDiffusion') outputMode = 'diffusion';
+
     const effect = createScreenSpaceSSSNode(
       viewer.beforeNode,
+      depth,
       viewZ,
       normalPacked,
+      velocityNode,
       sssData,
       surface,
-      { ...settings, outputMode },
+      viewer.camera,
+      {
+        ...settings,
+        temporalFiltering:
+          viewer.debugView === 'sssStochastic' ? false : settings.temporalFiltering,
+        outputMode,
+      },
     );
     viewer.nodes.push(...effect.resources);
 
@@ -104,13 +120,15 @@ function appendScreenSpaceSSSDebug(viewer: ViewerInternals) {
         'sssDiffusion',
         vec4(effect.outputNode.rgb.mul(4).add(0.5).clamp(0, 1), 1),
       );
-    } else {
+    } else if (viewer.debugView === 'sssTranslucency') {
       // Translucency is a low-energy positive contribution. Amplify only the
       // debug visualization so the production composite remains restrained.
       viewer.debugNodes.set(
         'sssTranslucency',
         vec4(effect.outputNode.rgb.mul(6).clamp(0, 1), 1),
       );
+    } else {
+      viewer.debugNodes.set(viewer.debugView, vec4(effect.outputNode.rgb.clamp(0, 1), 1));
     }
   }
 
