@@ -1,6 +1,7 @@
 import {
   DEFAULT_SCREEN_SPACE_SSS_SETTINGS,
   KyxosViewer,
+  type DebugView,
   type KyxosViewerCreateOptions,
   type ScreenSpaceSSSSettings,
   type ScreenSpaceSSSStatus,
@@ -44,6 +45,13 @@ const presets: Record<'skin' | 'wax' | 'jade', SSSPreset> = {
   },
 };
 
+const sssDebugViews: Array<{ value: DebugView; label: string }> = [
+  { value: 'sssMask', label: 'SSS · Mask' },
+  { value: 'sssThickness', label: 'SSS · Thickness' },
+  { value: 'sssDiffusion', label: 'SSS · Diffusion Δ' },
+  { value: 'sssTranslucency', label: 'SSS · Translucency' },
+];
+
 const patchKey = Symbol.for('kyxos.playground.screen-space-sss-controls');
 const viewerConstructor = KyxosViewer as typeof KyxosViewer & { create: ViewerCreate };
 const constructorState = viewerConstructor as unknown as Record<PropertyKey, unknown>;
@@ -83,7 +91,7 @@ if (!constructorState[patchKey]) {
         currentSettings = {
           ...(structuredClone(DEFAULT_SCREEN_SPACE_SSS_SETTINGS) as ScreenSpaceSSSSettings),
           enabled: true,
-          quality: 'high',
+          quality: 'low',
           ...presets.skin,
         };
         routeInitialized = true;
@@ -164,7 +172,7 @@ function createPanel() {
         <button class="btn" data-sss-preset="wax">Wax</button>
         <button class="btn" data-sss-preset="jade">Jade</button>
       </div>
-      <div class="control-row"><span id="sss-status">Ready</span><span>Diffuse only</span></div>
+      <div class="control-row"><span id="sss-status">Ready</span><span>Diffusion + translucency</span></div>
     </div>`;
   return panel;
 }
@@ -252,17 +260,34 @@ function bindPanel(panel: HTMLElement) {
   });
 
   panel.querySelectorAll<HTMLButtonElement>('[data-sss-preset]').forEach((button) => {
-    button.addEventListener('click', async () => {
+    button.addEventListener('click', () => {
       const name = button.dataset.sssPreset as keyof typeof presets;
       if (!currentViewer || !presets[name]) return;
-      setStatus(`Loading ${name} preset…`);
-      await currentViewer.loadModel('procedural:sphere');
-      applyPatch({ enabled: true, quality: 'high', ...presets[name] });
+      applyPatch({ enabled: true, ...presets[name] });
     });
   });
 }
 
+function mountDebugOptions() {
+  const select = document.querySelector<HTMLSelectElement>('#debug-select');
+  if (!select) return false;
+
+  for (const view of sssDebugViews) {
+    if (select.querySelector(`option[value="${view.value}"]`)) continue;
+    const option = document.createElement('option');
+    option.value = view.value;
+    option.textContent = view.label;
+    select.append(option);
+  }
+  return true;
+}
+
 function mountPanel() {
+  if (!mountDebugOptions()) {
+    requestAnimationFrame(mountPanel);
+    return;
+  }
+
   if (document.querySelector('#screen-space-sss-panel')) {
     syncPanel();
     return;
