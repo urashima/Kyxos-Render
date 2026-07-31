@@ -29,7 +29,7 @@ export const DEFAULT_SCREEN_SPACE_SSS_SETTINGS = Object.freeze({
   thickness: 0.55,
   depthFalloff: 72,
   normalThreshold: 0.35,
-  quality: 'medium' as ScreenSpaceSSSQuality,
+  quality: 'low' as ScreenSpaceSSSQuality,
   materialNames: null as string[] | null,
 });
 
@@ -332,7 +332,7 @@ function appendScreenSpaceSSS(viewer: ViewerInternals, state: ScreenSpaceSSSRunt
   // finalNode is already in display/output color space because the core pipeline
   // owns the single renderOutput() transform. Applying renderOutput() again here
   // double tone-maps and color-converts the frame and can produce black output.
-  viewer.finalNode = vec4(viewer.finalNode.rgb.add(effect.deltaNode.rgb), viewer.finalNode.a);
+  viewer.finalNode = vec4(viewer.finalNode.rgb.add(effect.outputNode.rgb), viewer.finalNode.a);
   viewer.debugNodes.set('final', viewer.finalNode);
   viewer.applyOutputSelection();
   viewer.renderPipeline.needsUpdate = true;
