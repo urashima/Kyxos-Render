@@ -24,7 +24,7 @@ import { temporalReproject } from 'three/addons/tsl/display/TemporalReprojectNod
 
 const quadMesh = new QuadMesh();
 const drawingBufferSize = new Vector2();
-let rendererState: unknown;
+let rendererState: any;
 
 const TEMPORAL_MOTION_START_PIXELS = 0.125;
 const TEMPORAL_MOTION_FULL_PIXELS = 1.75;
@@ -74,7 +74,9 @@ class ScreenSpaceSSSTemporalNode extends TempNode {
     super('vec4');
     this.currentNode = currentNode;
     this.velocityNode = velocityNode;
-    this.updateBeforeType = NodeUpdateType.FRAME;
+    // The runtime TempNode API supports frame updates, but the pinned Three.js
+    // declaration does not expose updateBeforeType on user subclasses.
+    (this as any).updateBeforeType = NodeUpdateType.FRAME;
 
     this.historyTarget = new RenderTarget(1, 1, {
       depthBuffer: false,
@@ -131,30 +133,30 @@ class ScreenSpaceSSSTemporalNode extends TempNode {
       frame.updateBeforeNode(this.currentNode.passNode);
     }
 
-    rendererState = RendererUtils.resetRendererState(renderer, rendererState);
-
     if (needsRestart) {
+      rendererState = RendererUtils.resetRendererState(renderer, rendererState);
       renderer.initRenderTarget(this.historyTarget);
       renderer.setRenderTarget(this.historyTarget);
       quadMesh.material = this.seedMaterial;
       quadMesh.name = 'Kyxos.ScreenSpaceSSS.TemporalSeed';
       quadMesh.render(renderer);
       renderer.setRenderTarget(null);
+      RendererUtils.restoreRendererState(renderer, rendererState);
     }
 
-    // Run the official reprojection first. It reads historyTarget as the
-    // previous frame but writes only to its own resolve target.
+    // Run the official reprojection outside the wrapper's saved renderer state.
+    // TemporalReprojectNode owns its own reset/restore pair, so nesting it inside
+    // ours can restore an intermediate render target and corrupt the feedback.
     frame.updateBeforeNode(this.temporalNode);
 
-    // Now write the corrected current/history blend into historyTarget. That
-    // texture is not read again until the next frame, so there is no feedback
-    // read/write hazard and no cyclic RenderPipeline dependency.
+    // Write the corrected current/history blend into historyTarget. That texture
+    // is not read again until the next frame, avoiding feedback read/write hazards.
+    rendererState = RendererUtils.resetRendererState(renderer, rendererState);
     renderer.setRenderTarget(this.historyTarget);
     quadMesh.material = this.resolveMaterial;
     quadMesh.name = 'Kyxos.ScreenSpaceSSS.TemporalResolve';
     quadMesh.render(renderer);
     renderer.setRenderTarget(null);
-
     RendererUtils.restoreRendererState(renderer, rendererState);
   }
 
