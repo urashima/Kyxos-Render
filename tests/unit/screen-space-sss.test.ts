@@ -1,17 +1,23 @@
 import { describe, expect, it } from 'vitest';
 
+import { getScreenSpaceSSSSamplesPerFrame } from '../../packages/viewer/src/effects/screenSpaceSSSNode';
 import {
   DEFAULT_SCREEN_SPACE_SSS_SETTINGS,
   resolveScreenSpaceSSSSettings,
 } from '../../packages/viewer/src/materials/screenSpaceSSS';
 
 describe('deferred screen-space SSS settings', () => {
-  it('uses the low-cost five-tap skin defaults', () => {
+  it('uses the low-cost stochastic temporal defaults', () => {
     expect(resolveScreenSpaceSSSSettings()).toEqual(DEFAULT_SCREEN_SPACE_SSS_SETTINGS);
     expect(DEFAULT_SCREEN_SPACE_SSS_SETTINGS.quality).toBe('low');
+    expect(DEFAULT_SCREEN_SPACE_SSS_SETTINGS.temporalFiltering).toBe(true);
+    expect(DEFAULT_SCREEN_SPACE_SSS_SETTINGS.temporalMaxFrames).toBe(16);
+    expect(getScreenSpaceSSSSamplesPerFrame('low')).toBe(2);
+    expect(getScreenSpaceSSSSamplesPerFrame('medium')).toBe(4);
+    expect(getScreenSpaceSSSSamplesPerFrame('high')).toBe(6);
   });
 
-  it('preserves valid Sketchfab-style material controls', () => {
+  it('preserves valid Sketchfab-style material and temporal controls', () => {
     expect(
       resolveScreenSpaceSSSSettings({
         enabled: true,
@@ -23,6 +29,10 @@ describe('deferred screen-space SSS settings', () => {
         depthFalloff: 90,
         normalThreshold: 0.5,
         quality: 'high',
+        temporalFiltering: true,
+        temporalMaxFrames: 24,
+        temporalClamp: 0.7,
+        temporalFlickerSuppression: 1.25,
         materialNames: ['Skin', 'Ears', 'Skin'],
       }),
     ).toEqual({
@@ -35,6 +45,10 @@ describe('deferred screen-space SSS settings', () => {
       depthFalloff: 90,
       normalThreshold: 0.5,
       quality: 'high',
+      temporalFiltering: true,
+      temporalMaxFrames: 24,
+      temporalClamp: 0.7,
+      temporalFlickerSuppression: 1.25,
       materialNames: ['Skin', 'Ears'],
     });
   });
@@ -50,6 +64,9 @@ describe('deferred screen-space SSS settings', () => {
         depthFalloff: 0,
         normalThreshold: 10,
         quality: 'ultra' as never,
+        temporalMaxFrames: 999,
+        temporalClamp: -1,
+        temporalFlickerSuppression: 99,
         materialNames: [],
       }),
     ).toMatchObject({
@@ -61,6 +78,10 @@ describe('deferred screen-space SSS settings', () => {
       depthFalloff: 1,
       normalThreshold: 0.99,
       quality: 'low',
+      temporalFiltering: true,
+      temporalMaxFrames: 64,
+      temporalClamp: 0,
+      temporalFlickerSuppression: 4,
       materialNames: null,
     });
   });
