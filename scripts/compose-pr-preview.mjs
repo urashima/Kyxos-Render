@@ -1,4 +1,4 @@
-import { cp, mkdir, rm, stat } from 'node:fs/promises';
+import { cp, mkdir, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -37,5 +37,19 @@ for (const [route, source] of Object.entries(products)) {
   await mkdir(target, { recursive: true });
   await cp(source, target, { recursive: true });
 }
+
+await writeFile(
+  resolve(previewRoot, 'preview-build.json'),
+  `${JSON.stringify(
+    {
+      pagesBase,
+      commit: process.env.GITHUB_SHA ?? 'local',
+      generatedAt: new Date().toISOString(),
+      products: Object.keys(products),
+    },
+    null,
+    2,
+  )}\n`,
+);
 
 console.log(`Composed complete PR preview under ${pagesBase}: studio/, public/, embed/`);
