@@ -15,6 +15,8 @@ export type DebugView =
   | 'emissive'
   | 'sssMask'
   | 'sssThickness'
+  | 'sssStochastic'
+  | 'sssTemporal'
   | 'sssDiffusion'
   | 'sssTranslucency';
 
@@ -88,6 +90,10 @@ export type ScreenSpaceSSSQuality = 'low' | 'medium' | 'high';
  * Deferred, material-selective screen-space subsurface scattering controls.
  * `materialNames` matches mesh or material names; null/empty selects every
  * eligible non-metal PBR material unless userData.kyxosSSS is explicitly false.
+ *
+ * Low/Medium/High evaluate 2/4/6 stochastic color taps per frame. Temporal
+ * reprojection accumulates those samples into the published 5/7-tap target
+ * profiles while rejecting invalid history with depth, normal and velocity.
  */
 export interface ScreenSpaceSSSSettings {
   enabled: boolean;
@@ -99,11 +105,17 @@ export interface ScreenSpaceSSSSettings {
   depthFalloff: number;
   normalThreshold: number;
   quality: ScreenSpaceSSSQuality;
+  temporalFiltering: boolean;
+  temporalMaxFrames: number;
+  temporalClamp: number;
+  temporalFlickerSuppression: number;
   materialNames?: string[] | null;
 }
 
 export interface ScreenSpaceSSSStatus extends ScreenSpaceSSSSettings {
   materialNames: string[] | null;
+  samplesPerFrame: number;
+  temporalActive: boolean;
   markedMaterials: number;
   eligibleMaterials: number;
   lastError: string | null;
