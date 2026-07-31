@@ -11,9 +11,13 @@ import {
   roughness,
   sample,
   vec4,
+  velocity,
 } from 'three/tsl';
 
-import { createScreenSpaceSSSNode } from '../effects/screenSpaceSSSNode';
+import {
+  createScreenSpaceSSSNode,
+  getScreenSpaceSSSSamplesPerFrame,
+} from '../effects/screenSpaceSSSNode';
 import type {
   ScreenSpaceSSSQuality,
   ScreenSpaceSSSSettings,
@@ -30,6 +34,10 @@ export const DEFAULT_SCREEN_SPACE_SSS_SETTINGS = Object.freeze({
   depthFalloff: 72,
   normalThreshold: 0.35,
   quality: 'low' as ScreenSpaceSSSQuality,
+  temporalFiltering: true,
+  temporalMaxFrames: 16,
+  temporalClamp: 0.55,
+  temporalFlickerSuppression: 1,
   materialNames: null as string[] | null,
 });
 
@@ -149,6 +157,28 @@ export function resolveScreenSpaceSSSSettings(
       requestedQuality && qualityValues.has(requestedQuality)
         ? requestedQuality
         : DEFAULT_SCREEN_SPACE_SSS_SETTINGS.quality,
+    temporalFiltering:
+      settings.temporalFiltering ?? DEFAULT_SCREEN_SPACE_SSS_SETTINGS.temporalFiltering,
+    temporalMaxFrames: Math.round(
+      finite(
+        settings.temporalMaxFrames,
+        DEFAULT_SCREEN_SPACE_SSS_SETTINGS.temporalMaxFrames,
+        1,
+        64,
+      ),
+    ),
+    temporalClamp: finite(
+      settings.temporalClamp,
+      DEFAULT_SCREEN_SPACE_SSS_SETTINGS.temporalClamp,
+      0,
+      4,
+    ),
+    temporalFlickerSuppression: finite(
+      settings.temporalFlickerSuppression,
+      DEFAULT_SCREEN_SPACE_SSS_SETTINGS.temporalFlickerSuppression,
+      0,
+      4,
+    ),
     materialNames: resolveMaterialNames(settings.materialNames),
   };
 }
@@ -272,6 +302,9 @@ function createStatus(state: ScreenSpaceSSSRuntimeState): ScreenSpaceSSSStatus {
     ...state.settings,
     falloff: [...state.settings.falloff],
     materialNames: state.settings.materialNames ? [...state.settings.materialNames] : null,
+    samplesPerFrame: getScreenSpaceSSSSamplesPerFrame(state.settings.quality),
+    temporalActive:
+      state.settings.enabled && state.settings.temporalFiltering && state.markedMaterials > 0,
     markedMaterials: state.markedMaterials,
     eligibleMaterials: state.eligibleMaterials,
     lastError: state.lastError,
@@ -297,6 +330,7 @@ function appendScreenSpaceSSS(viewer: ViewerInternals, state: ScreenSpaceSSSRunt
   gBufferPass.setMRT(
     mrt({
       output: packNormalToRGB(normalView),
+      velocity,
       sssData: vec4(
         materialReference('kyxosSSSMask', 'float'),
         materialReference('kyxosSSSThickness', 'float'),
@@ -308,6 +342,7 @@ function appendScreenSpaceSSS(viewer: ViewerInternals, state: ScreenSpaceSSSRunt
   );
 
   const normalPacked = gBufferPass.getTextureNode('output');
+  const velocityNode = gBufferPass.getTextureNode('velocity');
   const sssData = gBufferPass.getTextureNode('sssData');
   const surface = gBufferPass.getTextureNode('surface');
   const depth = gBufferPass.getTextureNode('depth');
@@ -321,10 +356,13 @@ function appendScreenSpaceSSS(viewer: ViewerInternals, state: ScreenSpaceSSSRunt
 
   const effect = createScreenSpaceSSSNode(
     viewer.beforeNode,
+    depth,
     viewZ,
     normalPacked,
+    velocityNode,
     sssData,
     surface,
+    viewer.camera,
     state.settings,
   );
 
