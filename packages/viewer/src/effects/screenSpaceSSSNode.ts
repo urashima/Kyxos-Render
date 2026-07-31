@@ -46,8 +46,8 @@ const KERNELS: Record<ScreenSpaceSSSQuality, KernelTap[]> = {
 };
 
 // Radius is exposed to artists in screen-space pixels at this reference view
-// depth. Perspective scaling keeps the effect physically plausible without
-// shrinking the default 7.5 px profile to less than one pixel in the demo.
+// depth. Perspective scaling keeps the effect plausible without shrinking the
+// configured radius to a sub-pixel value at normal presentation distances.
 const REFERENCE_VIEW_DEPTH = 8;
 
 export interface ScreenSpaceSSSNodeOptions {
@@ -102,17 +102,19 @@ export function createScreenSpaceSSSNode(
       const centerDepth = viewZNode.sample(uv);
       const centerNormal = unpackRGBToNormal(normalPackedNode.sample(uv).rgb);
 
-      // `radius` is already a pixel-space control. The previous implementation
-      // divided it directly by View-Z and then divided by screenSize, reducing
-      // the default profile to roughly half a pixel at the demo camera distance.
-      // Scale around a stable reference depth instead, clamped for near/far views.
+      // `radius` is a pixel-space control. Thickness modulates the profile from
+      // 50% to 100% instead of multiplying it directly: the old formulation made
+      // the default 0.55 thickness silently halve an already perspective-scaled
+      // radius, leaving the toggle visually indistinguishable.
       const perspectiveScale = float(REFERENCE_VIEW_DEPTH)
         .div(max(abs(centerDepth), 1))
         .clamp(0.5, 2);
+      const thicknessScale = mix(0.5, 1, centerThickness.saturate());
       const projectedRadius = radius
-        .mul(centerThickness)
+        .mul(thicknessScale)
         .mul(radiusScale)
-        .mul(perspectiveScale);
+        .mul(perspectiveScale)
+        .clamp(0.25, 48);
       const texelOffset = vec2(directionX, directionY).div(screenSize).mul(projectedRadius);
       const colorSum = vec3(centerColor.rgb.mul(kernel[0].weight)).toVar();
       const weightSum = float(kernel[0].weight).toVar();
@@ -160,7 +162,7 @@ export function createScreenSpaceSSSNode(
     const broadHorizontal = convertToTexture(blurPass(sourceTexture, 1, 0, 2.4));
     resources.push(broadHorizontal);
     const broad = blurPass(broadHorizontal, 0, 1, 2.4);
-    filtered = mix(narrow, broad, 0.38);
+    filtered = mix(narrow, broad, 0.42);
   }
 
   const deltaNode = Fn(() => {
