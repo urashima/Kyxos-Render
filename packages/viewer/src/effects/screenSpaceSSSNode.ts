@@ -21,6 +21,7 @@ import {
 import type { ScreenSpaceSSSQuality } from '../types';
 
 type KernelTap = { offset: number; weight: number };
+export type ScreenSpaceSSSOutputMode = 'composite' | 'diffusion' | 'translucency';
 
 // The medium/high kernel is the normalized seven-tap profile published with
 // Jimenez and Gutierrez' separable screen-space SSS work. Low keeps the same
@@ -59,17 +60,21 @@ export interface ScreenSpaceSSSNodeOptions {
   depthFalloff: number;
   normalThreshold: number;
   quality: ScreenSpaceSSSQuality;
+  outputMode?: ScreenSpaceSSSOutputMode;
 }
 
 export interface ScreenSpaceSSSNodeResult {
-  deltaNode: any;
-  diffusionNode: any;
-  translucencyNode: any;
+  outputNode: any;
   resources: any[];
 }
 
 /**
- * Builds a separable, material-masked screen-space diffusion correction.
+ * Builds one independent separable, material-masked screen-space SSS graph.
+ *
+ * Each invocation produces exactly one output graph. Final composition and
+ * debug views must not share an invoked Fn node: Three.js TSL assignment stacks
+ * are graph-local, and reusing a shader-call output across RenderPipeline graphs
+ * can produce `No stack defined for assign operation` and black output.
  *
  * sssData layout: R = material mask, G = thickness, B = roughness.
  * surface layout: RGB = base color, A = metalness.
@@ -93,6 +98,7 @@ export function createScreenSpaceSSSNode(
   const channelFalloff = uniform(new THREE.Vector3(...options.falloff));
   const strength = uniform(options.strength);
   const kernel = KERNELS[options.quality];
+  const outputMode = options.outputMode ?? 'composite';
 
   const blurPass = (inputTexture: any, directionX: number, directionY: number, radiusScale: number) =>
     Fn(() => {
@@ -105,10 +111,6 @@ export function createScreenSpaceSSSNode(
       const centerDepth = viewZNode.sample(uv);
       const centerNormal = unpackRGBToNormal(normalPackedNode.sample(uv).rgb);
 
-      // `radius` is a pixel-space control. Thickness modulates the profile from
-      // 50% to 100% instead of multiplying it directly: the old formulation made
-      // the default 0.55 thickness silently halve an already perspective-scaled
-      // radius, leaving the toggle visually indistinguishable.
       const perspectiveScale = float(REFERENCE_VIEW_DEPTH)
         .div(max(abs(centerDepth), 1))
         .clamp(0.5, 2);
@@ -168,31 +170,9 @@ export function createScreenSpaceSSSNode(
     filtered = mix(narrow, broad, 0.42);
   }
 
-  const diffusionNode = Fn(() => {
+  const outputNode = Fn(() => {
     const uv = screenUV;
     const source = sourceTexture.sample(uv);
-    const scattered = filtered;
-    const data = sssDataNode.sample(uv);
-    const surface = surfaceNode.sample(uv);
-    const materialMask = data.r.saturate();
-    const roughness = data.b.saturate();
-    const metalness = surface.a.saturate();
-
-    const diffuseShare = materialMask
-      .mul(float(1).sub(metalness))
-      .mul(mix(0.45, 1, roughness))
-      .saturate();
-    const channelStrength = scatteringColor.rgb
-      .mul(channelFalloff)
-      .mul(strength)
-      .mul(diffuseShare)
-      .saturate();
-
-    return vec4(scattered.rgb.sub(source.rgb).mul(channelStrength), 1);
-  })();
-
-  const translucencyNode = Fn(() => {
-    const uv = screenUV;
     const scattered = filtered;
     const data = sssDataNode.sample(uv);
     const surface = surfaceNode.sample(uv);
@@ -211,17 +191,19 @@ export function createScreenSpaceSSSNode(
       .mul(strength)
       .mul(diffuseShare)
       .saturate();
+    const diffusion = scattered.rgb.sub(source.rgb).mul(channelStrength);
+
     const grazing = float(1).sub(abs(normal.z)).saturate();
     const transmissionProfile = grazing.mul(grazing).mul(thickness);
-    const transmission = scattered.rgb
+    const translucency = scattered.rgb
       .mul(channelStrength)
       .mul(transmissionProfile)
       .mul(TRANSLUCENCY_GAIN);
 
-    return vec4(transmission, 1);
+    if (outputMode === 'diffusion') return vec4(diffusion, 1);
+    if (outputMode === 'translucency') return vec4(translucency, 1);
+    return vec4(diffusion.add(translucency), 0);
   })();
 
-  const deltaNode = Fn(() => vec4(diffusionNode.rgb.add(translucencyNode.rgb), 0))();
-
-  return { deltaNode, diffusionNode, translucencyNode, resources };
+  return { outputNode, resources };
 }
