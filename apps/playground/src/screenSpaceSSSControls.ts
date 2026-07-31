@@ -48,6 +48,8 @@ const presets: Record<'skin' | 'wax' | 'jade', SSSPreset> = {
 const sssDebugViews: Array<{ value: DebugView; label: string }> = [
   { value: 'sssMask', label: 'SSS · Mask' },
   { value: 'sssThickness', label: 'SSS · Thickness' },
+  { value: 'sssStochastic', label: 'SSS · Stochastic current' },
+  { value: 'sssTemporal', label: 'SSS · Temporal resolve' },
   { value: 'sssDiffusion', label: 'SSS · Diffusion Δ' },
   { value: 'sssTranslucency', label: 'SSS · Translucency' },
 ];
@@ -92,6 +94,7 @@ if (!constructorState[patchKey]) {
           ...(structuredClone(DEFAULT_SCREEN_SPACE_SSS_SETTINGS) as ScreenSpaceSSSSettings),
           enabled: true,
           quality: 'low',
+          temporalFiltering: true,
           ...presets.skin,
         };
         routeInitialized = true;
@@ -141,20 +144,34 @@ function createPanel() {
   panel.id = 'screen-space-sss-panel';
   panel.hidden = !isSSSRoute();
   panel.innerHTML = `
-    <div class="panel-title"><span>Screen-Space SSS</span><span>Deferred</span></div>
+    <div class="panel-title"><span>Screen-Space SSS</span><span>Stochastic temporal</span></div>
     <div class="panel-body">
       <div class="control-row">
         <label for="sss-enabled">Subsurface scattering</label>
         <input class="switch" id="sss-enabled" type="checkbox">
       </div>
       <div class="control-row">
-        <label for="sss-quality">Quality</label>
+        <label for="sss-quality">Samples</label>
         <select class="select" id="sss-quality">
-          <option value="low">Low · 5 tap</option>
-          <option value="medium">Medium · 7 tap</option>
-          <option value="high">High · dual lobe</option>
+          <option value="low">Low · 2 taps/frame</option>
+          <option value="medium">Medium · 4 taps/frame</option>
+          <option value="high">High · 6 taps/frame</option>
         </select>
       </div>
+      <div class="control-row">
+        <label for="sss-temporal">Temporal filtering</label>
+        <input class="switch" id="sss-temporal" type="checkbox">
+      </div>
+      ${numberControl('temporalMaxFrames', 'History frames', 1, 64, 1, currentSettings.temporalMaxFrames)}
+      ${numberControl('temporalClamp', 'History clamp', 0, 4, 0.05, currentSettings.temporalClamp)}
+      ${numberControl(
+        'temporalFlickerSuppression',
+        'Flicker suppression',
+        0,
+        4,
+        0.05,
+        currentSettings.temporalFlickerSuppression,
+      )}
       <div class="control-row">
         <label for="sss-color">Scattering color</label>
         <input id="sss-color" type="color" value="${currentSettings.color}">
@@ -172,7 +189,7 @@ function createPanel() {
         <button class="btn" data-sss-preset="wax">Wax</button>
         <button class="btn" data-sss-preset="jade">Jade</button>
       </div>
-      <div class="control-row"><span id="sss-status">Ready</span><span>Diffusion + translucency</span></div>
+      <div class="control-row"><span id="sss-status">Ready</span><span id="sss-sampling-status">Temporal resolve</span></div>
     </div>`;
   return panel;
 }
@@ -187,11 +204,19 @@ function setStatus(message: string, failed = false) {
 function syncPanel(status = currentViewer?.getScreenSpaceSSSStatus() ?? null) {
   if (!status) return;
   const enabled = document.querySelector<HTMLInputElement>('#sss-enabled');
+  const temporal = document.querySelector<HTMLInputElement>('#sss-temporal');
   const quality = document.querySelector<HTMLSelectElement>('#sss-quality');
   const color = document.querySelector<HTMLInputElement>('#sss-color');
+  const samplingStatus = document.querySelector<HTMLElement>('#sss-sampling-status');
   if (enabled) enabled.checked = status.enabled;
+  if (temporal) temporal.checked = status.temporalFiltering;
   if (quality) quality.value = status.quality;
   if (color) color.value = status.color;
+  if (samplingStatus) {
+    samplingStatus.textContent = status.temporalActive
+      ? `${status.samplesPerFrame} taps/frame · ${status.temporalMaxFrames}f history`
+      : `${status.samplesPerFrame} taps/frame · current only`;
+  }
 
   document.querySelectorAll<HTMLInputElement>('[data-sss-number]').forEach((input) => {
     const key = input.dataset.sssNumber as keyof ScreenSpaceSSSSettings;
@@ -236,6 +261,9 @@ function bindRange(input: HTMLInputElement, apply: () => void) {
 function bindPanel(panel: HTMLElement) {
   panel.querySelector<HTMLInputElement>('#sss-enabled')?.addEventListener('change', (event) => {
     applyPatch({ enabled: (event.currentTarget as HTMLInputElement).checked });
+  });
+  panel.querySelector<HTMLInputElement>('#sss-temporal')?.addEventListener('change', (event) => {
+    applyPatch({ temporalFiltering: (event.currentTarget as HTMLInputElement).checked });
   });
   panel.querySelector<HTMLSelectElement>('#sss-quality')?.addEventListener('change', (event) => {
     applyPatch({ quality: (event.currentTarget as HTMLSelectElement).value as ScreenSpaceSSSSettings['quality'] });
