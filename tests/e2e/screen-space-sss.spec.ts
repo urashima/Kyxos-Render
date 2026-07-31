@@ -1,13 +1,13 @@
 import { expect, test, type Page } from '@playwright/test';
 
-async function readCanvasVisibility(page: Page) {
-  await page.waitForTimeout(350);
-  const width = 360;
-  const height = 230;
-  const screenshot = await page.screenshot({
-    type: 'png',
-    clip: { x: 180, y: 110, width, height },
-  });
+const FRAME_CLIP = { x: 180, y: 110, width: 360, height: 230 } as const;
+
+async function captureFrame(page: Page) {
+  await page.waitForTimeout(500);
+  return page.screenshot({ type: 'png', clip: FRAME_CLIP });
+}
+
+async function readFrameVisibility(page: Page, screenshot: Buffer) {
   const dataUrl = `data:image/png;base64,${screenshot.toString('base64')}`;
 
   return page.evaluate(
@@ -38,17 +38,66 @@ async function readCanvasVisibility(page: Page) {
         meanLuminance: luminance / (imageWidth * imageHeight),
       };
     },
-    { imageUrl: dataUrl, imageWidth: width, imageHeight: height },
+    { imageUrl: dataUrl, imageWidth: FRAME_CLIP.width, imageHeight: FRAME_CLIP.height },
+  );
+}
+
+async function measureFrameDifference(page: Page, first: Buffer, second: Buffer) {
+  return page.evaluate(
+    async ({ firstUrl, secondUrl, width, height }) => {
+      const load = async (url: string) => {
+        const image = new Image();
+        image.src = url;
+        await image.decode();
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const context = canvas.getContext('2d', { willReadFrequently: true });
+        if (!context) throw new Error('2D comparison context was unavailable.');
+        context.drawImage(image, 0, 0, width, height);
+        return context.getImageData(0, 0, width, height).data;
+      };
+
+      const [a, b] = await Promise.all([load(firstUrl), load(secondUrl)]);
+      let difference = 0;
+      let changed = 0;
+      const pixelCount = width * height;
+
+      for (let index = 0; index < a.length; index += 4) {
+        const delta =
+          (Math.abs(a[index] - b[index]) +
+            Math.abs(a[index + 1] - b[index + 1]) +
+            Math.abs(a[index + 2] - b[index + 2])) /
+          3;
+        difference += delta;
+        if (delta > 2) changed += 1;
+      }
+
+      return {
+        meanAbsoluteDifference: difference / pixelCount,
+        changedRatio: changed / pixelCount,
+      };
+    },
+    {
+      firstUrl: `data:image/png;base64,${first.toString('base64')}`,
+      secondUrl: `data:image/png;base64,${second.toString('base64')}`,
+      width: FRAME_CLIP.width,
+      height: FRAME_CLIP.height,
+    },
   );
 }
 
 async function expectVisibleFrame(page: Page) {
-  const frame = await readCanvasVisibility(page);
+  const screenshot = await captureFrame(page);
+  const frame = await readFrameVisibility(page, screenshot);
   expect(frame.visibleRatio).toBeGreaterThan(0.2);
   expect(frame.meanLuminance).toBeGreaterThan(10);
+  return screenshot;
 }
 
-test('deferred screen-space SSS enables, updates and restores without black output', async ({ page }) => {
+test('deferred screen-space SSS produces a visible toggle difference without black output', async ({
+  page,
+}) => {
   test.setTimeout(120_000);
   const pageErrors: string[] = [];
   const consoleErrors: string[] = [];
@@ -75,19 +124,17 @@ test('deferred screen-space SSS enables, updates and restores without black outp
     eligibleMaterials: 1,
     lastError: null,
   });
-  await expectVisibleFrame(page);
-
-  const updated = await page.evaluate(() =>
-    window.__kyxosScreenSpaceSSSTestApi.set({ strength: 0.35, quality: 'low' }),
-  );
-  expect(updated).toMatchObject({ enabled: true, strength: 0.35, quality: 'low', lastError: null });
-  await expectVisibleFrame(page);
+  const enabledFrame = await expectVisibleFrame(page);
 
   const disabled = await page.evaluate(() =>
     window.__kyxosScreenSpaceSSSTestApi.set({ enabled: false }),
   );
   expect(disabled).toMatchObject({ enabled: false, markedMaterials: 0, lastError: null });
-  await expectVisibleFrame(page);
+  const disabledFrame = await expectVisibleFrame(page);
+
+  const toggleDifference = await measureFrameDifference(page, enabledFrame, disabledFrame);
+  expect(toggleDifference.meanAbsoluteDifference).toBeGreaterThan(0.25);
+  expect(toggleDifference.changedRatio).toBeGreaterThan(0.015);
 
   await page.evaluate(() => window.__kyxosScreenSpaceSSSTestApi.set({ enabled: true }));
   await page.waitForFunction(
@@ -95,6 +142,12 @@ test('deferred screen-space SSS enables, updates and restores without black outp
     null,
     { timeout: 30_000 },
   );
+  await expectVisibleFrame(page);
+
+  const updated = await page.evaluate(() =>
+    window.__kyxosScreenSpaceSSSTestApi.set({ strength: 0.35, quality: 'low' }),
+  );
+  expect(updated).toMatchObject({ enabled: true, strength: 0.35, quality: 'low', lastError: null });
   await expectVisibleFrame(page);
 
   expect(await page.locator('#sss-status').textContent()).toContain('Enabled');
