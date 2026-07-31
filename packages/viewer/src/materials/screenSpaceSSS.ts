@@ -34,6 +34,7 @@ export const DEFAULT_SCREEN_SPACE_SSS_SETTINGS = Object.freeze({
   depthFalloff: 72,
   normalThreshold: 0.35,
   quality: 'low' as ScreenSpaceSSSQuality,
+  resolutionScale: 0.5,
   temporalFiltering: true,
   temporalMaxFrames: 16,
   temporalClamp: 0.55,
@@ -157,6 +158,12 @@ export function resolveScreenSpaceSSSSettings(
       requestedQuality && qualityValues.has(requestedQuality)
         ? requestedQuality
         : DEFAULT_SCREEN_SPACE_SSS_SETTINGS.quality,
+    resolutionScale: finite(
+      settings.resolutionScale,
+      DEFAULT_SCREEN_SPACE_SSS_SETTINGS.resolutionScale,
+      0.25,
+      1,
+    ),
     temporalFiltering:
       settings.temporalFiltering ?? DEFAULT_SCREEN_SPACE_SSS_SETTINGS.temporalFiltering,
     temporalMaxFrames: Math.round(
@@ -298,11 +305,15 @@ function applyMaterialMask(viewer: ViewerInternals, state: ScreenSpaceSSSRuntime
 }
 
 function createStatus(state: ScreenSpaceSSSRuntimeState): ScreenSpaceSSSStatus {
+  const samplesPerFrame = getScreenSpaceSSSSamplesPerFrame(state.settings.quality);
+  const sampledPixelRatio = state.settings.resolutionScale ** 2;
   return {
     ...state.settings,
     falloff: [...state.settings.falloff],
     materialNames: state.settings.materialNames ? [...state.settings.materialNames] : null,
-    samplesPerFrame: getScreenSpaceSSSSamplesPerFrame(state.settings.quality),
+    samplesPerFrame,
+    sampledPixelRatio,
+    effectiveTapsPerFullResolutionPixel: samplesPerFrame * sampledPixelRatio,
     temporalActive:
       state.settings.enabled && state.settings.temporalFiltering && state.markedMaterials > 0,
     markedMaterials: state.markedMaterials,
