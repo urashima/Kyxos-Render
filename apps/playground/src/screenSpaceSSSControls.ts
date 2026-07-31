@@ -94,6 +94,7 @@ if (!constructorState[patchKey]) {
           ...(structuredClone(DEFAULT_SCREEN_SPACE_SSS_SETTINGS) as ScreenSpaceSSSSettings),
           enabled: true,
           quality: 'low',
+          resolutionScale: 0.5,
           temporalFiltering: true,
           ...presets.skin,
         };
@@ -153,11 +154,12 @@ function createPanel() {
       <div class="control-row">
         <label for="sss-quality">Samples</label>
         <select class="select" id="sss-quality">
-          <option value="low">Low · 2 taps/frame</option>
-          <option value="medium">Medium · 4 taps/frame</option>
-          <option value="high">High · 6 taps/frame</option>
+          <option value="low">Low · 2 taps/sample</option>
+          <option value="medium">Medium · 4 taps/sample</option>
+          <option value="high">High · 6 taps/sample</option>
         </select>
       </div>
+      ${numberControl('resolutionScale', 'Sample resolution', 0.25, 1, 0.05, currentSettings.resolutionScale)}
       <div class="control-row">
         <label for="sss-temporal">Temporal filtering</label>
         <input class="switch" id="sss-temporal" type="checkbox">
@@ -213,9 +215,11 @@ function syncPanel(status = currentViewer?.getScreenSpaceSSSStatus() ?? null) {
   if (quality) quality.value = status.quality;
   if (color) color.value = status.color;
   if (samplingStatus) {
+    const pixelPercent = Math.round(status.sampledPixelRatio * 100);
+    const workload = status.effectiveTapsPerFullResolutionPixel.toFixed(2);
     samplingStatus.textContent = status.temporalActive
-      ? `${status.samplesPerFrame} taps/frame · ${status.temporalMaxFrames}f history`
-      : `${status.samplesPerFrame} taps/frame · current only`;
+      ? `${status.samplesPerFrame} taps × ${pixelPercent}% px ≈ ${workload}/full px · ${status.temporalMaxFrames}f`
+      : `${status.samplesPerFrame} taps × ${pixelPercent}% px · current only`;
   }
 
   document.querySelectorAll<HTMLInputElement>('[data-sss-number]').forEach((input) => {
