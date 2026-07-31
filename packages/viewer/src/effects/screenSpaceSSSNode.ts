@@ -49,6 +49,7 @@ const KERNELS: Record<ScreenSpaceSSSQuality, KernelTap[]> = {
 // depth. Perspective scaling keeps the effect plausible without shrinking the
 // configured radius to a sub-pixel value at normal presentation distances.
 const REFERENCE_VIEW_DEPTH = 8;
+const TRANSLUCENCY_GAIN = 0.22;
 
 export interface ScreenSpaceSSSNodeOptions {
   color: string;
@@ -171,7 +172,9 @@ export function createScreenSpaceSSSNode(
     const scattered = filtered;
     const data = sssDataNode.sample(uv);
     const surface = surfaceNode.sample(uv);
+    const normal = unpackRGBToNormal(normalPackedNode.sample(uv).rgb);
     const materialMask = data.r.saturate();
+    const thickness = data.g.saturate();
     const roughness = data.b.saturate();
     const metalness = surface.a.saturate();
 
@@ -186,7 +189,23 @@ export function createScreenSpaceSSSNode(
       .mul(strength)
       .mul(diffuseShare)
       .saturate();
-    const corrected = source.rgb.add(scattered.rgb.sub(source.rgb).mul(channelStrength));
+
+    const diffusion = scattered.rgb.sub(source.rgb).mul(channelStrength);
+
+    // Diffusion alone can be mathematically correct yet visually disappear on a
+    // smooth, evenly lit surface because neighboring colors are nearly equal.
+    // Sketchfab exposes subsurface scattering and subsurface translucency as two
+    // related channels. Approximate that second component in screen space with a
+    // restrained, material-masked grazing transmission term. It remains zero for
+    // metals and front-facing areas, grows with thickness, and uses the same
+    // scattered illumination instead of inventing an unrelated rim-light color.
+    const grazing = float(1).sub(abs(normal.z)).saturate();
+    const transmissionProfile = grazing.mul(grazing).mul(thickness);
+    const transmission = scattered.rgb
+      .mul(channelStrength)
+      .mul(transmissionProfile)
+      .mul(TRANSLUCENCY_GAIN);
+    const corrected = source.rgb.add(diffusion).add(transmission);
 
     return vec4(corrected.sub(source.rgb), 0);
   })();
