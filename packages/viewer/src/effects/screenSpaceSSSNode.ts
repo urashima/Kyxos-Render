@@ -63,6 +63,8 @@ export interface ScreenSpaceSSSNodeOptions {
 
 export interface ScreenSpaceSSSNodeResult {
   deltaNode: any;
+  diffusionNode: any;
+  translucencyNode: any;
   resources: any[];
 }
 
@@ -166,20 +168,16 @@ export function createScreenSpaceSSSNode(
     filtered = mix(narrow, broad, 0.42);
   }
 
-  const deltaNode = Fn(() => {
+  const diffusionNode = Fn(() => {
     const uv = screenUV;
     const source = sourceTexture.sample(uv);
     const scattered = filtered;
     const data = sssDataNode.sample(uv);
     const surface = surfaceNode.sample(uv);
-    const normal = unpackRGBToNormal(normalPackedNode.sample(uv).rgb);
     const materialMask = data.r.saturate();
-    const thickness = data.g.saturate();
     const roughness = data.b.saturate();
     const metalness = surface.a.saturate();
 
-    // Only the estimated diffuse share is diffused. Glossy highlights and metal
-    // response remain in the original color, matching deferred SSS practice.
     const diffuseShare = materialMask
       .mul(float(1).sub(metalness))
       .mul(mix(0.45, 1, roughness))
@@ -190,25 +188,40 @@ export function createScreenSpaceSSSNode(
       .mul(diffuseShare)
       .saturate();
 
-    const diffusion = scattered.rgb.sub(source.rgb).mul(channelStrength);
+    return vec4(scattered.rgb.sub(source.rgb).mul(channelStrength), 1);
+  })();
 
-    // Diffusion alone can be mathematically correct yet visually disappear on a
-    // smooth, evenly lit surface because neighboring colors are nearly equal.
-    // Sketchfab exposes subsurface scattering and subsurface translucency as two
-    // related channels. Approximate that second component in screen space with a
-    // restrained, material-masked grazing transmission term. It remains zero for
-    // metals and front-facing areas, grows with thickness, and uses the same
-    // scattered illumination instead of inventing an unrelated rim-light color.
+  const translucencyNode = Fn(() => {
+    const uv = screenUV;
+    const scattered = filtered;
+    const data = sssDataNode.sample(uv);
+    const surface = surfaceNode.sample(uv);
+    const normal = unpackRGBToNormal(normalPackedNode.sample(uv).rgb);
+    const materialMask = data.r.saturate();
+    const thickness = data.g.saturate();
+    const roughness = data.b.saturate();
+    const metalness = surface.a.saturate();
+
+    const diffuseShare = materialMask
+      .mul(float(1).sub(metalness))
+      .mul(mix(0.45, 1, roughness))
+      .saturate();
+    const channelStrength = scatteringColor.rgb
+      .mul(channelFalloff)
+      .mul(strength)
+      .mul(diffuseShare)
+      .saturate();
     const grazing = float(1).sub(abs(normal.z)).saturate();
     const transmissionProfile = grazing.mul(grazing).mul(thickness);
     const transmission = scattered.rgb
       .mul(channelStrength)
       .mul(transmissionProfile)
       .mul(TRANSLUCENCY_GAIN);
-    const corrected = source.rgb.add(diffusion).add(transmission);
 
-    return vec4(corrected.sub(source.rgb), 0);
+    return vec4(transmission, 1);
   })();
 
-  return { deltaNode, resources };
+  const deltaNode = Fn(() => vec4(diffusionNode.rgb.add(translucencyNode.rgb), 0))();
+
+  return { deltaNode, diffusionNode, translucencyNode, resources };
 }
