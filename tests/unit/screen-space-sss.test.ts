@@ -6,8 +6,9 @@ import {
 } from '../../packages/viewer/src/materials/screenSpaceSSS';
 
 describe('deferred screen-space SSS settings', () => {
-  it('uses the skin-oriented separable diffusion defaults', () => {
+  it('uses the low-cost five-tap skin defaults', () => {
     expect(resolveScreenSpaceSSSSettings()).toEqual(DEFAULT_SCREEN_SPACE_SSS_SETTINGS);
+    expect(DEFAULT_SCREEN_SPACE_SSS_SETTINGS.quality).toBe('low');
   });
 
   it('preserves valid Sketchfab-style material controls', () => {
@@ -59,7 +60,7 @@ describe('deferred screen-space SSS settings', () => {
       thickness: 1,
       depthFalloff: 1,
       normalThreshold: 0.99,
-      quality: 'medium',
+      quality: 'low',
       materialNames: null,
     });
   });
