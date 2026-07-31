@@ -64,9 +64,9 @@ const SAMPLE_PAIRS: Record<ScreenSpaceSSSQuality, number> = {
   high: 3,
 };
 
-// Radius is exposed to artists in screen-space pixels at this reference view
-// depth. Perspective scaling keeps the effect plausible without shrinking the
-// configured radius to a sub-pixel value at normal presentation distances.
+// Radius is exposed to artists in full-resolution screen pixels at this
+// reference view depth. When the stochastic RTT runs below full resolution the
+// radius is scaled with the RTT so the final reconstructed footprint is stable.
 const REFERENCE_VIEW_DEPTH = 8;
 const TRANSLUCENCY_GAIN = 0.22;
 const HIGH_BROAD_LOBE_PROBABILITY = 0.42;
@@ -84,6 +84,7 @@ export interface ScreenSpaceSSSNodeOptions {
   depthFalloff: number;
   normalThreshold: number;
   quality: ScreenSpaceSSSQuality;
+  resolutionScale: number;
   temporalFiltering: boolean;
   temporalMaxFrames: number;
   temporalClamp: number;
@@ -120,11 +121,13 @@ function selectKernelOffset(kernel: KernelTap[], randomValue: any) {
 /**
  * Builds one independent material-masked stochastic screen-space SSS graph.
  *
- * Low/Medium/High evaluate 2/4/6 color taps per frame. Each pair importance-
- * selects a radius from the published target profile and rotates that pair with
- * interleaved-gradient and per-frame random noise. The official Three.js
- * TemporalReprojectNode then performs motion-vector reprojection, geometric
- * history validation and YCoCg variance clipping in diffuse mode.
+ * Low/Medium/High evaluate 2/4/6 color taps per sampled pixel and frame. Each
+ * pair importance-selects a radius from the published target profile and
+ * rotates that pair with interleaved-gradient and per-frame random noise. The
+ * stochastic pass can run below full resolution; the official Three.js
+ * TemporalReprojectNode reconstructs full resolution while performing motion-
+ * vector reprojection, geometric history validation and YCoCg variance clipping
+ * in diffuse mode.
  *
  * Each invocation produces exactly one output graph. Final composition and
  * debug views must not share an invoked Fn node: Three.js TSL assignment stacks
@@ -150,6 +153,7 @@ export function createScreenSpaceSSSNode(
   if (sourceTexture !== colorNode) resources.push(sourceTexture);
 
   const radius = uniform(options.radius);
+  const resolutionScale = uniform(options.resolutionScale);
   const depthFalloff = uniform(options.depthFalloff);
   const normalThreshold = uniform(options.normalThreshold);
   const scatteringColor = uniform(new THREE.Color(options.color));
@@ -175,7 +179,11 @@ export function createScreenSpaceSSSNode(
       .div(max(abs(centerDepth), 1))
       .clamp(0.5, 2);
     const thicknessScale = mix(0.5, 1, centerThickness.saturate());
-    const projectedRadius = radius.mul(thicknessScale).mul(perspectiveScale).clamp(0.25, 48);
+    const projectedRadius = radius
+      .mul(resolutionScale)
+      .mul(thicknessScale)
+      .mul(perspectiveScale)
+      .clamp(0.125, 48);
     const frameSeed = time.mul(60).floor();
     const accumulated = vec3(0).toVar();
 
@@ -269,6 +277,9 @@ export function createScreenSpaceSSSNode(
   })();
 
   const currentTexture = convertToTexture(stochasticFilter);
+  if (typeof currentTexture.setResolutionScale === 'function') {
+    currentTexture.setResolutionScale(options.resolutionScale);
+  }
   resources.push(currentTexture);
 
   let resolved: any = currentTexture;
@@ -294,7 +305,7 @@ export function createScreenSpaceSSSNode(
   const outputNode = Fn(() => {
     const uv = screenUV;
     const source = sourceTexture.sample(uv);
-    const current = currentTexture.rgb;
+    const current = currentTexture.sample(uv).rgb;
     const scattered = resolved.rgb;
     const data = sssDataNode.sample(uv);
     const surface = surfaceNode.sample(uv);
