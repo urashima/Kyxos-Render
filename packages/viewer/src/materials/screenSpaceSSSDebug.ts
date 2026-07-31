@@ -106,8 +106,10 @@ function appendScreenSpaceSSSDebug(viewer: ViewerInternals) {
       viewer.camera,
       {
         ...settings,
-        temporalFiltering:
-          viewer.debugView === 'sssStochastic' ? false : settings.temporalFiltering,
+        // Stochastic debug displays the raw current estimate, but it must keep
+        // the actual Temporal Filtering state: ON advances the random sequence;
+        // OFF freezes it. Forcing false here made the UI appear inverted.
+        temporalFiltering: settings.temporalFiltering,
         outputMode,
       },
     );
