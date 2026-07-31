@@ -91,9 +91,11 @@ export type ScreenSpaceSSSQuality = 'low' | 'medium' | 'high';
  * `materialNames` matches mesh or material names; null/empty selects every
  * eligible non-metal PBR material unless userData.kyxosSSS is explicitly false.
  *
- * Low/Medium/High evaluate 2/4/6 stochastic color taps per frame. Temporal
- * reprojection accumulates those samples into the published 5/7-tap target
- * profiles while rejecting invalid history with depth, normal and velocity.
+ * Low/Medium/High evaluate 2/4/6 stochastic color taps per sampled pixel and
+ * frame. `resolutionScale` reduces the stochastic beauty pass before the full-
+ * resolution temporal resolve. Temporal reprojection accumulates those samples
+ * into the published 5/7-tap target profiles while rejecting invalid history
+ * with depth, normal and velocity.
  */
 export interface ScreenSpaceSSSSettings {
   enabled: boolean;
@@ -105,6 +107,7 @@ export interface ScreenSpaceSSSSettings {
   depthFalloff: number;
   normalThreshold: number;
   quality: ScreenSpaceSSSQuality;
+  resolutionScale: number;
   temporalFiltering: boolean;
   temporalMaxFrames: number;
   temporalClamp: number;
@@ -115,6 +118,8 @@ export interface ScreenSpaceSSSSettings {
 export interface ScreenSpaceSSSStatus extends ScreenSpaceSSSSettings {
   materialNames: string[] | null;
   samplesPerFrame: number;
+  sampledPixelRatio: number;
+  effectiveTapsPerFullResolutionPixel: number;
   temporalActive: boolean;
   markedMaterials: number;
   eligibleMaterials: number;
