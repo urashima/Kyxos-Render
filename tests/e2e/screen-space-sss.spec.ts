@@ -119,7 +119,7 @@ test('deferred screen-space SSS produces a visible toggle difference without bla
   const initial = await page.evaluate(() => window.__kyxosScreenSpaceSSSTestApi.getStatus());
   expect(initial).toMatchObject({
     enabled: true,
-    quality: 'medium',
+    quality: 'high',
     markedMaterials: 1,
     eligibleMaterials: 1,
     lastError: null,
