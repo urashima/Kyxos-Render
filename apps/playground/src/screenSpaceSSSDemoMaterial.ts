@@ -32,21 +32,21 @@ const presets: Record<DemoPresetName, {
     roughness: 0.58,
     clearcoat: 0.1,
     clearcoatRoughness: 0.38,
-    thickness: 0.55,
+    thickness: 0.78,
   },
   wax: {
     baseColor: '#e6b774',
     roughness: 0.36,
     clearcoat: 0.24,
     clearcoatRoughness: 0.22,
-    thickness: 0.82,
+    thickness: 0.92,
   },
   jade: {
     baseColor: '#5b9e77',
     roughness: 0.42,
     clearcoat: 0.16,
     clearcoatRoughness: 0.28,
-    thickness: 0.68,
+    thickness: 0.85,
   },
 };
 
@@ -85,9 +85,10 @@ function applyDemoMaterial(viewer: KyxosViewer, presetName: DemoPresetName) {
     }
   });
 
-  // Medium keeps the published seven-tap profile while avoiding the optional
-  // broad second lobe on software WebGL. Users can still select High manually.
-  viewer.setScreenSpaceSSS({ thickness: preset.thickness, quality: 'medium' });
+  // Preserve the quality selected by the SSS controls. The previous demo hook
+  // silently replaced the route's High dual-lobe profile with Medium after the
+  // controls initialized, making the toggle much less visible than configured.
+  viewer.setScreenSpaceSSS({ thickness: preset.thickness });
 }
 
 if (!constructorState[patchKey]) {
