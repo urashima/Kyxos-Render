@@ -20,6 +20,7 @@ interface EditorControlState {
   selectedNodeIds: string[];
   snap: EditorTransformSnap;
   space: EditorTransformSpace;
+  onChange: () => void;
   onObjectChange: () => void;
   onDraggingChanged: (event: { value?: boolean }) => void;
   onMouseDown: () => void;
@@ -68,6 +69,7 @@ function syncCanvasState(viewer: KyxosViewer, state: EditorControlState): void {
   viewer.canvas.dataset.editorSpace = state.space;
   viewer.canvas.dataset.editorSelection = state.selectedNodeIds.join(',');
   viewer.canvas.dataset.editorSnap = String(state.snap.enabled);
+  viewer.canvas.dataset.editorAxis = state.controls.axis ?? '';
 }
 
 function applySnap(state: EditorControlState): void {
@@ -131,6 +133,7 @@ export function createEditorTransformControls(this: KyxosViewer): void {
       scale: 0.1,
     },
     space: 'local',
+    onChange: () => syncCanvasState(this, state),
     onObjectChange: () => {
       const object = controls.object;
       if (!object || state.mode === 'select') return;
@@ -168,6 +171,7 @@ export function createEditorTransformControls(this: KyxosViewer): void {
     },
   };
 
+  controls.addEventListener('change', state.onChange);
   controls.addEventListener('objectChange', state.onObjectChange);
   controls.addEventListener('dragging-changed', state.onDraggingChanged as never);
   controls.addEventListener('mouseDown', state.onMouseDown);
@@ -227,6 +231,7 @@ export function refreshEditorTransformControls(this: KyxosViewer): void {
 export function disposeEditorTransformControls(this: KyxosViewer): void {
   const state = editorStates.get(this);
   if (!state) return;
+  state.controls.removeEventListener('change', state.onChange);
   state.controls.removeEventListener('objectChange', state.onObjectChange);
   state.controls.removeEventListener('dragging-changed', state.onDraggingChanged as never);
   state.controls.removeEventListener('mouseDown', state.onMouseDown);
@@ -242,6 +247,7 @@ export function disposeEditorTransformControls(this: KyxosViewer): void {
   delete this.canvas.dataset.editorSpace;
   delete this.canvas.dataset.editorSelection;
   delete this.canvas.dataset.editorSnap;
+  delete this.canvas.dataset.editorAxis;
   delete this.canvas.dataset.editorDragging;
 }
 
