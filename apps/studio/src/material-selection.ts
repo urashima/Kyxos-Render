@@ -3,10 +3,9 @@ import { BrowserKyxosViewportAdapter } from '@kyxos/viewer-adapter';
 
 const INSTALL_KEY = Symbol.for('kyxos.studio.material-selection');
 
-interface AdapterPrototype {
+type AdapterPrototype = {
   bindSession(session: ProjectSession): () => void;
-  [INSTALL_KEY]?: boolean;
-}
+} & Record<PropertyKey, unknown>;
 
 function selectedMaterialNode(session: ProjectSession) {
   const scene = session.document.value;
@@ -29,7 +28,9 @@ function currentMaterial(session: ProjectSession): {
   const scene = session.document.value;
   const node = selectedMaterialNode(session);
   if (!node?.materialSlots?.length) return null;
-  const slotControl = document.querySelector<HTMLSelectElement>('select[aria-label="Material slot"]');
+  const slotControl = document.querySelector<HTMLSelectElement>(
+    'select[aria-label="Material slot"]',
+  );
   const slot = Math.max(
     0,
     Math.min(node.materialSlots.length - 1, Number(slotControl?.value ?? 0) || 0),
@@ -85,11 +86,17 @@ function syncMaterialPresentation(session: ProjectSession): void {
     }
   }
 
-  const materialSection = [...document.querySelectorAll<HTMLDetailsElement>('.inspector-section')]
-    .find((section) => section.querySelector(':scope > summary')?.textContent?.trim() === 'Material');
+  const materialSection = [
+    ...document.querySelectorAll<HTMLDetailsElement>('.inspector-section'),
+  ].find(
+    (section) =>
+      section.querySelector(':scope > summary')?.textContent?.trim() === 'Material',
+  );
   if (!materialSection || !material) return;
 
-  let banner = materialSection.querySelector<HTMLElement>(':scope > .kx-current-material');
+  let banner = materialSection.querySelector<HTMLElement>(
+    ':scope > .kx-current-material',
+  );
   if (!banner) {
     banner = document.createElement('div');
     banner.className = 'kx-current-material';
@@ -105,7 +112,9 @@ function syncMaterialPresentation(session: ProjectSession): void {
   );
   if (slotControl && slotControl.dataset.kxMaterialSync !== 'true') {
     slotControl.dataset.kxMaterialSync = 'true';
-    slotControl.addEventListener('change', () => queueMicrotask(() => syncMaterialPresentation(session)));
+    slotControl.addEventListener('change', () =>
+      queueMicrotask(() => syncMaterialPresentation(session)),
+    );
   }
 }
 
