@@ -71,19 +71,29 @@ function installStyles(): void {
   document.head.append(style);
 }
 
+function setDatasetValue(
+  element: HTMLElement,
+  key: keyof DOMStringMap,
+  value: string | null,
+): void {
+  if (value == null) {
+    if (element.dataset[key] != null) delete element.dataset[key];
+    return;
+  }
+  if (element.dataset[key] !== value) element.dataset[key] = value;
+}
+
 function syncMaterialPresentation(session: ProjectSession): void {
   const material = currentMaterial(session);
   const canvas = document.querySelector<HTMLCanvasElement>('#studio-canvas');
   if (canvas) {
-    if (material) {
-      canvas.dataset.selectedMaterialId = material.id;
-      canvas.dataset.selectedMaterialName = material.name;
-      canvas.dataset.selectedMaterialSlot = String(material.slot);
-    } else {
-      delete canvas.dataset.selectedMaterialId;
-      delete canvas.dataset.selectedMaterialName;
-      delete canvas.dataset.selectedMaterialSlot;
-    }
+    setDatasetValue(canvas, 'selectedMaterialId', material?.id ?? null);
+    setDatasetValue(canvas, 'selectedMaterialName', material?.name ?? null);
+    setDatasetValue(
+      canvas,
+      'selectedMaterialSlot',
+      material ? String(material.slot) : null,
+    );
   }
 
   const materialSection = [
@@ -104,8 +114,11 @@ function syncMaterialPresentation(session: ProjectSession): void {
     const summary = materialSection.querySelector(':scope > summary');
     summary?.insertAdjacentElement('afterend', banner);
   }
-  banner.querySelector('strong')!.textContent = material.name;
-  banner.title = `${material.name} · ${material.id}`;
+
+  const label = banner.querySelector<HTMLElement>('strong');
+  if (label && label.textContent !== material.name) label.textContent = material.name;
+  const title = `${material.name} · ${material.id}`;
+  if (banner.title !== title) banner.title = title;
 
   const slotControl = materialSection.querySelector<HTMLSelectElement>(
     'select[aria-label="Material slot"]',
