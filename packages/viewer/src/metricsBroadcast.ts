@@ -2,8 +2,8 @@ import type { ViewerMetrics } from './types';
 
 const INSTALL_MARK = Symbol.for('kyxos.viewer.metrics-broadcast');
 
-type ViewerPrototype = EventTarget & Record<symbol, boolean | undefined>;
-type ViewerConstructor = { prototype: ViewerPrototype };
+type ViewerConstructor = { prototype: EventTarget };
+type MarkedViewerPrototype = EventTarget & Record<symbol, boolean | undefined>;
 
 /**
  * Forwards the Viewer metrics event to the browser shell without exposing the
@@ -11,11 +11,12 @@ type ViewerConstructor = { prototype: ViewerPrototype };
  * to four updates per second, so this does not add a per-frame UI allocation.
  */
 export function installViewerMetricsBroadcast(Viewer: ViewerConstructor): void {
-  if (Viewer.prototype[INSTALL_MARK]) return;
-  Viewer.prototype[INSTALL_MARK] = true;
+  const prototype = Viewer.prototype as MarkedViewerPrototype;
+  if (prototype[INSTALL_MARK]) return;
+  prototype[INSTALL_MARK] = true;
 
-  const dispatch = Viewer.prototype.dispatchEvent;
-  Viewer.prototype.dispatchEvent = function dispatchWithMetrics(event: Event): boolean {
+  const dispatch = prototype.dispatchEvent;
+  prototype.dispatchEvent = function dispatchWithMetrics(event: Event): boolean {
     const result = dispatch.call(this, event);
     if (event.type === 'metrics' && typeof window !== 'undefined') {
       const detail = (event as CustomEvent<ViewerMetrics>).detail;
