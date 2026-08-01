@@ -54,6 +54,8 @@ test('Sparkle uses the official Three.js anamorphic highlight pass', async ({ pa
   await page.waitForFunction(() => window.__kyxosTestApi?.ready(), null, { timeout: 90_000 });
   const sparkleButton = page.locator<HTMLButtonElement>('[data-focus-effect="sparkle"]');
   await expect(sparkleButton).toContainText('Three.js Anamorphic');
+  // The inspector can be outside the visible 720 px test viewport. Trigger the
+  // actual production button handler without requiring Playwright visibility.
   await sparkleButton.evaluate((element) => element.click());
   await expect(page.locator('#parameter-title')).toContainText('Three.js Anamorphic Lensflare');
   await expect(page.locator('[data-effect-parameter="intensity"]')).toHaveAttribute('max', '10');
