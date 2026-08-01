@@ -1,28 +1,26 @@
-export type KyxosThemeName = 'moss' | 'graphite';
+export type KyxosTheme = 'moss' | 'graphite';
 
 const STORAGE_KEY = 'kyxos-ui-theme';
 
-export function readStoredTheme(): KyxosThemeName {
+export function readStoredTheme(): KyxosTheme {
   if (typeof localStorage === 'undefined') return 'moss';
   return localStorage.getItem(STORAGE_KEY) === 'graphite' ? 'graphite' : 'moss';
 }
 
-export function applyKyxosTheme(theme: KyxosThemeName): KyxosThemeName {
-  document.documentElement.dataset.kxTheme = theme;
-  document.documentElement.style.colorScheme = 'dark';
+export function applyKyxosTheme(theme: KyxosTheme, target: HTMLElement = document.documentElement): void {
+  target.dataset.kxTheme = theme;
+  target.classList.toggle('kx-theme-moss', theme === 'moss');
+  target.classList.toggle('kx-theme-graphite', theme === 'graphite');
   try {
     localStorage.setItem(STORAGE_KEY, theme);
   } catch {
-    // Storage can be unavailable in locked-down embeds; the applied DOM theme remains valid.
+    // Storage can be unavailable in locked-down embeds; the DOM theme remains active.
   }
-  window.dispatchEvent(new CustomEvent('kyxos:theme-change', { detail: { theme } }));
-  return theme;
+  target.dispatchEvent(new CustomEvent('kyxos:theme-change', { detail: { theme } }));
 }
 
-export function initializeKyxosTheme(): KyxosThemeName {
-  return applyKyxosTheme(readStoredTheme());
-}
-
-export function toggleKyxosTheme(): KyxosThemeName {
-  return applyKyxosTheme(readStoredTheme() === 'moss' ? 'graphite' : 'moss');
+export function toggleKyxosTheme(target: HTMLElement = document.documentElement): KyxosTheme {
+  const next: KyxosTheme = target.dataset.kxTheme === 'graphite' ? 'moss' : 'graphite';
+  applyKyxosTheme(next, target);
+  return next;
 }
