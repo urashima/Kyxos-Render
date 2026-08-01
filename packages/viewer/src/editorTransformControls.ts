@@ -143,11 +143,12 @@ export function createEditorTransformControls(this: KyxosViewer): void {
       );
     },
     onDraggingChanged: (event) => {
-      if (internal.controls) internal.controls.enabled = !Boolean(event.value);
-      this.canvas.dataset.editorDragging = String(Boolean(event.value));
+      const dragging = event.value === true;
+      if (internal.controls) internal.controls.enabled = !dragging;
+      this.canvas.dataset.editorDragging = String(dragging);
       this.dispatchEvent(
         new CustomEvent('editor-transform-dragging', {
-          detail: { dragging: Boolean(event.value) },
+          detail: { dragging },
         }),
       );
     },
