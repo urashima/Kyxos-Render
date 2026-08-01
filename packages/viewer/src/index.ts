@@ -5,10 +5,15 @@ import './capabilityApi';
 import './environmentApi';
 
 import { KyxosViewer } from './KyxosViewer';
+import { installEditorSceneModeExtension } from './editorSceneMode';
 import { installScreenSpaceSSSExtension } from './materials/screenSpaceSSS';
 import { installScreenSpaceSSSDebugExtension } from './materials/screenSpaceSSSDebug';
 import { installViewerMetricsBroadcast } from './metricsBroadcast';
 import { installSSSStudyModelExtension } from './scene/sssStudyModel';
+
+// Scene API is installed by the side-effect import above. Studio scene mode then
+// removes the procedural playground model before loading any Scene Contract.
+installEditorSceneModeExtension(KyxosViewer);
 
 // Install the procedural study before the SSS load wrapper so loading the study
 // still restores and reapplies material masks through the normal Viewer API.
