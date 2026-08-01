@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { createEmptySceneContract } from '@kyxos/scene-contract';
+import { createEmptySceneContract } from '../../packages/scene-contract/src/index';
 import { normalizeGlbImportContract } from '../../apps/studio/src/glb-import-parity';
 
 describe('GLB import parity', () => {
