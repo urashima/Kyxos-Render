@@ -412,10 +412,12 @@ async function openProject(project: ProjectSummary): Promise<void> {
 
   const uploadInput = element('input', {
     attrs: {
+      id: 'asset-import-input',
       type: 'file',
       accept: '.glb,.gltf,.bin,.hdr,.exr,.png,.jpg,.jpeg,.webp,.ktx2',
       multiple: '',
       hidden: '',
+      'aria-label': 'Import assets',
     },
   });
   uploadInput.addEventListener('change', () => {
@@ -425,10 +427,12 @@ async function openProject(project: ProjectSummary): Promise<void> {
   });
   const reimportInput = element('input', {
     attrs: {
+      id: 'asset-reimport-input',
       type: 'file',
       accept: '.glb,.gltf,.bin,.png,.jpg,.jpeg,.webp,.ktx2',
       multiple: '',
       hidden: '',
+      'aria-label': 'Reimport asset',
     },
   });
   reimportInput.addEventListener('change', () => {

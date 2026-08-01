@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
+import { createTriangleGlb } from '../../packages/test-fixtures/src/index';
 
-async function openFixtureProject(page: Page): Promise<void> {
+async function openFixtureProject(page: Page, importFixture = false): Promise<void> {
   await page.setViewportSize({ width: 1366, height: 768 });
   await page.goto('/studio/');
   await page.getByLabel('Email').fill('panels@kyxos.local');
@@ -9,6 +10,14 @@ async function openFixtureProject(page: Page): Promise<void> {
   page.once('dialog', (dialog) => dialog.accept('Panel Fixture'));
   await page.getByRole('button', { name: 'New project' }).click();
   await expect(page.locator('#studio-canvas')).toBeVisible({ timeout: 60_000 });
+  if (importFixture) {
+    await page.locator('#asset-import-input').setInputFiles({
+      name: 'panel-fixture.glb',
+      mimeType: 'model/gltf-binary',
+      buffer: Buffer.from(createTriangleGlb()),
+    });
+    await expect(page.getByText(/Import complete/)).toBeVisible({ timeout: 60_000 });
+  }
 }
 
 test('left, right and bottom panels collapse their actual layout tracks independently', async ({ page }) => {
@@ -46,7 +55,7 @@ test('left, right and bottom panels collapse their actual layout tracks independ
 });
 
 test('inspector controls do not close their module and long content owns vertical scrolling', async ({ page }) => {
-  await openFixtureProject(page);
+  await openFixtureProject(page, true);
 
   const firstHierarchyRow = page.locator('.hierarchy-row').first();
   if (await firstHierarchyRow.count()) await firstHierarchyRow.click();

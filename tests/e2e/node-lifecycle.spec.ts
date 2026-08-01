@@ -13,7 +13,7 @@ test('Hierarchy duplicate, reparent, delete and undo remain synchronized', async
   page.once('dialog', (dialog) => dialog.accept('Node Lifecycle'));
   await page.getByRole('button', { name: 'New project' }).click();
 
-  await page.locator('input[type=file]').setInputFiles({
+  await page.locator('#asset-import-input').setInputFiles({
     name: 'node-lifecycle.glb',
     mimeType: 'model/gltf-binary',
     buffer: Buffer.from(createTriangleGlb()),

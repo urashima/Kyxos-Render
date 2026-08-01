@@ -13,7 +13,7 @@ test('Studio Inspector controls remain live, focused and persistent', async ({ p
   await page.getByRole('button', { name: 'New project' }).click();
   await expect(page.locator('#studio-canvas')).toBeVisible({ timeout: 60_000 });
 
-  await page.locator('input[type=file]').setInputFiles({
+  await page.locator('#asset-import-input').setInputFiles({
     name: 'inspector-animated-triangle.glb',
     mimeType: 'model/gltf-binary',
     buffer: Buffer.from(createAnimatedTriangleGlb()),
