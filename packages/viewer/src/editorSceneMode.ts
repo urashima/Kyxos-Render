@@ -4,16 +4,30 @@ import type { Group, Object3D } from 'three/webgpu';
 import { KyxosViewer } from './KyxosViewer';
 import { disposeObject3D } from './utils/dispose';
 
-type ViewerPrototype = KyxosViewer & {
+type LoadScene = (
+  this: KyxosViewer,
+  scene: KyxosSceneContract,
+  resolver: AssetResolver,
+) => Promise<void>;
+
+interface ViewerInternals {
   modelRoot?: Group;
   animateScene?: (elapsed: number, delta: number) => void;
   animationEnabled?: boolean;
-  loadScene(scene: KyxosSceneContract, resolver: AssetResolver): Promise<void>;
-  __kyxosEditorSceneModeInstalled?: boolean;
-};
+}
 
-function clearModelRoot(viewer: ViewerPrototype): void {
-  const root = viewer.modelRoot;
+interface ViewerPrototypeInternals {
+  loadScene?: LoadScene;
+  __kyxosEditorSceneModeInstalled?: boolean;
+}
+
+function internals(viewer: KyxosViewer): ViewerInternals {
+  return viewer as unknown as ViewerInternals;
+}
+
+function clearModelRoot(viewer: KyxosViewer): void {
+  const internal = internals(viewer);
+  const root = internal.modelRoot;
   if (!root) return;
 
   for (const child of [...root.children]) {
@@ -24,8 +38,8 @@ function clearModelRoot(viewer: ViewerPrototype): void {
 
   // The default playground scene owns a procedural animation callback. Studio
   // scenes must be completely data-driven by the Scene Contract instead.
-  viewer.animateScene = () => undefined;
-  viewer.animationEnabled = false;
+  internal.animateScene = () => undefined;
+  internal.animationEnabled = false;
 }
 
 /**
@@ -39,7 +53,7 @@ function clearModelRoot(viewer: ViewerPrototype): void {
  * editable model in the viewport.
  */
 export function installEditorSceneModeExtension(ViewerClass: typeof KyxosViewer): void {
-  const prototype = ViewerClass.prototype as ViewerPrototype;
+  const prototype = ViewerClass.prototype as unknown as ViewerPrototypeInternals;
   if (prototype.__kyxosEditorSceneModeInstalled) return;
 
   const originalLoadScene = prototype.loadScene;
