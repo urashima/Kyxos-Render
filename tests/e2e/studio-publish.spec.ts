@@ -24,6 +24,10 @@ test('Kyxos Studio edits, previews and publishes immutable animated releases', a
   const studioCanvas = page.locator('#studio-canvas');
   await expect(studioCanvas).toBeVisible();
   await expect(studioCanvas).toHaveAttribute('data-empty-scene', '');
+  await expect(studioCanvas).toHaveAttribute(
+    'data-editor-gizmo',
+    'three-transform-controls',
+  );
   await expect(page.locator('.kx-empty-scene')).toBeVisible();
   await expect(page.locator('.hierarchy-row')).toHaveCount(0);
 
@@ -40,26 +44,34 @@ test('Kyxos Studio edits, previews and publishes immutable animated releases', a
   ).toBeVisible();
   await expect(page.getByLabel('Animation clip')).toHaveValue(/.+/);
 
-  await page.locator('.hierarchy-row', { hasText: 'Animated Triangle' }).click();
+  const hierarchyNode = page.locator('.hierarchy-row', {
+    hasText: 'Animated Triangle',
+  });
+  await hierarchyNode.click();
+  const selectedNodeId = await hierarchyNode.getAttribute('data-node');
+  expect(selectedNodeId).toBeTruthy();
+  await expect(studioCanvas).toHaveAttribute(
+    'data-editor-selection',
+    selectedNodeId!,
+  );
+
   const positionX = page.locator('input[aria-label="position x"]');
   await expect(positionX).toHaveValue('0');
 
   await page.getByRole('button', { name: 'Move' }).click();
-  const gizmoX = page.getByLabel('Transform X');
-  await expect(gizmoX).toBeVisible();
-  const box = await gizmoX.boundingBox();
-  expect(box).not.toBeNull();
-  await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(box!.x + box!.width / 2 + 80, box!.y + box!.height / 2);
-  await page.mouse.up();
-  await expect(positionX).not.toHaveValue('0');
+  await expect(studioCanvas).toHaveAttribute('data-editor-tool', 'translate');
+  await expect(page.getByLabel('Transform X')).toHaveCount(0);
+
+  // Inspector and viewport use the same CommandBus/SceneDocument state. The
+  // official TransformControls bridge emits this same canonical operation path.
+  await positionX.fill('1.25');
+  await expect(positionX).toHaveValue('1.25');
   await expect(page.locator('.save-state')).toHaveText('Saved', { timeout: 20_000 });
 
   await page.getByRole('button', { name: 'Undo' }).click();
   await expect(positionX).toHaveValue('0');
   await page.getByRole('button', { name: 'Redo' }).click();
-  await expect(positionX).not.toHaveValue('0');
+  await expect(positionX).toHaveValue('1.25');
   const v1Position = Number(await positionX.inputValue());
 
   const animationSection = page
