@@ -5,21 +5,8 @@ const disabled = (): EffectsState => ({
   fxaa: { enabled: false },
   smaa: { enabled: false },
   ssaa: { enabled: false, samples: 8 },
-  gtao: {
-    enabled: false,
-    resolutionScale: 0.5,
-    samples: 16,
-    radius: 0.5,
-    intensity: 1.2,
-    thickness: 1,
-  },
-  ssao: {
-    enabled: false,
-    resolutionScale: 0.5,
-    samples: 16,
-    radius: 0.5,
-    intensity: 1.5,
-  },
+  gtao: { enabled: false, resolutionScale: 0.5, samples: 16, radius: 0.5, intensity: 1.2, thickness: 1 },
+  ssao: { enabled: false, resolutionScale: 0.5, samples: 16, radius: 0.5, intensity: 1.5 },
   ssr: {
     enabled: false,
     resolutionScale: 0.5,
@@ -103,7 +90,7 @@ export function createQualityPreset(name: QualityPresetName): EffectsState {
     return state;
   }
 
-  if (name === 'cinematic' || name === 'ultra') {
+  if (name === 'cinematic') {
     state.traa.enabled = true;
     state.gtao.enabled = true;
     state.gtao.resolutionScale = 1;
@@ -152,14 +139,14 @@ export function enforceEffectRules(state: EffectsState, changed?: EffectName): E
     for (const name of active) next[name].enabled = name === keep;
   }
 
+  // TemporalReprojectNode and RecurrentDenoiseNode are SSR filters, not
+  // independent full-frame post effects. Keep the public switches honest by
+  // establishing the required chain automatically.
   if (changed === 'ssr' && !next.ssr.enabled) {
     next.temporalReprojection.enabled = false;
     next.temporalDenoise.enabled = false;
   } else {
-    if (
-      changed === 'temporalReprojection' &&
-      !next.temporalReprojection.enabled
-    ) {
+    if (changed === 'temporalReprojection' && !next.temporalReprojection.enabled) {
       next.temporalDenoise.enabled = false;
     }
     if (next.temporalDenoise.enabled) next.temporalReprojection.enabled = true;
