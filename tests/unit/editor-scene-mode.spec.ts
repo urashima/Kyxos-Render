@@ -5,9 +5,24 @@ import type { AssetResolver, KyxosSceneContract } from '@kyxos/scene-contract';
 import { createEmptySceneContract } from '@kyxos/scene-contract';
 import { installEditorSceneModeExtension } from '../../packages/viewer/src/editorSceneMode';
 
+class FakeCanvas {
+  private readonly attributes = new Set<string>();
+
+  toggleAttribute(name: string, force?: boolean): boolean {
+    const enabled = force ?? !this.attributes.has(name);
+    if (enabled) this.attributes.add(name);
+    else this.attributes.delete(name);
+    return enabled;
+  }
+
+  hasAttribute(name: string): boolean {
+    return this.attributes.has(name);
+  }
+}
+
 class FakeViewer extends EventTarget {
   modelRoot = new Group();
-  canvas = document.createElement('canvas');
+  canvas = new FakeCanvas() as unknown as HTMLCanvasElement;
   animateScene = vi.fn();
   animationEnabled = true;
   originalLoadCalls = 0;
@@ -21,9 +36,10 @@ const resolver: AssetResolver = {
   resolve: async () => 'blob:test',
 };
 
+installEditorSceneModeExtension(FakeViewer as unknown as typeof import('../../packages/viewer/src/KyxosViewer').KyxosViewer);
+
 describe('Studio editor scene mode', () => {
   it('removes the procedural playground model for an empty project', async () => {
-    installEditorSceneModeExtension(FakeViewer as never);
     const viewer = new FakeViewer();
     viewer.modelRoot.add(new Mesh(new BoxGeometry(), new MeshBasicMaterial()));
 
