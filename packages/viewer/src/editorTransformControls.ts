@@ -50,7 +50,7 @@ function findNodeObject(viewer: KyxosViewer, nodeId: string): THREE.Object3D | n
 function transformDetail(object: THREE.Object3D, mode: EditorTransformMode) {
   const nodeId = String(object.userData.kyxosNodeId ?? '');
   const property = mode === 'rotate' ? 'rotation' : mode === 'scale' ? 'scale' : 'position';
-  const vector = object[property];
+  const vector = object[property] as THREE.Vector3 | THREE.Euler;
   return {
     changes: (['x', 'y', 'z'] as const).map((axis) => ({
       nodeId,
@@ -60,6 +60,14 @@ function transformDetail(object: THREE.Object3D, mode: EditorTransformMode) {
     })),
     mergeKey: `transform-controls:${mode}:${nodeId}`,
   };
+}
+
+function syncCanvasState(viewer: KyxosViewer, state: EditorControlState): void {
+  viewer.canvas.dataset.editorGizmo = 'three-transform-controls';
+  viewer.canvas.dataset.editorTool = state.mode;
+  viewer.canvas.dataset.editorSpace = state.space;
+  viewer.canvas.dataset.editorSelection = state.selectedNodeIds.join(',');
+  viewer.canvas.dataset.editorSnap = String(state.snap.enabled);
 }
 
 function applySnap(state: EditorControlState): void {
@@ -77,6 +85,7 @@ function applySnap(state: EditorControlState): void {
 }
 
 function attachCurrent(viewer: KyxosViewer, state: EditorControlState): void {
+  syncCanvasState(viewer, state);
   if (state.mode === 'select') {
     state.controls.detach();
     state.helper.visible = false;
@@ -135,6 +144,7 @@ export function createEditorTransformControls(this: KyxosViewer): void {
     },
     onDraggingChanged: (event) => {
       if (internal.controls) internal.controls.enabled = !Boolean(event.value);
+      this.canvas.dataset.editorDragging = String(Boolean(event.value));
       this.dispatchEvent(
         new CustomEvent('editor-transform-dragging', {
           detail: { dragging: Boolean(event.value) },
@@ -162,6 +172,7 @@ export function createEditorTransformControls(this: KyxosViewer): void {
   controls.addEventListener('mouseDown', state.onMouseDown);
   controls.addEventListener('mouseUp', state.onMouseUp);
   editorStates.set(this, state);
+  syncCanvasState(this, state);
 }
 
 export function setEditorTransformSelection(
@@ -192,6 +203,7 @@ export function setEditorTransformSpace(
   if (!state) return;
   state.space = space;
   applySnap(state);
+  syncCanvasState(this, state);
 }
 
 export function setEditorTransformSnap(
@@ -202,6 +214,7 @@ export function setEditorTransformSnap(
   if (!state) return;
   state.snap = structuredClone(snap);
   applySnap(state);
+  syncCanvasState(this, state);
 }
 
 export function refreshEditorTransformControls(this: KyxosViewer): void {
@@ -223,6 +236,12 @@ export function disposeEditorTransformControls(this: KyxosViewer): void {
   editorStates.delete(this);
   const orbit = internals(this).controls;
   if (orbit) orbit.enabled = true;
+  delete this.canvas.dataset.editorGizmo;
+  delete this.canvas.dataset.editorTool;
+  delete this.canvas.dataset.editorSpace;
+  delete this.canvas.dataset.editorSelection;
+  delete this.canvas.dataset.editorSnap;
+  delete this.canvas.dataset.editorDragging;
 }
 
 Object.assign(KyxosViewer.prototype, {
