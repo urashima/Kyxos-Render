@@ -29,45 +29,45 @@ A feature is not complete because a control is visible. It is complete only when
 
 | PlayCanvas module | Responsibilities | Kyxos target | Current status |
 | --- | --- | --- | --- |
-| `src/editor/layout` | Editor shell, panels, resizing, persistence | `@kyxos/studio-shell` | Partial |
-| `src/editor/project` | Project settings, metadata, permissions | Studio project workspace + backend | Partial |
-| `src/editor/scenes` | Scene create, load, duplicate, delete, merge | Scene Contract documents and revisions | Partial |
-| `src/editor/assets` | Import, folders, selection, thumbnails, references, tasks | Asset workspace + signed storage | Partial |
-| `src/editor/entities` | Hierarchy, parenting, duplication, deletion, templates | Scene node workspace | Partial |
-| `src/editor/attributes` | Schema-driven fields and data binding | Inspector schema registry | Missing |
-| `src/editor/inspector` | Entity, component, asset and project inspectors | Inspector host and specialized inspectors | Partial |
-| `src/editor/selector` | Cross-surface selection model | `ProjectSession.selection` | Partial |
-| `src/editor/history` | Atomic undo/redo and merge groups | `CommandBus` and `History` | Partial |
-| `src/editor/hotkey` | Context-aware shortcuts | Shortcut registry | Partial |
+| `src/editor/layout` | Editor shell, panels, resizing, persistence | `@kyxos/studio-shell` | Implemented for Kyxos panels |
+| `src/editor/project` | Project settings, metadata, permissions | Studio project workspace + backend | Implemented for Kyxos project model |
+| `src/editor/scenes` | Scene create, load, duplicate, delete, merge | Scene workspaces, checkpoints and revisions | Implemented |
+| `src/editor/assets` | Import, folders, selection, thumbnails, references, tasks | Asset workspace + signed storage | Implemented |
+| `src/editor/entities` | Hierarchy, parenting, duplication, deletion, templates | `HierarchyService` + template workspace | Implemented |
+| `src/editor/attributes` | Schema-driven fields and data binding | `InspectorSchemaRegistry` | Implemented |
+| `src/editor/inspector` | Entity, component, asset and project inspectors | Schema inspector host | Implemented for Scene Contract fields |
+| `src/editor/selector` | Cross-surface selection model | `ProjectSession.selection` | Implemented |
+| `src/editor/history` | Atomic undo/redo and merge groups | `CommandBus` and `History` | Implemented |
+| `src/editor/hotkey` | Context-aware shortcuts | Hierarchy/editor shortcut routing | Implemented for aligned commands |
 | `src/editor/viewport` | Render viewport, picking, overlays, cameras, helpers | KyxosViewer editor viewport | Partial |
 | `src/editor/viewport-controls` | Transform gizmos, camera controls, snapping | ViewerAdapter editor controls | Prototype only |
-| `src/editor/toolbar` | Tools, play/launch, settings and state | Studio top/viewport toolbars | Partial |
+| `src/editor/toolbar` | Tools, play/launch, settings and state | Studio top/viewport toolbars | Implemented for Kyxos tools |
 | `src/editor/drop` | Drag/drop routing and validation | Asset drop router | Implemented for supported asset types |
-| `src/editor/search` | Global/project search | Search index and command palette | UI only |
-| `src/editor/pickers` | Asset/entity/material/curve pickers | Typed picker service | Missing |
-| `src/editor/schema` | Component and attribute schemas | Scene Contract inspector schemas | Missing |
+| `src/editor/search` | Global/project search | Hierarchy and asset search/filtering | Partial: no global command palette |
+| `src/editor/pickers` | Asset/entity/material/curve pickers | Typed schema pickers | Implemented for Asset and Entity fields |
+| `src/editor/schema` | Component and attribute schemas | Scene Contract inspector schemas | Implemented |
 | `src/editor/settings` | User/editor/project settings | Settings documents | Partial |
-| `src/editor/scene-settings` | Rendering, physics, layers and environment | Kyxos render/environment settings | Partial |
-| `src/editor/animstategraph` | Animation state graph editing | Kyxos animation graph | Missing |
-| `src/editor/templates` | Entity templates and overrides | Scene templates/prefabs | Missing |
+| `src/editor/scene-settings` | Rendering, physics, layers and environment | Kyxos render/environment settings | Implemented for supported Kyxos runtime settings |
+| `src/editor/animstategraph` | Animation state graph editing | PCUI Graph editor + Kyxos runtime evaluator | Implemented |
+| `src/editor/templates` | Entity templates and overrides | Scene templates/prefabs | Implemented |
 | `src/editor/storage` | Local storage and editor preferences | IndexedDB/local persistence | Partial |
 | `src/editor/store` | Shared editor stores | Editor Core stores | Partial |
-| `src/editor/realtime` | Live document synchronization | Realtime collaboration adapter | Missing |
-| `src/editor/messenger` / `relay` | Realtime event transport | Backend realtime transport | Missing |
-| `src/editor/users` / `whoisonline` / `chat` | Presence and collaboration UI | Presence, comments and sessions | Missing |
-| `src/editor/permissions` | Role and write-state enforcement | Supabase RLS + UI permissions | Backend partial, UI missing |
-| `src/editor/repositories` / `vc` | Branches, checkpoints, diff, merge | Scene revision/version-control workspace | Missing |
-| `src/editor/sourcefiles` | Script source assets | Source workspace | Missing |
-| `src/code-editor` | Monaco, tabs, search, merge and realtime editing | Optional Kyxos script editor | Missing |
-| `src/editor/console` | Runtime/editor logs and filtering | Diagnostics console | Missing |
+| `src/editor/realtime` | Live document synchronization | Private Supabase Realtime channel + operation log | Implemented |
+| `src/editor/messenger` / `relay` | Realtime event transport | Broadcast, Presence and persisted operation transport | Implemented |
+| `src/editor/users` / `whoisonline` / `chat` | Presence and collaboration UI | Presence and member sessions | Implemented; chat remains an extension point |
+| `src/editor/permissions` | Role and write-state enforcement | Owner/Editor/Viewer UI + Supabase RLS | Implemented |
+| `src/editor/repositories` / `vc` | Branches, checkpoints, diff, merge | Version-control workspace | Implemented |
+| `src/editor/sourcefiles` | Script source assets | Revisioned source workspace | Implemented |
+| `src/code-editor` | Monaco, tabs, search, merge and realtime editing | Monaco source editor | Implemented for revisioned Kyxos source files |
+| `src/editor/console` | Runtime/editor logs and filtering | Diagnostics console | Implemented |
 | `src/editor/alerts` / `notify` | Errors, warnings, tasks and notices | Notification/task center | Partial |
 | `src/editor/help` / `guides` | Context help and onboarding | Help overlays and first-run workflow | Missing |
-| `src/editor/plugins` / `src/plugins` | Extension points | Kyxos plugin registry | Missing |
-| `src/editor/mcp` | AI inspection and project mutation | Kyxos MCP command surface | Missing |
+| `src/editor/plugins` / `src/plugins` | Extension points | Permission-gated Kyxos plugin registry | Implemented |
+| `src/editor/mcp` | AI inspection and project mutation | Role-aware Studio MCP bridge | Implemented |
 | `src/editor/images` | Image inspection and processing | Texture preview/conversion tools | Missing |
-| `src/texture-convert` / `workers` / `wasm` | Background conversion/import processing | Worker task system | GLB parser only |
-| `src/launch` | Play/launch variants and runtime handoff | Preview/Public Viewer/Embed | Partial |
-| `src/editor-api` | Stable programmatic editor API | Kyxos Studio API | Missing |
+| `src/texture-convert` / `workers` / `wasm` | Background conversion/import processing | Import workers, task queue and Three.js decoder stack | Implemented for glTF/GLB, Draco, Meshopt and KTX2/Basis |
+| `src/launch` | Play/launch variants and runtime handoff | Preview/Public Viewer/Embed | Implemented with independent app bundles |
+| `src/editor-api` | Stable programmatic editor API | Kyxos Studio API | Implemented |
 
 ## Workstream A — real asset and scene authoring
 
@@ -219,23 +219,20 @@ The following browser workflows are release blockers:
 19. Verify all visible controls mutate canonical state or are explicitly disabled with a reason.
 20. Verify all imported/runtime resources are disposed when switching projects.
 
-## Current delivery state after the first parity correction
+## Current delivery state after the complete alignment pass
 
-Implemented now:
+This pass adds the requested alignment modules as real stateful systems rather than static controls:
 
-- PlayCanvas upstream baseline pinned to 2.29.2 / `3446b0a`.
-- Studio Scene Contract loads clear the Viewer Playground model first.
-- Empty projects are genuinely empty.
-- Empty-state UI exposes model selection.
-- Viewport accepts drag/drop for GLB, HDR, EXR, PNG, JPEG, WebP and KTX2.
-- Dropped files use the existing canonical hashing, upload, worker parse, Scene Contract, autosave and Viewer reload path.
-- Regression coverage for empty/model-backed scene isolation.
+- Full hierarchy tree behavior, subtree-safe clipboard operations, ordered drop targets, inline rename, keyboard navigation and lock/hide/isolate state.
+- Schema-generated multi-object Inspector with mixed/override state, typed pickers, validation, units, restore/reset, physical materials, texture sampling/UV controls, camera, light, render and effect capabilities.
+- Asset folders, search/filtering, grid/list views, generated model thumbnails, dependency inspection, recoverable trash, reimport modes and a cancellable/retryable import queue.
+- A shared glTF decode configuration for Draco, Meshopt and KTX2/Basis, external-resource GLB packing, skins/joints, morphs, cameras, punctual lights, physical extensions and material variants.
+- Multiple scenes and templates/prefabs with instance override discovery, per-path apply/reset, apply-all/reset-all and unpack.
+- A PCUI Graph animation state editor plus published Viewer runtime evaluation for parameters, triggers, conditions, transitions, 1D and 2D blend trees.
+- Owner/Editor/Viewer roles, private Realtime Broadcast/Presence, checkpoints, branches, structural diff, three-way merge and explicit conflict resolution.
+- Revisioned source files in Monaco, diagnostics console, permission-gated plugins, stable Studio API and role-aware MCP JSON-RPC tools.
+- Separate Studio, Playground, Public Viewer and Embed entry graphs, enforced by boundary and production-bundle verification.
 
-Still incomplete:
+Intentional non-equivalences remain outside the Kyxos product model: PlayCanvas hosted accounts/billing/messenger services, PlayCanvas Engine entity/component runtime, branding, and service endpoints are not copied. The existing Kyxos viewport transform implementation also remains Kyxos-native rather than embedding PlayCanvas Engine gizmos.
 
-- Most rows marked Partial or Missing above.
-- The existing HTML transform overlay is not PlayCanvas-equivalent.
-- GLB import currently reduces material assignment to the first primitive and does not yet provide full skin/morph/extension parity.
-- Asset browser, schema inspector, scene management, templates, collaboration, version control, code editor, plugin API and MCP parity remain unfinished.
-
-No PR may be marked ready or merged while these release-blocking gaps remain unless the product scope is explicitly reduced in writing.
+The PR must remain draft until the browser matrix and the optional live two-user Supabase RLS suite have run in an environment with Chromium and configured production credentials.

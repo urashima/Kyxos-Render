@@ -8,6 +8,8 @@ interface GlbNode {
   translation?: number[];
   rotation?: number[];
   scale?: number[];
+  extensions?: Record<string, any>;
+  extras?: Record<string, unknown>;
 }
 
 interface GlbAccessor {
@@ -44,6 +46,7 @@ interface GlbJson {
     name?: string;
     weights?: number[];
     primitives?: GlbPrimitive[];
+    extras?: { targetNames?: string[]; [key: string]: unknown };
   }>;
   materials?: Array<Record<string, any>>;
   animations?: GlbAnimation[];
@@ -140,6 +143,8 @@ self.onmessage = (
       translation: node.translation ?? [0, 0, 0],
       rotation: node.rotation ?? [0, 0, 0, 1],
       scale: node.scale ?? [1, 1, 1],
+      extensions: node.extensions ?? {},
+      extras: node.extras ?? {},
     }));
 
     const materials = (gltf.materials ?? []).map((material, index) => ({
@@ -183,6 +188,7 @@ self.onmessage = (
       'KHR_materials_specular',
       'KHR_materials_emissive_strength',
       'KHR_materials_volume',
+      'KHR_materials_variants',
       'KHR_lights_punctual',
       'KHR_mesh_quantization',
       'KHR_texture_basisu',
@@ -202,6 +208,7 @@ self.onmessage = (
         meshIndex,
         name: mesh.name || `Mesh ${meshIndex + 1}`,
         weights: mesh.weights ?? [],
+        targetNames: mesh.extras?.targetNames ?? [],
         primitives: (mesh.primitives ?? []).map(primitiveReport),
       })),
       skins: gltf.skins ?? [],
@@ -223,6 +230,9 @@ self.onmessage = (
         meshes: gltf.meshes ?? [],
         cameras: gltf.cameras ?? [],
         skins: gltf.skins ?? [],
+        lights: (gltf.extensions as any)?.KHR_lights_punctual?.lights ?? [],
+        materialVariants:
+          (gltf.extensions as any)?.KHR_materials_variants?.variants ?? [],
         extensionsUsed: gltf.extensionsUsed ?? [],
         extensionsRequired: gltf.extensionsRequired ?? [],
         warnings,

@@ -65,9 +65,23 @@ KyxosViewer.prototype.setLighting = function setLighting(lights: SceneLight[]): 
     if (source.type === 'ambient') {
       light = new THREE.AmbientLight(source.color, source.intensity);
     } else if (source.type === 'point') {
-      light = new THREE.PointLight(source.color, source.intensity);
+      light = new THREE.PointLight(
+        source.color,
+        source.intensity,
+        source.range ?? 0,
+        source.decay ?? 2,
+      );
     } else if (source.type === 'spot') {
-      light = new THREE.SpotLight(source.color, source.intensity);
+      const outer = source.outerConeAngle ?? Math.PI / 4;
+      const inner = Math.min(source.innerConeAngle ?? 0, outer);
+      light = new THREE.SpotLight(
+        source.color,
+        source.intensity,
+        source.range ?? 0,
+        outer,
+        outer > 0 ? Math.max(0, Math.min(1, 1 - inner / outer)) : 0,
+        source.decay ?? 2,
+      );
     } else {
       light = new THREE.DirectionalLight(source.color, source.intensity);
     }

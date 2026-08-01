@@ -275,6 +275,15 @@ function assignContractNodes(viewer: KyxosViewer, contract: KyxosSceneContract):
       node.transform.scale.z,
     );
     object.visible = node.visible;
+    if (node.morphWeights?.length) {
+      object.traverse((entry) => {
+        const mesh = entry as THREE.Mesh & { morphTargetInfluences?: number[] };
+        if (!mesh.morphTargetInfluences) return;
+        for (let index = 0; index < mesh.morphTargetInfluences.length; index += 1) {
+          mesh.morphTargetInfluences[index] = node.morphWeights?.[index] ?? 0;
+        }
+      });
+    }
     object.updateMatrix();
   }
   modelRoot.updateMatrixWorld(true);
@@ -324,8 +333,28 @@ async function loadTexture(
   texture.userData.kyxosManagedTexture = true;
   texture.colorSpace =
     reference.colorSpace === 'srgb' ? THREE.SRGBColorSpace : THREE.NoColorSpace;
-  texture.wrapS = THREE.RepeatWrapping;
-  texture.wrapT = THREE.RepeatWrapping;
+  const wrapping = {
+    repeat: THREE.RepeatWrapping,
+    clamp: THREE.ClampToEdgeWrapping,
+    mirror: THREE.MirroredRepeatWrapping,
+  } as const;
+  texture.wrapS = wrapping[reference.wrapS ?? 'repeat'];
+  texture.wrapT = wrapping[reference.wrapT ?? 'repeat'];
+  texture.channel = Math.max(0, Math.trunc(reference.texCoord ?? 0));
+  const minFilters: Record<string, THREE.MinificationTextureFilter> = {
+    nearest: THREE.NearestFilter,
+    linear: THREE.LinearFilter,
+    nearestMipNearest: THREE.NearestMipmapNearestFilter,
+    linearMipNearest: THREE.LinearMipmapNearestFilter,
+    nearestMipLinear: THREE.NearestMipmapLinearFilter,
+    linearMipLinear: THREE.LinearMipmapLinearFilter,
+  };
+  const magFilters: Record<string, THREE.MagnificationTextureFilter> = {
+    nearest: THREE.NearestFilter,
+    linear: THREE.LinearFilter,
+  };
+  texture.minFilter = minFilters[reference.minFilter ?? 'linearMipLinear'] ?? THREE.LinearMipmapLinearFilter;
+  texture.magFilter = magFilters[reference.magFilter ?? 'linear'] ?? THREE.LinearFilter;
   texture.offset.set(reference.offset?.x ?? 0, reference.offset?.y ?? 0);
   texture.repeat.set(reference.scale?.x ?? 1, reference.scale?.y ?? 1);
   texture.rotation = reference.rotation ?? 0;
@@ -404,6 +433,9 @@ export async function loadScene(
   for (const materialId of Object.keys(contract.materials)) {
     await applyMaterialToReferences(this, contract, materialId);
   }
+  if (contract.activeMaterialVariantId) {
+    await this.setMaterialVariant(contract.activeMaterialVariantId);
+  }
 
   this.setCameraState(
     contract.cameras.find((camera) => camera.id === contract.activeCameraId) ??
@@ -429,16 +461,20 @@ export async function applyScenePatch(
   let environmentAssetChanged = false;
   let cameraChanged = false;
   let renderChanged = false;
+  let variantChanged = false;
 
   for (const operation of patch) {
     const nodeMatch = operation.path.match(
-      /^\/nodes\/(\d+)\/(transform|visible|parentId|children)/,
+      /^\/nodes\/(\d+)\/(transform|visible|parentId|children|morphWeights|materialSlots)/,
     );
     if (nodeMatch) {
       const node = next.nodes[Number(nodeMatch[1])];
       if (node && nodeMatch[2] === 'visible') this.setNodeVisibility(node.id, node.visible);
       else if (node && nodeMatch[2] === 'transform') this.setNodeTransform(node.id, node.transform);
-      else hierarchyChanged = true;
+      else if (node && nodeMatch[2] === 'morphWeights') this.applyNodeMorphWeights(node.id, node.morphWeights ?? []);
+      else if (node && nodeMatch[2] === 'materialSlots') {
+        for (const materialId of node.materialSlots ?? []) materialIds.add(materialId);
+      } else hierarchyChanged = true;
     } else if (operation.path === '/nodes' || /^\/nodes\/(\d+|-)$/.test(operation.path)) {
       hierarchyChanged = true;
     }
@@ -453,6 +489,7 @@ export async function applyScenePatch(
       cameraChanged = true;
     }
     if (operation.path.startsWith('/renderSettings')) renderChanged = true;
+    if (operation.path === '/activeMaterialVariantId') variantChanged = true;
   }
 
   if (hierarchyChanged) assignContractNodes(this, next);
@@ -477,6 +514,7 @@ export async function applyScenePatch(
     );
   }
   if (renderChanged) this.setRenderSettings(next.renderSettings);
+  if (variantChanged) await this.setMaterialVariant(next.activeMaterialVariantId);
 
   this.dispatchEvent(new CustomEvent('scene-patch', { detail: { patch } }));
 }
@@ -493,7 +531,7 @@ export function getCapabilities(this: KyxosViewer): ViewerCapabilityDescription 
     effects,
     textureFormats: ['png', 'jpeg', 'webp', 'ktx2', 'hdr', 'exr'],
     maxTextureSize: Number(internals(this).renderer?.capabilities?.maxTextureSize ?? 8192),
-    animation: { clips: true, seek: true, speed: true },
+    animation: { clips: true, seek: true, speed: true, stateGraph: true, blendTrees: true },
     picking: { available: true, multiSelect: true },
   };
 }
@@ -626,13 +664,84 @@ export async function setMaterial(
   ] as const;
   for (const [sourceKey, targetKey] of textureMappings) {
     const reference = material[sourceKey];
-    const texture = reference ? await loadTexture(this, reference) : null;
-    replaceManagedTexture(target, targetKey, texture);
+    if (reference) {
+      replaceManagedTexture(target, targetKey, await loadTexture(this, reference));
+    } else if ((target as any)[targetKey]?.userData?.kyxosManagedTexture) {
+      replaceManagedTexture(target, targetKey, null);
+    }
+  }
+  if ((target as any).isMeshPhysicalMaterial) {
+    const physical = target as THREE.MeshPhysicalMaterial;
+    physical.clearcoat = material.clearcoat ?? physical.clearcoat;
+    physical.clearcoatRoughness = material.clearcoatRoughness ?? physical.clearcoatRoughness;
+    physical.transmission = material.transmission ?? physical.transmission;
+    physical.thickness = material.thickness ?? physical.thickness;
+    physical.attenuationDistance = material.attenuationDistance ?? physical.attenuationDistance;
+    if (material.attenuationColor) {
+      physical.attenuationColor.setRGB(
+        material.attenuationColor.x,
+        material.attenuationColor.y,
+        material.attenuationColor.z,
+      );
+    }
+    physical.ior = material.ior ?? physical.ior;
+    physical.sheen = material.sheenColor ? 1 : physical.sheen;
+    if (material.sheenColor) {
+      physical.sheenColor.setRGB(
+        material.sheenColor.x,
+        material.sheenColor.y,
+        material.sheenColor.z,
+      );
+    }
+    physical.sheenRoughness = material.sheenRoughness ?? physical.sheenRoughness;
+    physical.specularIntensity = material.specularIntensity ?? physical.specularIntensity;
+    if (material.specularColor) {
+      physical.specularColor.setRGB(
+        material.specularColor.x,
+        material.specularColor.y,
+        material.specularColor.z,
+      );
+    }
   }
   target.needsUpdate = true;
   this.dispatchEvent(
     new CustomEvent('material-change', { detail: { nodeId, slot, materialId: material.id } }),
   );
+}
+
+export function applyNodeMorphWeights(
+  this: KyxosViewer,
+  nodeId: string,
+  weights: number[],
+): void {
+  const object = state(this).nodes.get(nodeId);
+  if (!object) return;
+  object.traverse((entry) => {
+    const mesh = entry as THREE.Mesh & { morphTargetInfluences?: number[] };
+    if (!mesh.morphTargetInfluences) return;
+    for (let index = 0; index < mesh.morphTargetInfluences.length; index += 1) {
+      mesh.morphTargetInfluences[index] = weights[index] ?? 0;
+    }
+  });
+  this.resetTemporal('morph-weights');
+}
+
+export async function setMaterialVariant(
+  this: KyxosViewer,
+  variantId?: string,
+): Promise<void> {
+  const current = state(this);
+  if (!current.contract) return;
+  current.contract.activeMaterialVariantId = variantId;
+  for (const node of current.contract.nodes) {
+    const slots = (variantId && node.materialVariantBindings?.[variantId]) ?? node.materialSlots ?? [];
+    for (let index = 0; index < slots.length; index += 1) {
+      const material = current.contract.materials[slots[index]];
+      if (material) await this.setMaterial(node.id, index, material);
+    }
+  }
+  this.resetTemporal('material-variant');
+  this.dispatchEvent(new CustomEvent('material-variant', { detail: { variantId } }));
 }
 
 export function setAnimationState(
@@ -649,17 +758,31 @@ export function setCameraState(
 ): void {
   if (!camera) return;
   const internal = internals(this);
-  const target = internal.camera as THREE.PerspectiveCamera;
   const controls = internal.controls;
+  const wantsOrthographic = 'projection' in camera && camera.projection === 'orthographic';
+  const current = internal.camera as THREE.PerspectiveCamera | THREE.OrthographicCamera;
+  let target = current;
+  if (wantsOrthographic !== current.isOrthographicCamera) {
+    target = wantsOrthographic
+      ? new THREE.OrthographicCamera(-1, 1, 1, -1, camera.near, camera.far)
+      : new THREE.PerspectiveCamera(camera.fov, 1, camera.near, camera.far);
+    target.name = 'Kyxos.SceneCamera';
+    internal.camera = target;
+    controls.object = target;
+  }
   target.position.set(
     camera.transform.position.x,
     camera.transform.position.y,
     camera.transform.position.z,
   );
-  target.fov = camera.fov;
+  if (target instanceof THREE.PerspectiveCamera) target.fov = camera.fov;
+  if (target instanceof THREE.OrthographicCamera) {
+    target.userData.kyxosOrthographicSize =
+      'orthographicSize' in camera ? camera.orthographicSize ?? 1 : 1;
+  }
   target.near = camera.near;
   target.far = camera.far;
-  target.updateProjectionMatrix();
+  internal.resizeToCanvas();
   controls.target.set(camera.target.x, camera.target.y, camera.target.z);
   controls.autoRotate = Boolean(camera.autoRotate);
   if ('orbit' in camera && camera.orbit) {
@@ -791,6 +914,8 @@ Object.assign(KyxosViewer.prototype, {
   setNodeTransform,
   setNodeVisibility,
   setMaterial,
+  applyNodeMorphWeights,
+  setMaterialVariant,
   setAnimationState,
   setCameraState,
   setEnvironment,
@@ -815,6 +940,8 @@ declare module './KyxosViewer' {
     setNodeTransform(nodeId: string, transform: Transform): void;
     setNodeVisibility(nodeId: string, visible: boolean): void;
     setMaterial(nodeId: string, slot: number, material: SceneMaterial): Promise<void>;
+    applyNodeMorphWeights(nodeId: string, weights: number[]): void;
+    setMaterialVariant(variantId?: string): Promise<void>;
     setAnimationState(animation: AnimationState): void;
     setCameraState(camera: SceneCamera | CameraState): void;
     setEnvironment(environment: SceneEnvironment): void;

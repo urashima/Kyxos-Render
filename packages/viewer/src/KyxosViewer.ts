@@ -23,7 +23,6 @@ import {
 } from 'three/tsl';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
 import { EXRLoader } from 'three/addons/loaders/EXRLoader.js';
 import { ao } from 'three/addons/tsl/display/GTAONode.js';
@@ -52,6 +51,7 @@ import {
 } from './effects/customNodes';
 import { createQualityPreset, mergeEffectSettings } from './presets';
 import { createDefaultScene } from './scene/createDefaultScene';
+import { createConfiguredGltfLoader, disposeConfiguredGltfLoader } from './gltfLoader';
 import type {
   BackendName,
   CaptureOptions,
@@ -90,7 +90,7 @@ export class KyxosViewer extends EventTarget {
   private renderer!: THREE.WebGPURenderer;
   private renderPipeline: any = null;
   private scene!: THREE.Scene;
-  private camera!: THREE.PerspectiveCamera;
+  private camera!: THREE.PerspectiveCamera | THREE.OrthographicCamera;
   private controls!: OrbitControls;
   private modelRoot!: THREE.Group;
   private animateScene: (elapsed: number, delta: number) => void = () => undefined;
@@ -212,11 +212,24 @@ export class KyxosViewer extends EventTarget {
     const rect = this.canvas.getBoundingClientRect();
     const width = Math.max(1, Math.floor(rect.width || this.canvas.width || 960));
     const height = Math.max(1, Math.floor(rect.height || this.canvas.height || 540));
-    this.camera.aspect = width / height;
-    this.camera.updateProjectionMatrix();
+    this.updateCameraProjection(width, height);
     this.renderer?.setSize(width, height, false);
     this.metrics.width = width;
     this.metrics.height = height;
+  }
+
+  private updateCameraProjection(width: number, height: number) {
+    const aspect = width / Math.max(1, height);
+    if (this.camera instanceof THREE.PerspectiveCamera) {
+      this.camera.aspect = aspect;
+    } else {
+      const size = Number(this.camera.userData.kyxosOrthographicSize ?? 1);
+      this.camera.left = -size * aspect;
+      this.camera.right = size * aspect;
+      this.camera.top = size;
+      this.camera.bottom = -size;
+    }
+    this.camera.updateProjectionMatrix();
   }
 
   private renderFrame(time: number) {
@@ -833,8 +846,9 @@ export class KyxosViewer extends EventTarget {
       return;
     }
 
-    const loader = new GLTFLoader();
+    const loader = createConfiguredGltfLoader(this.renderer);
     const gltf = await loader.loadAsync(url);
+    (this as unknown as Record<string, unknown>).loadedGltfAnimations = gltf.animations.map((clip) => clip.clone());
     disposeObject3D(this.modelRoot);
     this.modelRoot.clear();
 
@@ -969,8 +983,7 @@ export class KyxosViewer extends EventTarget {
 
     if (scale !== 1) {
       this.renderer.setSize(Math.round(width * scale), Math.round(height * scale), false);
-      this.camera.aspect = width / height;
-      this.camera.updateProjectionMatrix();
+      this.updateCameraProjection(width, height);
       this.buildPipeline('capture-resize');
     }
 
@@ -1003,8 +1016,7 @@ export class KyxosViewer extends EventTarget {
       const height = Math.max(240, before.height);
       for (let index = 0; index < iterations; index += 1) {
         this.renderer.setSize(width + (index % 2), height + (index % 3), false);
-        this.camera.aspect = width / height;
-        this.camera.updateProjectionMatrix();
+        this.updateCameraProjection(width, height);
       }
       this.renderer.setSize(width, height, false);
       this.buildPipeline('stress-resize');
@@ -1066,6 +1078,7 @@ export class KyxosViewer extends EventTarget {
     this.lutTexture.dispose();
     for (const texture of this.materialTextures) texture.dispose();
     this.materialTextures.clear();
+    disposeConfiguredGltfLoader(this.renderer);
     this.renderer?.dispose();
     this.dispatchEvent(new CustomEvent('disposed'));
   }

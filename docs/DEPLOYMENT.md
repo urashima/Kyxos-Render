@@ -44,6 +44,19 @@ VITE_KYXOS_FUNCTIONS_URL
 VITE_KYXOS_PUBLIC_FUNCTION_URL
 ```
 
+Optional live two-user RLS acceptance variables:
+
+```text
+KYXOS_SUPABASE_URL
+KYXOS_SUPABASE_ANON_KEY
+KYXOS_RLS_OWNER_EMAIL
+KYXOS_RLS_OWNER_PASSWORD
+KYXOS_RLS_SECOND_EMAIL
+KYXOS_RLS_SECOND_PASSWORD
+```
+
+The two accounts must already exist and use disposable acceptance credentials. The integration suite creates an isolated project, proves the second user can write as Editor, demotes that same user to Viewer, proves the write is blocked while reads remain available, and then removes the isolated project. Do not use the Service Role key for this test; doing so would bypass RLS.
+
 Deploy in order:
 
 ```bash
@@ -53,7 +66,9 @@ supabase functions deploy public-scene --no-verify-jwt
 supabase db reset --local   # local/CI only; loads migrations and seed
 ```
 
-Never expose the Service Role key to Vite or browser builds. Storage remains private; upload and public download URLs are short-lived signatures. The public function verifies that the requested version belongs to an enabled public slug before signing only the assets pinned by that version.
+After deploying the migration, enable private-channel authorization in the Supabase Realtime settings. The client subscribes to `project:<uuid>` with `private: true`; `realtime.messages` policies authorize Presence for project members and Broadcast writes only for Owner/Editor roles. Run `pnpm test:integration` with the six live acceptance variables before production promotion.
+
+Never expose the Service Role key to Vite, browser builds or RLS acceptance tests. Storage remains private; upload and public download URLs are short-lived signatures. The public function verifies that the requested version belongs to an enabled public slug before signing only the assets pinned by that version.
 
 ## GitHub Pages and preview rule
 

@@ -311,3 +311,11 @@ export function replaceCommand(path: string, value: unknown, label: string, merg
 }
 export function removeCommand(path: string, label: string): EditorCommand { return { id: `remove:${path}`, label, patch: () => [{ op: 'remove', path }] } }
 export function addCommand(path: string, value: unknown, label: string): EditorCommand { return { id: `add:${path}`, label, patch: () => [{ op: 'add', path, value }] } }
+
+export * from './hierarchy';
+export * from './schema';
+export * from './assets';
+export * from './workspace';
+export * from './animation-graph';
+export * from './collaboration';
+export * from './advanced';

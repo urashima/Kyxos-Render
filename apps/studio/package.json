@@ -17,6 +17,8 @@
     "@kyxos/ui-components": "workspace:*",
     "@kyxos/ui-icons": "workspace:*",
     "@kyxos/ui-theme": "workspace:*",
-    "@kyxos/viewer-adapter": "workspace:*"
+    "@kyxos/viewer-adapter": "workspace:*",
+    "@playcanvas/pcui-graph": "5.2.5",
+    "monaco-editor": "0.47.0"
   }
 }
