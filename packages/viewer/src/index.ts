@@ -7,6 +7,7 @@ import './environmentApi';
 import { KyxosViewer } from './KyxosViewer';
 import { installScreenSpaceSSSExtension } from './materials/screenSpaceSSS';
 import { installScreenSpaceSSSDebugExtension } from './materials/screenSpaceSSSDebug';
+import { installViewerMetricsBroadcast } from './metricsBroadcast';
 import { installSSSStudyModelExtension } from './scene/sssStudyModel';
 
 // Install the procedural study before the SSS load wrapper so loading the study
@@ -14,6 +15,7 @@ import { installSSSStudyModelExtension } from './scene/sssStudyModel';
 installSSSStudyModelExtension(KyxosViewer);
 installScreenSpaceSSSExtension(KyxosViewer);
 installScreenSpaceSSSDebugExtension(KyxosViewer);
+installViewerMetricsBroadcast(KyxosViewer);
 
 export { KyxosViewer };
 export { createQualityPreset, enforceEffectRules, mergeEffectSettings } from './presets';

@@ -9,6 +9,10 @@ test('switches Authoring and Focus modes without replacing the viewport', async 
   page.once('dialog', (dialog) => dialog.accept('UI Fixture'));
   await page.getByRole('button', { name: 'New project' }).click();
   await expect(page.locator('#studio-canvas')).toBeVisible({ timeout: 60_000 });
+  await expect(page.locator('.performance-summary')).not.toContainText('— DC', {
+    timeout: 30_000,
+  });
+  await expect(page.locator('.performance-summary')).not.toContainText('— tris');
 
   await page.evaluate(() => {
     (window as typeof window & { __kyxosCanvas?: HTMLCanvasElement }).__kyxosCanvas =
