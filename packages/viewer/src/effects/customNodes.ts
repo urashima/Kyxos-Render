@@ -11,17 +11,13 @@ import {
   convertToTexture,
   dot,
   float,
-  fract,
   mix,
   screenUV,
-  sin,
   smoothstep,
   step,
-  time,
-  vec2,
-  vec3,
   vec4,
 } from 'three/tsl';
+import { threeAnamorphicSparkleNode } from './threeAnamorphicSparkle';
 
 export function gradualBackgroundNode() {
   const horizon = smoothstep(0.05, 0.95, screenUV.y);
@@ -40,18 +36,7 @@ export function lensDistortionNode(source: any, amount: any) {
 }
 
 export function sparkleNode(source: any, intensity: any, threshold: any) {
-  const textureNode = convertToTexture(source);
-  return Fn(() => {
-    const base = textureNode.sample(screenUV).toVar();
-    const luma = dot(base.rgb, vec3(0.2126, 0.7152, 0.0722)).saturate();
-    const cell = screenUV.mul(vec2(920, 520)).floor();
-    const noise = fract(sin(dot(cell, vec2(12.9898, 78.233))).mul(43758.5453).add(time.mul(0.75)));
-    const gate = step(threshold, noise.mul(luma.pow(5)));
-    const horizontal = smoothstep(0.035, 0, abs(fract(screenUV.x.mul(920)).sub(0.5)));
-    const vertical = smoothstep(0.035, 0, abs(fract(screenUV.y.mul(520)).sub(0.5)));
-    const sparkle = gate.mul(horizontal.add(vertical)).mul(intensity);
-    return vec4(base.rgb.add(vec3(sparkle)), base.a);
-  })();
+  return source.add(threeAnamorphicSparkleNode(source, intensity, threshold));
 }
 
 export function beforeAfterNode(before: any, after: any, split: any) {

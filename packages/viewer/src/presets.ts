@@ -53,7 +53,7 @@ const disabled = (): EffectsState => ({
   lut: { enabled: false, intensity: 0.65 },
   lensDistortion: { enabled: false, amount: 0.035 },
   sharpness: { enabled: false, amount: 0.25 },
-  sparkle: { enabled: false, intensity: 0.4, threshold: 0.94 },
+  sparkle: { enabled: false, intensity: 5, threshold: 0.3, radius: 0, samples: 80 },
   gradualBackground: { enabled: true, intensity: 1 },
 });
 
@@ -109,7 +109,6 @@ export function createQualityPreset(name: QualityPresetName): EffectsState {
     state.lut.enabled = true;
     state.lensDistortion.enabled = true;
     state.sharpness.enabled = true;
-    state.sparkle.enabled = true;
     return state;
   }
 
@@ -120,7 +119,6 @@ export function createQualityPreset(name: QualityPresetName): EffectsState {
   state.lut.enabled = true;
   state.lensDistortion.enabled = true;
   state.sharpness.enabled = true;
-  state.sparkle.enabled = true;
   return state;
 }
 
