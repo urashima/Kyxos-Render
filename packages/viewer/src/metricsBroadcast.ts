@@ -2,9 +2,8 @@ import type { ViewerMetrics } from './types';
 
 const INSTALL_MARK = Symbol.for('kyxos.viewer.metrics-broadcast');
 
-type ViewerConstructor = {
-  prototype: EventTarget & { [INSTALL_MARK]?: boolean };
-};
+type ViewerPrototype = EventTarget & Record<symbol, boolean | undefined>;
+type ViewerConstructor = { prototype: ViewerPrototype };
 
 /**
  * Forwards the Viewer metrics event to the browser shell without exposing the
@@ -20,7 +19,9 @@ export function installViewerMetricsBroadcast(Viewer: ViewerConstructor): void {
     const result = dispatch.call(this, event);
     if (event.type === 'metrics' && typeof window !== 'undefined') {
       const detail = (event as CustomEvent<ViewerMetrics>).detail;
-      window.dispatchEvent(new CustomEvent<ViewerMetrics>('kyxos:viewer-metrics', { detail }));
+      window.dispatchEvent(
+        new CustomEvent<ViewerMetrics>('kyxos:viewer-metrics', { detail }),
+      );
     }
     return result;
   };
