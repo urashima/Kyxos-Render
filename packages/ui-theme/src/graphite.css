@@ -1,0 +1,18 @@
+html[data-kx-theme='graphite'] {
+  --kx-canvas-bg: #525862;
+  --kx-surface-0: rgba(13, 15, 19, 0.96);
+  --kx-surface-1: rgba(20, 23, 29, 0.94);
+  --kx-surface-2: rgba(28, 32, 40, 0.94);
+  --kx-surface-hover: rgba(42, 48, 59, 0.96);
+  --kx-surface-active: rgba(50, 59, 73, 0.98);
+  --kx-text-primary: rgba(247, 249, 252, 0.95);
+  --kx-text-secondary: rgba(222, 228, 238, 0.66);
+  --kx-text-muted: rgba(207, 216, 229, 0.42);
+  --kx-accent: #a9c7ff;
+  --kx-accent-hover: #c1d7ff;
+  --kx-accent-contrast: #101826;
+  --kx-accent-soft: rgba(137, 177, 255, 0.15);
+  --kx-border: rgba(230, 237, 248, 0.09);
+  --kx-border-strong: rgba(230, 237, 248, 0.18);
+  --kx-focus: 0 0 0 2px rgba(137, 177, 255, 0.34);
+}

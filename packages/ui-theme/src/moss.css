@@ -1,0 +1,17 @@
+html[data-kx-theme='moss'],
+html:not([data-kx-theme]) {
+  --kx-canvas-bg: #747b6a;
+  --kx-surface-0: rgba(13, 16, 13, 0.94);
+  --kx-surface-1: rgba(20, 24, 19, 0.92);
+  --kx-surface-2: rgba(29, 34, 27, 0.9);
+  --kx-surface-hover: rgba(42, 49, 38, 0.94);
+  --kx-surface-active: rgba(54, 63, 45, 0.96);
+  --kx-text-primary: rgba(247, 248, 241, 0.94);
+  --kx-text-secondary: rgba(226, 230, 216, 0.64);
+  --kx-text-muted: rgba(217, 222, 205, 0.4);
+  --kx-accent: #d7ff5b;
+  --kx-accent-hover: #e1ff7d;
+  --kx-accent-soft: rgba(215, 255, 91, 0.13);
+  --kx-border: rgba(239, 244, 226, 0.09);
+  --kx-border-strong: rgba(239, 244, 226, 0.17);
+}
