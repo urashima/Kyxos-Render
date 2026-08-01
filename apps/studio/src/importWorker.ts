@@ -3,6 +3,8 @@ interface GlbNode {
   children?: number[];
   mesh?: number;
   camera?: number;
+  skin?: number;
+  weights?: number[];
   translation?: number[];
   rotation?: number[];
   scale?: number[];
@@ -17,6 +19,7 @@ interface TextureInfo {
   index?: number;
   texCoord?: number;
   scale?: number;
+  strength?: number;
   extensions?: Record<string, unknown>;
 }
 
@@ -26,11 +29,21 @@ interface GlbAnimation {
   channels?: Array<Record<string, unknown>>;
 }
 
+interface GlbPrimitive {
+  material?: number;
+  mode?: number;
+  indices?: number;
+  attributes?: Record<string, number>;
+  targets?: Array<Record<string, number>>;
+  extensions?: Record<string, unknown>;
+}
+
 interface GlbJson {
   nodes?: GlbNode[];
   meshes?: Array<{
     name?: string;
-    primitives?: Array<{ material?: number; attributes?: Record<string, number> }>;
+    weights?: number[];
+    primitives?: GlbPrimitive[];
   }>;
   materials?: Array<Record<string, any>>;
   animations?: GlbAnimation[];
@@ -40,10 +53,17 @@ interface GlbJson {
     bufferView?: number;
     uri?: string;
   }>;
-  textures?: Array<{ source?: number; sampler?: number }>;
+  textures?: Array<{ source?: number; sampler?: number; extensions?: Record<string, unknown> }>;
   samplers?: Array<Record<string, unknown>>;
   accessors?: GlbAccessor[];
   cameras?: Array<Record<string, unknown>>;
+  skins?: Array<{
+    name?: string;
+    inverseBindMatrices?: number;
+    skeleton?: number;
+    joints?: number[];
+  }>;
+  extensions?: Record<string, unknown>;
   extensionsUsed?: string[];
   extensionsRequired?: string[];
 }
@@ -86,6 +106,18 @@ function animationDuration(animation: GlbAnimation, accessors: GlbAccessor[]): n
   return duration;
 }
 
+function primitiveReport(primitive: GlbPrimitive, index: number) {
+  return {
+    index,
+    material: primitive.material ?? null,
+    mode: primitive.mode ?? 4,
+    indices: primitive.indices ?? null,
+    attributes: primitive.attributes ?? {},
+    targets: primitive.targets ?? [],
+    extensions: primitive.extensions ?? {},
+  };
+}
+
 self.onmessage = (
   event: MessageEvent<{ buffer: ArrayBuffer; name: string }>,
 ) => {
@@ -103,6 +135,8 @@ self.onmessage = (
       children: node.children ?? [],
       mesh: node.mesh,
       camera: node.camera,
+      skin: node.skin,
+      weights: node.weights ?? [],
       translation: node.translation ?? [0, 0, 0],
       rotation: node.rotation ?? [0, 0, 0, 1],
       scale: node.scale ?? [1, 1, 1],
@@ -134,6 +168,8 @@ self.onmessage = (
           ),
         ),
       ],
+      channels: animation.channels ?? [],
+      samplers: animation.samplers ?? [],
     }));
 
     const warnings: string[] = [];
@@ -147,14 +183,30 @@ self.onmessage = (
       'KHR_materials_specular',
       'KHR_materials_emissive_strength',
       'KHR_materials_volume',
+      'KHR_lights_punctual',
       'KHR_mesh_quantization',
       'KHR_texture_basisu',
+      'EXT_meshopt_compression',
+      'KHR_draco_mesh_compression',
     ]);
     for (const extension of gltf.extensionsRequired ?? []) {
       if (!supportedExtensions.has(extension)) {
         warnings.push(`Required extension may be unsupported: ${extension}`);
       }
     }
+
+    const importMetadata = {
+      textures: gltf.textures ?? [],
+      samplers: gltf.samplers ?? [],
+      meshPrimitives: (gltf.meshes ?? []).map((mesh, meshIndex) => ({
+        meshIndex,
+        name: mesh.name || `Mesh ${meshIndex + 1}`,
+        weights: mesh.weights ?? [],
+        primitives: (mesh.primitives ?? []).map(primitiveReport),
+      })),
+      skins: gltf.skins ?? [],
+      rootExtensions: gltf.extensions ?? {},
+    };
 
     postMessage({
       ok: true,
@@ -164,11 +216,15 @@ self.onmessage = (
         materials,
         animations,
         images: gltf.images ?? [],
-        textures: gltf.textures ?? [],
-        samplers: gltf.samplers ?? [],
+        // contractFromGlb stores report.textures in model asset metadata. Keep the
+        // original texture list and all primitive bindings together so the
+        // pre-main normalization extension can restore every material slot.
+        textures: importMetadata,
         meshes: gltf.meshes ?? [],
         cameras: gltf.cameras ?? [],
+        skins: gltf.skins ?? [],
         extensionsUsed: gltf.extensionsUsed ?? [],
+        extensionsRequired: gltf.extensionsRequired ?? [],
         warnings,
       },
     });
