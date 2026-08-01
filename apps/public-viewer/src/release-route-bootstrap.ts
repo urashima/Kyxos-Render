@@ -57,7 +57,9 @@ export function normalizePublishedRoute(url: URL): URL {
   return normalized;
 }
 
-const normalized = normalizePublishedRoute(new URL(location.href));
-if (normalized.href !== location.href) {
-  history.replaceState(history.state, '', normalized.href);
+if (typeof location !== 'undefined' && typeof history !== 'undefined') {
+  const normalized = normalizePublishedRoute(new URL(location.href));
+  if (normalized.href !== location.href) {
+    history.replaceState(history.state, '', normalized.href);
+  }
 }
