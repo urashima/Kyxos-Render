@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { BoxGeometry, Group, Mesh, MeshBasicMaterial } from 'three/webgpu';
 
-import type { AssetResolver, KyxosSceneContract } from '@kyxos/scene-contract';
-import { createEmptySceneContract } from '@kyxos/scene-contract';
+import type {
+  AssetResolver,
+  KyxosSceneContract,
+} from '../../packages/scene-contract/src/index';
+import { createEmptySceneContract } from '../../packages/scene-contract/src/index';
 import { installEditorSceneModeExtension } from '../../packages/viewer/src/editorSceneMode';
 
 class FakeCanvas {
@@ -20,8 +22,39 @@ class FakeCanvas {
   }
 }
 
+class FakeRoot {
+  children: FakeObject[] = [];
+
+  add(child: FakeObject): void {
+    child.parent = this;
+    this.children.push(child);
+  }
+
+  traverse(callback: (object: FakeObject) => void): void {
+    for (const child of this.children) callback(child);
+  }
+
+  updateMatrixWorld(): void {}
+}
+
+class FakeObject {
+  parent: FakeRoot | null = null;
+  geometry = { dispose: vi.fn() };
+  material = { dispose: vi.fn() };
+
+  removeFromParent(): void {
+    if (!this.parent) return;
+    this.parent.children = this.parent.children.filter((child) => child !== this);
+    this.parent = null;
+  }
+
+  traverse(callback: (object: FakeObject) => void): void {
+    callback(this);
+  }
+}
+
 class FakeViewer extends EventTarget {
-  modelRoot = new Group();
+  modelRoot = new FakeRoot();
   canvas = new FakeCanvas() as unknown as HTMLCanvasElement;
   animateScene = vi.fn();
   animationEnabled = true;
@@ -36,12 +69,14 @@ const resolver: AssetResolver = {
   resolve: async () => 'blob:test',
 };
 
-installEditorSceneModeExtension(FakeViewer as unknown as typeof import('../../packages/viewer/src/KyxosViewer').KyxosViewer);
+installEditorSceneModeExtension(
+  FakeViewer as unknown as typeof import('../../packages/viewer/src/KyxosViewer').KyxosViewer,
+);
 
 describe('Studio editor scene mode', () => {
   it('removes the procedural playground model for an empty project', async () => {
     const viewer = new FakeViewer();
-    viewer.modelRoot.add(new Mesh(new BoxGeometry(), new MeshBasicMaterial()));
+    viewer.modelRoot.add(new FakeObject());
 
     await viewer.loadScene(createEmptySceneContract('Empty'), resolver);
 
