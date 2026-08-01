@@ -41,6 +41,8 @@ class FakeObject {
   parent: FakeRoot | null = null;
   geometry = { dispose: vi.fn() };
   material = { dispose: vi.fn() };
+  isLight = false;
+  userData: Record<string, unknown> = {};
 
   removeFromParent(): void {
     if (!this.parent) return;
@@ -54,6 +56,7 @@ class FakeObject {
 }
 
 class FakeViewer extends EventTarget {
+  scene = new FakeRoot();
   modelRoot = new FakeRoot();
   canvas = new FakeCanvas() as unknown as HTMLCanvasElement;
   animateScene = vi.fn();
@@ -74,13 +77,23 @@ installEditorSceneModeExtension(
 );
 
 describe('Studio editor scene mode', () => {
-  it('removes the procedural playground model for an empty project', async () => {
+  it('removes procedural models and unmanaged Playground lights', async () => {
     const viewer = new FakeViewer();
     viewer.modelRoot.add(new FakeObject());
+
+    const playgroundLight = new FakeObject();
+    playgroundLight.isLight = true;
+    viewer.scene.add(playgroundLight);
+
+    const managedContractLight = new FakeObject();
+    managedContractLight.isLight = true;
+    managedContractLight.userData.kyxosManagedLight = 'contract-light';
+    viewer.scene.add(managedContractLight);
 
     await viewer.loadScene(createEmptySceneContract('Empty'), resolver);
 
     expect(viewer.modelRoot.children).toHaveLength(0);
+    expect(viewer.scene.children).toEqual([managedContractLight]);
     expect(viewer.animationEnabled).toBe(false);
     expect(viewer.canvas.hasAttribute('data-empty-scene')).toBe(true);
     expect(viewer.originalLoadCalls).toBe(1);
