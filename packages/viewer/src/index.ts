@@ -3,6 +3,7 @@ import './animationApi';
 import './lightingApi';
 import './capabilityApi';
 import './environmentApi';
+import './editorTransformControls';
 
 import { KyxosViewer } from './KyxosViewer';
 import { installEditorSceneModeExtension } from './editorSceneMode';
@@ -29,6 +30,11 @@ export {
   resolveScreenSpaceSSSSettings,
 } from './materials/screenSpaceSSS';
 export type { AnimationState, CameraState, PickResult } from './sceneTypes';
+export type {
+  EditorTransformMode,
+  EditorTransformSnap,
+  EditorTransformSpace,
+} from './editorTransformControls';
 export type {
   BackendName,
   BackendPreference,
