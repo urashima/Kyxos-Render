@@ -28,3 +28,14 @@ if (!patchState[patchKey]) {
 
   patchState[patchKey] = true;
 }
+
+// The Playground owns this visual layer. Load it after every structural module
+// and stylesheet so the Moss treatment wins without importing Studio, Public
+// Viewer or Embed implementation code.
+window.addEventListener(
+  'load',
+  () => {
+    void import('./theme-entry');
+  },
+  { once: true },
+);
