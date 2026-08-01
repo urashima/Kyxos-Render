@@ -21,7 +21,11 @@ test('Kyxos Studio edits, previews and publishes immutable animated releases', a
 
   page.once('dialog', async (dialog) => dialog.accept('Studio Acceptance'));
   await page.getByRole('button', { name: 'New project' }).click();
-  await expect(page.locator('#studio-canvas')).toBeVisible();
+  const studioCanvas = page.locator('#studio-canvas');
+  await expect(studioCanvas).toBeVisible();
+  await expect(studioCanvas).toHaveAttribute('data-empty-scene', '');
+  await expect(page.locator('.kx-empty-scene')).toBeVisible();
+  await expect(page.locator('.hierarchy-row')).toHaveCount(0);
 
   await page.locator('input[type=file]').setInputFiles({
     name: 'fixture-animated-triangle.glb',
@@ -29,6 +33,8 @@ test('Kyxos Studio edits, previews and publishes immutable animated releases', a
     buffer: Buffer.from(createAnimatedTriangleGlb()),
   });
   await expect(page.getByText(/Import complete/)).toBeVisible({ timeout: 60_000 });
+  await expect(studioCanvas).not.toHaveAttribute('data-empty-scene', '');
+  await expect(page.locator('.kx-empty-scene')).toBeHidden();
   await expect(
     page.locator('.hierarchy-row', { hasText: 'Animated Triangle' }),
   ).toBeVisible();
@@ -72,6 +78,7 @@ test('Kyxos Studio edits, previews and publishes immutable animated releases', a
   await page.reload();
   await expect(page.getByText('Projects', { exact: true })).toBeVisible();
   await page.locator('.project-card', { hasText: 'Studio Acceptance' }).click();
+  await expect(page.locator('#studio-canvas')).not.toHaveAttribute('data-empty-scene', '');
   await page.locator('.hierarchy-row', { hasText: 'Animated Triangle' }).click();
   await expect(page.locator('input[aria-label="position x"]')).toHaveValue(
     String(v1Position),
