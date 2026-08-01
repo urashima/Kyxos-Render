@@ -15,7 +15,7 @@ function selectedMaterialNode(session: ProjectSession) {
 }
 
 function chooseFirstMaterialNode(session: ProjectSession): void {
-  if (selectedMaterialNode(session)) return;
+  if (session.selection.selected.length > 0) return;
   const first = session.document.value.nodes.find((node) => node.materialSlots?.length);
   if (first) session.selection.select([first.id]);
 }
