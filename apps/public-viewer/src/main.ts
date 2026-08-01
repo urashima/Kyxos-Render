@@ -5,11 +5,16 @@ import {
   type AssetManifest,
   type ReleaseRecord,
 } from '@kyxos/api-client';
+import { createEmptySceneContract } from '@kyxos/scene-contract';
 import { migrateSceneContract } from '@kyxos/scene-migrations';
 import { KyxosViewer } from '@kyxos/viewer';
 
 const app = document.querySelector<HTMLElement>('#app')!;
 const params = new URLSearchParams(location.search);
+const routeSlug = (() => {
+  const match = location.pathname.match(/\/view\/([^/]+)/);
+  return match ? decodeURIComponent(match[1]) : null;
+})();
 const embed = location.pathname.includes('/embed') || params.get('ui') === '0';
 const publicFunctionUrl = import.meta.env.VITE_KYXOS_PUBLIC_FUNCTION_URL as string | undefined;
 const client = createApiClient({
@@ -54,13 +59,41 @@ function control(label: string, action: () => void): HTMLButtonElement {
   return node;
 }
 
+function createPublicUiFixture(): { release: ReleaseRecord; manifest: AssetManifest } {
+  const scene = createEmptySceneContract('Kyxos Public Viewer UI Fixture');
+  const timestamp = '2026-08-01T00:00:00.000Z';
+  scene.id = 'kyxos-public-ui-fixture';
+  scene.metadata.createdAt = timestamp;
+  scene.metadata.updatedAt = timestamp;
+  scene.environment.backgroundColor = '#596153';
+  scene.environment.backgroundIntensity = 0.85;
+  scene.renderSettings.backend = 'auto';
+  scene.renderSettings.qualityPreset = 'high';
+  return {
+    release: {
+      id: 'ui-fixture-v1',
+      projectId: 'ui-fixture',
+      versionNumber: 1,
+      sceneSnapshot: scene,
+      sceneDigest: 'ui-fixture-v1',
+      slug: 'ui-fixture',
+      createdAt: timestamp,
+      isCurrent: true,
+    },
+    manifest: { assets: {} },
+  };
+}
+
 async function resolvePublishedScene(): Promise<{
   release: ReleaseRecord;
   manifest: AssetManifest;
   allowedEmbedOrigins: string[];
 }> {
   const versionId = params.get('release');
-  const slug = params.get('slug');
+  const slug = params.get('slug') ?? routeSlug;
+  if (slug === 'ui-fixture') {
+    return { ...createPublicUiFixture(), allowedEmbedOrigins: [] };
+  }
   if (!versionId && !slug) throw new Error('A published release or public slug is required.');
 
   if (publicFunctionUrl) {
