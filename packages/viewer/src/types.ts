@@ -18,7 +18,13 @@ export type DebugView =
   | 'diffuseColor'
   | 'metalness'
   | 'roughness'
-  | 'emissive';
+  | 'emissive'
+  | 'sssMask'
+  | 'sssThickness'
+  | 'sssStochastic'
+  | 'sssTemporal'
+  | 'sssDiffusion'
+  | 'sssTranslucency';
 
 export type EffectName =
   | 'traa'
@@ -82,6 +88,42 @@ export interface MaterialTextureInputs {
   metalness?: TextureInput;
   ao?: TextureInput;
   emissive?: TextureInput;
+}
+
+export type ScreenSpaceSSSQuality = 'low' | 'medium' | 'high';
+
+/**
+ * Deferred, material-selective screen-space subsurface scattering controls.
+ * `materialNames` matches mesh or material names; null/empty selects every
+ * eligible non-metal PBR material unless userData.kyxosSSS is explicitly false.
+ */
+export interface ScreenSpaceSSSSettings {
+  enabled: boolean;
+  color: string;
+  strength: number;
+  radius: number;
+  falloff: [number, number, number];
+  thickness: number;
+  depthFalloff: number;
+  normalThreshold: number;
+  quality: ScreenSpaceSSSQuality;
+  resolutionScale: number;
+  temporalFiltering: boolean;
+  temporalMaxFrames: number;
+  temporalClamp: number;
+  temporalFlickerSuppression: number;
+  materialNames?: string[] | null;
+}
+
+export interface ScreenSpaceSSSStatus extends ScreenSpaceSSSSettings {
+  materialNames: string[] | null;
+  samplesPerFrame: number;
+  sampledPixelRatio: number;
+  effectiveTapsPerFullResolutionPixel: number;
+  temporalActive: boolean;
+  markedMaterials: number;
+  eligibleMaterials: number;
+  lastError: string | null;
 }
 
 export interface ViewerMetrics {

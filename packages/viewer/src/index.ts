@@ -4,8 +4,23 @@ import './lightingApi';
 import './capabilityApi';
 import './environmentApi';
 
-export { KyxosViewer } from './KyxosViewer';
+import { KyxosViewer } from './KyxosViewer';
+import { installScreenSpaceSSSExtension } from './materials/screenSpaceSSS';
+import { installScreenSpaceSSSDebugExtension } from './materials/screenSpaceSSSDebug';
+import { installSSSStudyModelExtension } from './scene/sssStudyModel';
+
+// Install the procedural study before the SSS load wrapper so loading the study
+// still restores and reapplies material masks through the normal Viewer API.
+installSSSStudyModelExtension(KyxosViewer);
+installScreenSpaceSSSExtension(KyxosViewer);
+installScreenSpaceSSSDebugExtension(KyxosViewer);
+
+export { KyxosViewer };
 export { createQualityPreset, enforceEffectRules, mergeEffectSettings } from './presets';
+export {
+  DEFAULT_SCREEN_SPACE_SSS_SETTINGS,
+  resolveScreenSpaceSSSSettings,
+} from './materials/screenSpaceSSS';
 export type { AnimationState, CameraState, PickResult } from './sceneTypes';
 export type {
   BackendName,
@@ -18,6 +33,9 @@ export type {
   KyxosViewerCreateOptions,
   MaterialTextureInputs,
   QualityPresetName,
+  ScreenSpaceSSSQuality,
+  ScreenSpaceSSSSettings,
+  ScreenSpaceSSSStatus,
   StressResult,
   StressTestName,
   TextureInput,

@@ -12,6 +12,7 @@ const products = {
 const playgroundRoutes = [
   'overview',
   'pbr',
+  'sss',
   'buffers',
   'aa',
   'traa',
