@@ -1,5 +1,5 @@
 import type { AssetResolver, KyxosSceneContract } from '@kyxos/scene-contract';
-import type { Group, Object3D } from 'three/webgpu';
+import type { Group, Object3D, Scene } from 'three/webgpu';
 
 import { KyxosViewer } from './KyxosViewer';
 import { disposeObject3D } from './utils/dispose';
@@ -11,6 +11,7 @@ type LoadScene = (
 ) => Promise<void>;
 
 interface ViewerInternals {
+  scene?: Scene;
   modelRoot?: Group;
   animateScene?: (elapsed: number, delta: number) => void;
   animationEnabled?: boolean;
@@ -28,29 +29,38 @@ function internals(viewer: KyxosViewer): ViewerInternals {
 function clearModelRoot(viewer: KyxosViewer): void {
   const internal = internals(viewer);
   const root = internal.modelRoot;
-  if (!root) return;
-
-  for (const child of [...root.children]) {
-    child.removeFromParent();
-    disposeObject3D(child as Object3D);
+  if (root) {
+    for (const child of [...root.children]) {
+      child.removeFromParent();
+      disposeObject3D(child as Object3D);
+    }
+    root.updateMatrixWorld(true);
   }
-  root.updateMatrixWorld(true);
 
-  // The default playground scene owns a procedural animation callback. Studio
+  // The default playground scene owns a procedural animation callback. Authored
   // scenes must be completely data-driven by the Scene Contract instead.
   internal.animateScene = () => undefined;
   internal.animationEnabled = false;
 }
 
+function clearUnmanagedPlaygroundLights(viewer: KyxosViewer): void {
+  const scene = internals(viewer).scene;
+  if (!scene) return;
+
+  // KyxosViewer intentionally starts with showcase lighting for Playground.
+  // Scene Contract lighting is added later by lightingApi and is marked with
+  // kyxosManagedLight. Remove only the unmanaged bootstrap lights so Studio and
+  // Public Viewer never render a hidden, non-editable second shadow/key light.
+  for (const child of [...scene.children]) {
+    const light = child as Object3D & { isLight?: boolean };
+    if (light.isLight && !light.userData.kyxosManagedLight) {
+      light.removeFromParent();
+    }
+  }
+}
+
 /**
- * Keeps the reusable KyxosViewer playground defaults out of authoring scenes.
- *
- * KyxosViewer intentionally boots with a procedural showcase so the standalone
- * playground is never blank. A new Studio project, however, has no model asset.
- * Before this extension the showcase remained inside modelRoot and looked like
- * project content. Clearing modelRoot before every Scene Contract load makes an
- * empty project genuinely empty and guarantees that an imported GLB is the only
- * editable model in the viewport.
+ * Keeps reusable Playground defaults out of authored Scene Contract content.
  */
 export function installEditorSceneModeExtension(ViewerClass: typeof KyxosViewer): void {
   const prototype = ViewerClass.prototype as unknown as ViewerPrototypeInternals;
@@ -66,6 +76,7 @@ export function installEditorSceneModeExtension(ViewerClass: typeof KyxosViewer)
     resolver: AssetResolver,
   ): Promise<void> {
     clearModelRoot(this);
+    clearUnmanagedPlaygroundLights(this);
     await originalLoadScene.call(this, scene, resolver);
 
     const hasModel = Object.values(scene.assets).some((asset) => asset.kind === 'model');
