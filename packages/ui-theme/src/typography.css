@@ -1,0 +1,30 @@
+html {
+  font-family: var(--kx-font-sans);
+  font-size: 14px;
+  color: var(--kx-text-primary);
+  color-scheme: dark;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+body,
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
+}
+
+.kx-mono,
+[data-kx-mono],
+.kx-performance,
+.kx-resource-id {
+  font-family: var(--kx-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+::selection {
+  color: var(--kx-accent-contrast);
+  background: var(--kx-accent);
+}

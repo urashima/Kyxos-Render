@@ -2,7 +2,13 @@ import type { Texture } from 'three/webgpu';
 
 export type BackendPreference = 'auto' | 'webgpu' | 'webgl2';
 export type BackendName = 'webgpu' | 'webgl2';
-export type QualityPresetName = 'low' | 'medium' | 'high' | 'cinematic' | 'capture';
+export type QualityPresetName =
+  | 'low'
+  | 'medium'
+  | 'high'
+  | 'cinematic'
+  | 'ultra'
+  | 'capture';
 export type DebugView =
   | 'final'
   | 'beauty'
@@ -90,12 +96,6 @@ export type ScreenSpaceSSSQuality = 'low' | 'medium' | 'high';
  * Deferred, material-selective screen-space subsurface scattering controls.
  * `materialNames` matches mesh or material names; null/empty selects every
  * eligible non-metal PBR material unless userData.kyxosSSS is explicitly false.
- *
- * Low/Medium/High evaluate 2/4/6 stochastic color taps per sampled pixel and
- * frame. `resolutionScale` reduces the stochastic beauty pass before the full-
- * resolution temporal resolve. Temporal reprojection accumulates those samples
- * into the published 5/7-tap target profiles while rejecting invalid history
- * with depth, normal and velocity.
  */
 export interface ScreenSpaceSSSSettings {
   enabled: boolean;
@@ -150,7 +150,7 @@ export interface CaptureOptions {
 export type StressTestName = 'resize' | 'toggle' | 'model' | 'environment';
 
 export interface StressResult {
-  name: string;
+  name: StressTestName;
   iterations: number;
   before: ViewerMetrics;
   after: ViewerMetrics;

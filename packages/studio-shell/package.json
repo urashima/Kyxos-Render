@@ -1,0 +1,19 @@
+{
+  "name": "@kyxos/studio-shell",
+  "version": "1.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@kyxos/shared-ui": "workspace:*",
+    "@kyxos/ui-components": "workspace:*",
+    "@kyxos/ui-icons": "workspace:*",
+    "@kyxos/ui-theme": "workspace:*",
+    "@playcanvas/observer": "1.7.1",
+    "@playcanvas/pcui": "6.1.4"
+  }
+}

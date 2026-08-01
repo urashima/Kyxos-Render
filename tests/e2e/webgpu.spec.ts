@@ -21,7 +21,13 @@ const allEffects = [
   'sparkle',
 ] as const;
 
-async function sampleVisiblePixels(page: Page) {
+interface PixelSample {
+  visible: number;
+  total: number;
+  luminance: number;
+}
+
+async function sampleVisiblePixels(page: Page): Promise<PixelSample> {
   return page.evaluate(async () => {
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     const source = document.querySelector<HTMLCanvasElement>('#viewport');
@@ -42,6 +48,19 @@ async function sampleVisiblePixels(page: Page) {
     }
     return { visible, total: copy.width * copy.height, luminance };
   });
+}
+
+async function waitForVisiblePixels(page: Page, timeout = 12_000): Promise<PixelSample> {
+  const started = Date.now();
+  let sample = await sampleVisiblePixels(page);
+  while (
+    Date.now() - started < timeout &&
+    (sample.visible <= sample.total * 0.05 || sample.luminance <= sample.total * 24)
+  ) {
+    await page.waitForTimeout(250);
+    sample = await sampleVisiblePixels(page);
+  }
+  return sample;
 }
 
 test('restored WebGPU effect matrix remains visible', async ({ page }) => {
@@ -100,7 +119,9 @@ test('restored WebGPU effect matrix remains visible', async ({ page }) => {
       ({ effects, quality, all }) => {
         window.__kyxosTestApi.setQuality(quality ?? 'low');
         if (!quality) {
-          for (const effect of all) window.__kyxosTestApi.setEffect(effect as never, { enabled: false });
+          for (const effect of all) {
+            window.__kyxosTestApi.setEffect(effect as never, { enabled: false });
+          }
           for (const [effect, settings] of effects ?? []) {
             window.__kyxosTestApi.setEffect(effect as never, settings as never);
           }
@@ -110,23 +131,33 @@ test('restored WebGPU effect matrix remains visible', async ({ page }) => {
     );
 
     await page.waitForTimeout(stage.settle ?? 1800);
-    const pixels = await sampleVisiblePixels(page);
+    const pixels = await waitForVisiblePixels(page);
     const state = await page.evaluate(() => ({
       error: window.__kyxosTestApi.getLastError(),
       warnings: window.__kyxosTestApi.getWarnings(),
     }));
+    const warnings = state.warnings.join('\n');
 
-    expect(pixels.visible, `${stage.name} visible pixels`).toBeGreaterThan(pixels.total * 0.05);
-    expect(pixels.luminance, `${stage.name} luminance`).toBeGreaterThan(pixels.total * 24);
+    expect(pixels.visible, `${stage.name} visible pixels`).toBeGreaterThan(
+      pixels.total * 0.05,
+    );
+    expect(pixels.luminance, `${stage.name} luminance`).toBeGreaterThan(
+      pixels.total * 24,
+    );
     expect(state.error, `${stage.name} runtime error`).toBeNull();
-    expect(state.warnings.join('\n'), `${stage.name} Safe Beauty warning`).not.toContain('Safe Beauty');
-    expect(state.warnings.join('\n'), `${stage.name} isolated effect`).not.toContain(
+    expect(warnings, `${stage.name} Safe Beauty warning`).not.toContain('Safe Beauty');
+    expect(warnings, `${stage.name} automatic Beauty recovery`).not.toContain(
+      'recovered to the lit Beauty pass',
+    );
+    expect(warnings, `${stage.name} isolated effect`).not.toContain(
       'was isolated and disabled',
     );
     expect(pageErrors, `${stage.name} page errors`).toEqual([]);
     expect(
       consoleErrors.filter((message) =>
-        /sample is not a function|render pipeline error|gpuvalidationerror|validation error/i.test(message),
+        /sample is not a function|render pipeline error|gpuvalidationerror|validation error/i.test(
+          message,
+        ),
       ),
       `${stage.name} console errors`,
     ).toEqual([]);

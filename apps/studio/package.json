@@ -1,0 +1,22 @@
+{
+  "name": "@kyxos/studio",
+  "version": "1.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@kyxos/api-client": "workspace:*",
+    "@kyxos/editor-core": "workspace:*",
+    "@kyxos/scene-contract": "workspace:*",
+    "@kyxos/shared-ui": "workspace:*",
+    "@kyxos/studio-shell": "workspace:*",
+    "@kyxos/ui-components": "workspace:*",
+    "@kyxos/ui-icons": "workspace:*",
+    "@kyxos/ui-theme": "workspace:*",
+    "@kyxos/viewer-adapter": "workspace:*"
+  }
+}

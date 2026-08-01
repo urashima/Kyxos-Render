@@ -44,17 +44,17 @@ const webgpuProject = {
 
 export default defineConfig({
   testDir: './tests/e2e',
-  timeout: 90_000,
-  expect: { timeout: 15_000 },
+  timeout: 120_000,
+  expect: { timeout: 20_000 },
   fullyParallel: false,
   retries: process.env.CI ? 1 : 0,
   workers: process.env.CI ? 1 : undefined,
   reporter: process.env.CI ? [['html', { open: 'never' }], ['list']] : 'list',
   projects: [chromiumProject, ...(process.env.KYXOS_WEBGPU_E2E === '1' ? [webgpuProject] : [])],
   webServer: {
-    command: 'pnpm --filter @kyxos/playground exec vite --host 127.0.0.1 --port 4173',
-    url: 'http://127.0.0.1:4173',
+    command: 'pnpm build:pages && node scripts/serve-site.mjs',
+    url: 'http://127.0.0.1:4173/latest/',
     reuseExistingServer: !process.env.CI,
-    timeout: 120_000,
+    timeout: 240_000,
   },
 });

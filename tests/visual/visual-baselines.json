@@ -1,0 +1,5 @@
+{
+  "studioViewport": { "minVisibleRatio": 0.02, "maxVisibleRatio": 0.99 },
+  "publishedWebgl2": { "minVisibleRatio": 0.02, "maxVisibleRatio": 0.99 },
+  "effects": ["traa", "ssgi", "ssr", "dof", "sparkle"]
+}

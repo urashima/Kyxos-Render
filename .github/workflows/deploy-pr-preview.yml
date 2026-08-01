@@ -19,14 +19,17 @@ jobs:
   deploy-preview:
     if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 45
     environment:
       name: preview-pr-${{ github.event.pull_request.number }}
-      url: https://urashima.github.io/Kyxos-Render/preview/pr-${{ github.event.pull_request.number }}/
+      url: https://urashima.github.io/Kyxos-Render/preview/pr-${{ github.event.pull_request.number }}/studio/
     env:
       PREVIEW_ROUTE: preview/pr-${{ github.event.pull_request.number }}
       PREVIEW_URL: https://urashima.github.io/Kyxos-Render/preview/pr-${{ github.event.pull_request.number }}/
-      STUDIO_URL: https://urashima.github.io/Kyxos-Render/studio/
+      STUDIO_URL: https://urashima.github.io/Kyxos-Render/preview/pr-${{ github.event.pull_request.number }}/studio/
+      UI_LAB_URL: https://urashima.github.io/Kyxos-Render/preview/pr-${{ github.event.pull_request.number }}/studio/ui-lab/
+      PUBLIC_URL: https://urashima.github.io/Kyxos-Render/preview/pr-${{ github.event.pull_request.number }}/view/ui-fixture/
+      STABLE_STUDIO_URL: https://urashima.github.io/Kyxos-Render/studio/
       STUDIO_LEGACY_URL: https://urashima.github.io/Kyxos-Render/preview/pr-12/studio/
     steps:
       - name: Checkout accepted main site
@@ -55,7 +58,7 @@ jobs:
           pnpm install --no-frozen-lockfile
           PAGES_BUILD=1 pnpm build:pages
 
-      - name: Build pull request preview
+      - name: Build pull request products
         working-directory: preview-src
         env:
           PAGES_BASE: /Kyxos-Render/${{ env.PREVIEW_ROUTE }}/
@@ -63,25 +66,31 @@ jobs:
           pnpm install --no-frozen-lockfile
           pnpm build
 
-      - name: Checkout preserved Kyxos Studio preview
+      - name: Checkout preserved Kyxos Studio
         uses: actions/checkout@v4
         with:
           ref: agent/kyxos-studio-playcanvas-editor-complete
           path: studio-preview-src
 
-      - name: Build preserved Kyxos Studio preview
+      - name: Build preserved Kyxos Studio
         working-directory: studio-preview-src
         run: |
           pnpm install --no-frozen-lockfile
           pnpm --filter @kyxos/studio build
 
-      - name: Compose accepted site, current PR and preserved Studio
+      - name: Compose accepted site and full product preview
         shell: bash
         run: |
           rm -rf combined-site
           cp -R main-src/site combined-site
           mkdir -p "combined-site/${PREVIEW_ROUTE}"
           cp -R preview-src/apps/playground/dist/. "combined-site/${PREVIEW_ROUTE}/"
+          rm -rf combined-site/studio combined-site/preview/pr-12/studio
+          mkdir -p combined-site/studio combined-site/preview/pr-12/studio
+          cp -R studio-preview-src/apps/studio/dist/. combined-site/studio/
+          cp -R studio-preview-src/apps/studio/dist/. combined-site/preview/pr-12/studio/
+          mkdir -p "combined-site/${PREVIEW_ROUTE}/view/ui-fixture"
+          cp -R preview-src/apps/public-viewer/dist/. "combined-site/${PREVIEW_ROUTE}/view/ui-fixture/"
           node <<'NODE'
           const { copyFile, mkdir } = require('node:fs/promises');
           const { resolve } = require('node:path');
@@ -102,22 +111,20 @@ jobs:
             process.exit(1);
           });
           NODE
-          rm -rf combined-site/studio combined-site/preview/pr-12/studio
-          mkdir -p combined-site/studio combined-site/preview/pr-12/studio
-          cp -R studio-preview-src/apps/studio/dist/. combined-site/studio/
-          cp -R studio-preview-src/apps/studio/dist/. combined-site/preview/pr-12/studio/
 
       - name: Verify preview artifact structure
         run: |
           test -f combined-site/latest/index.html
           test -f "combined-site/${PREVIEW_ROUTE}/index.html"
           test -f "combined-site/${PREVIEW_ROUTE}/sss/index.html"
-          test -f "combined-site/${PREVIEW_ROUTE}/ssgi/index.html"
-          test -f "combined-site/${PREVIEW_ROUTE}/full-stack/index.html"
+          test -f "combined-site/${PREVIEW_ROUTE}/studio/index.html"
+          test -f "combined-site/${PREVIEW_ROUTE}/studio/ui-lab/index.html"
+          test -f "combined-site/${PREVIEW_ROUTE}/view/ui-fixture/index.html"
           test -f combined-site/studio/index.html
           test -f combined-site/preview/pr-12/studio/index.html
           grep -R "/Kyxos-Render/${PREVIEW_ROUTE}/" "combined-site/${PREVIEW_ROUTE}/index.html"
-          grep -q "Kyxos Studio" combined-site/studio/index.html
+          grep -q "Kyxos Studio" "combined-site/${PREVIEW_ROUTE}/studio/index.html"
+          grep -q "Kyxos UI Lab" "combined-site/${PREVIEW_ROUTE}/studio/ui-lab/index.html"
 
       - uses: actions/upload-pages-artifact@v3
         with:
@@ -127,38 +134,43 @@ jobs:
         id: deployment
         uses: actions/deploy-pages@v4
 
-      - name: Verify deployed preview and Studio online
+      - name: Verify deployed product routes online
         shell: bash
         run: |
-          rm -f preview-index.html preview-sss.html studio-index.html studio-legacy-index.html
+          rm -f preview-index.html preview-sss.html studio-index.html ui-lab-index.html public-index.html
           for attempt in $(seq 1 18); do
             if curl --fail --silent --show-error --location "${PREVIEW_URL}" --output preview-index.html && \
                curl --fail --silent --show-error --location "${PREVIEW_URL}sss/" --output preview-sss.html && \
                curl --fail --silent --show-error --location "${STUDIO_URL}" --output studio-index.html && \
-               curl --fail --silent --show-error --location "${STUDIO_LEGACY_URL}" --output studio-legacy-index.html; then
+               curl --fail --silent --show-error --location "${UI_LAB_URL}" --output ui-lab-index.html && \
+               curl --fail --silent --show-error --location "${PUBLIC_URL}" --output public-index.html; then
               break
             fi
-            rm -f preview-index.html preview-sss.html studio-index.html studio-legacy-index.html
+            rm -f preview-index.html preview-sss.html studio-index.html ui-lab-index.html public-index.html
             sleep 5
           done
           test -s preview-index.html
           test -s preview-sss.html
           test -s studio-index.html
-          test -s studio-legacy-index.html
+          test -s ui-lab-index.html
+          test -s public-index.html
           grep -q "Kyxos WebGPU Realism Lab" preview-index.html
           grep -q "Kyxos WebGPU Realism Lab" preview-sss.html
           grep -q "Kyxos Studio" studio-index.html
-          grep -q "Kyxos Studio" studio-legacy-index.html
+          grep -q "Kyxos UI Lab" ui-lab-index.html
+          grep -q "Kyxos Public Viewer" public-index.html
 
-      - name: Publish preview link on pull request
+      - name: Publish preview links on pull request
         uses: actions/github-script@v7
         env:
           PREVIEW_URL: ${{ env.PREVIEW_URL }}
           STUDIO_URL: ${{ env.STUDIO_URL }}
+          UI_LAB_URL: ${{ env.UI_LAB_URL }}
+          PUBLIC_URL: ${{ env.PUBLIC_URL }}
         with:
           script: |
             const marker = '<!-- kyxos-pr-preview -->';
-            const body = `${marker}\n### Online preview\n\n${process.env.PREVIEW_URL}\n\nStable Studio: ${process.env.STUDIO_URL}\n\nUpdated from commit \`${context.payload.pull_request.head.sha}\`. Current PR, SSS and preserved Studio routes passed online smoke checks.`;
+            const body = `${marker}\n### Online preview\n\n- Studio: ${process.env.STUDIO_URL}\n- UI Lab: ${process.env.UI_LAB_URL}\n- Public Viewer fixture: ${process.env.PUBLIC_URL}\n- Viewer Playground: ${process.env.PREVIEW_URL}\n\nUpdated from commit \`${context.payload.pull_request.head.sha}\`. All product entry points passed online HTTP smoke checks.`;
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
