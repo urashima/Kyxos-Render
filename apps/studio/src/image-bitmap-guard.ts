@@ -1,9 +1,22 @@
+import { DiagnosticConsole, type ConsoleEntry, type ConsoleLevel } from '@kyxos/editor-core';
+
 const installed = Symbol.for('kyxos.imageBitmapGuard.installed');
+const diagnosticGuardInstalled = Symbol.for('kyxos.thumbnailDiagnosticGuard.installed');
 const IMAGE_BITMAP_TIMEOUT_MS = 5_000;
 const skippedThumbnailType = 'application/x-kyxos-thumbnail-skip';
 
 type GuardGlobal = typeof globalThis & {
   [installed]?: boolean;
+};
+
+type DiagnosticPrototype = {
+  log(
+    level: ConsoleLevel,
+    message: string,
+    data?: unknown,
+    source?: string,
+  ): ConsoleEntry;
+  [diagnosticGuardInstalled]?: boolean;
 };
 
 function hasActiveImportTransaction(): boolean {
@@ -17,6 +30,40 @@ function hasActiveImportTransaction(): boolean {
 function isSkippedThumbnailSource(source: unknown): boolean {
   return source instanceof Blob && source.type === skippedThumbnailType;
 }
+
+function installThumbnailDiagnosticGuard(): void {
+  const prototype = DiagnosticConsole.prototype as DiagnosticPrototype;
+  if (prototype[diagnosticGuardInstalled]) return;
+  const originalLog = prototype.log;
+  prototype.log = function guardedDiagnosticLog(
+    level,
+    message,
+    data,
+    source,
+  ): ConsoleEntry {
+    // A deferred import thumbnail is expected control flow, not a Studio warning.
+    // Do not dispatch it into the synchronous notification pipeline: the import
+    // transaction must be allowed to publish its completion notice immediately.
+    if (source === 'assets' && message.startsWith('Could not generate a thumbnail')) {
+      return {
+        id: crypto.randomUUID(),
+        level: 'debug',
+        message,
+        data: data == null ? undefined : String(
+          typeof data === 'object' && data && 'message' in data
+            ? (data as { message?: unknown }).message
+            : data,
+        ),
+        source,
+        timestamp: Date.now(),
+      };
+    }
+    return originalLog.call(this, level, message, data, source);
+  };
+  prototype[diagnosticGuardInstalled] = true;
+}
+
+installThumbnailDiagnosticGuard();
 
 const guardGlobal = globalThis as GuardGlobal;
 const originalCreateImageBitmap = globalThis.createImageBitmap?.bind(globalThis);
