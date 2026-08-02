@@ -99,6 +99,13 @@ function completionMessage(state: unknown): string {
   return `Import complete · ${nodes} nodes · ${materials} materials · ${animations} animations`;
 }
 
+function clearCoreImportCompletion(): void {
+  if (typeof document === 'undefined') return;
+  delete document.documentElement.dataset.importCoreComplete;
+  delete document.documentElement.dataset.importCompleteMessage;
+  delete document.documentElement.dataset.importCompletedAt;
+}
+
 function commitCoreImportCompletion(state: unknown): void {
   if (typeof document === 'undefined') return;
   const message = completionMessage(state);
@@ -118,6 +125,7 @@ export async function runImportJob<TState>(
   state: TState,
   steps: readonly ImportJobStep<TState>[],
 ): Promise<void> {
+  clearCoreImportCompletion();
   let lastProgress = 0;
   for (const step of steps) {
     throwIfImportAborted(context.signal);
