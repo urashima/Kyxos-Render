@@ -1,3 +1,5 @@
+export {};
+
 type EditorViewPreset =
   | 'perspective'
   | 'front'
