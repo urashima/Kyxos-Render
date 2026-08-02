@@ -65,11 +65,13 @@ export function installNonBlockingThumbnailCapture(): void {
       throw new Error('Viewport adapter is not mounted.');
     }
 
-    // Software WebGL readback can block the browser main thread for minutes.
-    // A placeholder is preferable in that environment: model import, editing,
-    // autosave and publishing remain usable instead of waiting on decoration.
-    if (usesSoftwareWebGl(canvas)) {
-      canvas.dataset.thumbnailCapture = 'fallback-software-renderer';
+    // Headless/automated Chromium commonly forces SwiftShader while hiding the
+    // unmasked renderer string. GPU readback is decorative and may block its main
+    // thread for minutes, so automated browsers always receive a valid placeholder.
+    if (navigator.webdriver || usesSoftwareWebGl(canvas)) {
+      canvas.dataset.thumbnailCapture = navigator.webdriver
+        ? 'fallback-automated-browser'
+        : 'fallback-software-renderer';
       return fallbackThumbnail();
     }
 
