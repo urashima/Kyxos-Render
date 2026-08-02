@@ -7,6 +7,8 @@ import './transformPivot';
 import './viewportHelpers';
 import { installEditorViewportCommandBridge } from './editorViewportCommandBridge';
 import { installNativeTransformBridge } from './nativeTransformBridge';
+import { installNonBlockingThumbnailCapture } from './thumbnailCapture';
 
 installNativeTransformBridge();
+installNonBlockingThumbnailCapture();
 installEditorViewportCommandBridge();
