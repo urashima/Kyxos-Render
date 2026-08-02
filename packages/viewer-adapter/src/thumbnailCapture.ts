@@ -74,12 +74,14 @@ export function installNonBlockingThumbnailCapture(): void {
     }
 
     // A GLB import is committed when the SceneDocument and Viewer finish loading.
-    // The caller already treats thumbnail failures as non-fatal, so abort this
-    // optional step instead of handing any Blob to createImageBitmap while the
-    // import transaction is still active.
+    // The caller already treats thumbnail failures as non-fatal. Use a plain,
+    // structured-clone-safe value because DiagnosticConsole persists the reason.
     if (hasActiveImportTransaction()) {
       canvas.dataset.thumbnailCapture = 'aborted-active-import';
-      throw new DOMException('Thumbnail generation is deferred until after import.', 'AbortError');
+      throw {
+        name: 'ThumbnailDeferred',
+        message: 'Thumbnail generation is deferred until after import.',
+      };
     }
 
     // Automated/software renderers can block GPU readback for minutes. Publishing
