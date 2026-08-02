@@ -1,3 +1,5 @@
+import './gltf-node-inspector-bootstrap';
+
 export interface GlbWorkerResponse<T = unknown> {
   ok: boolean;
   result?: T;
