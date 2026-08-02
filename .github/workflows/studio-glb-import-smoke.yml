@@ -14,14 +14,61 @@ on:
       - '.github/workflows/studio-glb-import-smoke.yml'
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: studio-glb-import-smoke-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
+  migrate-worker-client:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout pull request branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+
+      - name: Replace inline Worker promise
+        shell: bash
+        run: |
+          if grep -q "parseGlbInWorker" apps/studio/src/main.ts; then
+            echo "Explicit GLB worker client is already installed."
+            exit 0
+          fi
+          python <<'PY'
+          from pathlib import Path
+
+          path = Path('apps/studio/src/main.ts')
+          text = path.read_text()
+          anchor = "import {\n  runImportJob,\n  scheduleImportPostprocess,\n  throwIfImportAborted,\n} from './asset-import-runtime';"
+          replacement = anchor + "\nimport { parseGlbInWorker } from './glb-worker-client';"
+          if anchor not in text:
+              raise SystemExit('Import runtime anchor not found.')
+          text = text.replace(anchor, replacement, 1)
+          old_call = "current.report = await parseGlb(file);"
+          new_call = "current.report = await parseGlbInWorker(file, { signal });"
+          if old_call not in text:
+              raise SystemExit('Inline GLB parser call not found.')
+          text = text.replace(old_call, new_call, 1)
+          start_marker = "  async function parseGlb(file: File): Promise<any> {"
+          end_marker = "  function contractFromGlb("
+          start = text.index(start_marker)
+          end = text.index(end_marker, start)
+          text = text[:start] + text[end:]
+          path.write_text(text)
+          PY
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/studio/src/main.ts
+          git diff --cached --check
+          git commit -m "refactor GLB worker message lifecycle"
+          git push origin HEAD:${{ github.head_ref }}
+
   glb-import:
+    needs: migrate-worker-client
     runs-on: ubuntu-24.04
     timeout-minutes: 12
     steps:
