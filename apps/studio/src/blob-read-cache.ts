@@ -4,6 +4,7 @@ const originalFileArrayBuffer = File.prototype.arrayBuffer;
 const originalCreateObjectUrl = URL.createObjectURL.bind(URL);
 const originalRevokeObjectUrl = URL.revokeObjectURL.bind(URL);
 const objectUrlBlobRegistryKey = Symbol.for('kyxos.objectUrlBlobRegistry');
+const localBlobBytesRegistryKey = Symbol.for('kyxos.localBlobBytesRegistry');
 const pickerFiles = new WeakSet<File>();
 const recentPickerFiles: Array<{ file: File; capturedAt: number }> = [];
 const cachedReads = new WeakMap<File, Promise<ArrayBuffer>>();
@@ -12,12 +13,27 @@ const PICKER_SOURCE_TTL_MS = 60_000;
 
 type ObjectUrlRegistryGlobal = typeof globalThis & {
   [objectUrlBlobRegistryKey]?: Map<string, Blob>;
+  [localBlobBytesRegistryKey]?: WeakMap<Blob, Uint8Array>;
 };
 
 const registryGlobal = globalThis as ObjectUrlRegistryGlobal;
 const objectUrlBlobRegistry =
   registryGlobal[objectUrlBlobRegistryKey] ?? new Map<string, Blob>();
+const localBlobBytesRegistry =
+  registryGlobal[localBlobBytesRegistryKey] ?? new WeakMap<Blob, Uint8Array>();
 registryGlobal[objectUrlBlobRegistryKey] = objectUrlBlobRegistry;
+registryGlobal[localBlobBytesRegistryKey] = localBlobBytesRegistry;
+
+/** Register immutable source bytes for generated or repacked local assets. */
+export function registerLocalBlobBytes(blob: Blob, bytes: Uint8Array): void {
+  localBlobBytesRegistry.set(blob, bytes.slice());
+}
+
+function registeredBytes(blob: Blob): ArrayBuffer | null {
+  const bytes = localBlobBytesRegistry.get(blob);
+  if (!bytes) return null;
+  return bytes.slice().buffer;
+}
 
 function pruneRecentPickerFiles(now = Date.now()): void {
   while (
@@ -30,6 +46,10 @@ function pruneRecentPickerFiles(now = Date.now()): void {
 }
 
 function sourceBlobForObjectUrl(blob: Blob): Blob {
+  // Generated GLBs own an exact byte snapshot. Never replace them with a picker
+  // file selected only by size/type heuristics.
+  if (localBlobBytesRegistry.has(blob)) return blob;
+
   const now = Date.now();
   pruneRecentPickerFiles(now);
   for (let index = recentPickerFiles.length - 1; index >= 0; index -= 1) {
@@ -41,17 +61,15 @@ function sourceBlobForObjectUrl(blob: Blob): Blob {
   return blob;
 }
 
-// Keep a direct reference to every local Blob behind an object URL. During the
-// active import, prefer the original picker File over the IndexedDB clone with
-// the same size/type. Chromium can leave reads of cloned Blob data pending even
-// when the generated object URL itself is valid.
 URL.createObjectURL = function createTrackedObjectUrl(blob: Blob | MediaSource): string {
   const url = originalCreateObjectUrl(blob);
   if (blob instanceof Blob) {
     const source = sourceBlobForObjectUrl(blob);
     objectUrlBlobRegistry.set(url, source);
     document.documentElement.dataset.localBlobSource =
-      source instanceof File ? 'picker-file' : 'persisted-blob';
+      localBlobBytesRegistry.has(source)
+        ? 'registered-bytes'
+        : source instanceof File ? 'picker-file' : 'persisted-blob';
   }
   return url;
 };
@@ -61,9 +79,6 @@ URL.revokeObjectURL = function revokeTrackedObjectUrl(url: string): void {
   originalRevokeObjectUrl(url);
 };
 
-// Capture before the input's own change handler starts the async import. The
-// same File is hashed and parsed, and remains available as the preferred source
-// when the local asset manifest creates an object URL from its IndexedDB clone.
 document.addEventListener(
   'change',
   (event) => {
@@ -80,9 +95,10 @@ document.addEventListener(
 );
 
 function readFile(file: File): Promise<ArrayBuffer> {
-  if (typeof FileReader === 'undefined') {
-    return originalFileArrayBuffer.call(file);
-  }
+  const exact = registeredBytes(file);
+  if (exact) return Promise.resolve(exact);
+  if (typeof FileReader === 'undefined') return originalFileArrayBuffer.call(file);
+
   return new Promise<ArrayBuffer>((resolve, reject) => {
     const reader = new FileReader();
     const timeout = window.setTimeout(() => {
@@ -112,12 +128,9 @@ function readFile(file: File): Promise<ArrayBuffer> {
   });
 }
 
-/**
- * Studio hashes and parses the same picker-owned File. Cache that one source
- * read and return a fresh copy to each consumer so transferring the parser copy
- * cannot detach the cached bytes.
- */
 File.prototype.arrayBuffer = function guardedFileArrayBuffer(): Promise<ArrayBuffer> {
+  const exact = registeredBytes(this);
+  if (exact) return Promise.resolve(exact);
   if (!pickerFiles.has(this)) return originalFileArrayBuffer.call(this);
   let cached = cachedReads.get(this);
   if (!cached) {
