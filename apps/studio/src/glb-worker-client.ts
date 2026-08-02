@@ -23,6 +23,10 @@ export interface ParseGlbInWorkerOptions {
   workerFactory?: () => Worker;
 }
 
+interface GlbWorkerGlobal {
+  __kyxosLastGlbImportReport?: unknown;
+}
+
 function emitLifecycle(detail: GlbWorkerLifecycleDetail): void {
   if (typeof document !== 'undefined') {
     document.documentElement.dataset.glbWorkerStage = detail.stage;
@@ -42,16 +46,6 @@ function abortError(signal: AbortSignal): Error {
     : new DOMException('GLB parsing was cancelled.', 'AbortError');
 }
 
-/**
- * Parse one GLB through an isolated module worker.
- *
- * The previous implementation assigned `worker.onmessage` and synchronously
- * terminated the worker before resolving its promise. Chromium software
- * rendering runs could deliver the native message while leaving that promise
- * pending. This client uses explicit event listeners, settles first, and only
- * terminates in a later microtask. It also owns timeout, cancellation and
- * message-clone failures instead of relying on global Worker monkeypatches.
- */
 export async function parseGlbInWorker<T = unknown>(
   file: File,
   options: ParseGlbInWorkerOptions = {},
@@ -100,6 +94,7 @@ export async function parseGlbInWorker<T = unknown>(
     const onMessage = (event: MessageEvent<GlbWorkerResponse<T>>): void => {
       const response = event.data;
       if (response?.ok && response.result !== undefined) {
+        (globalThis as typeof globalThis & GlbWorkerGlobal).__kyxosLastGlbImportReport = response.result;
         settle('complete', () => resolve(response.result as T));
         return;
       }
