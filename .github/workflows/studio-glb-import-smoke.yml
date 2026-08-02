@@ -52,11 +52,6 @@ jobs:
           if old_call not in text:
               raise SystemExit('Inline GLB parser call not found.')
           text = text.replace(old_call, new_call, 1)
-          start_marker = "  async function parseGlb(file: File): Promise<any> {"
-          end_marker = "  function contractFromGlb("
-          start = text.index(start_marker)
-          end = text.index(end_marker, start)
-          text = text[:start] + text[end:]
           path.write_text(text)
           PY
 
