@@ -71,15 +71,24 @@ function createServices(api: StudioApi, diagnosticConsole: DiagnosticConsole): A
         disabled: command.enabled?.() === false,
         run: () => api.runCommand(command.id),
       })),
-      ...scene.nodes.map((node) => ({
-        id: node.id,
-        kind: 'entity' as const,
-        label: node.name,
-        description: `${node.type ?? 'entity'} · ${node.children.length} children`,
-        keywords: [node.id, node.type ?? '', node.meshAssetId ?? '', ...(node.materialSlots ?? [])],
-        disabled: Boolean(node.locked),
-        run: () => api.setSelection([node.id]),
-      })),
+      ...scene.nodes.map((node) => {
+        const nodeKind = node.cameraId
+          ? 'camera'
+          : node.lightId
+            ? 'light'
+            : node.meshAssetId
+              ? 'mesh'
+              : 'entity';
+        return {
+          id: node.id,
+          kind: 'entity' as const,
+          label: node.name,
+          description: `${nodeKind} · ${node.children.length} children`,
+          keywords: [node.id, nodeKind, node.meshAssetId ?? '', ...(node.materialSlots ?? [])],
+          disabled: Boolean(node.locked),
+          run: () => api.setSelection([node.id]),
+        };
+      }),
       ...Object.values(scene.assets).map((asset) => ({
         id: asset.id,
         kind: 'asset' as const,
@@ -90,7 +99,7 @@ function createServices(api: StudioApi, diagnosticConsole: DiagnosticConsole): A
           notifications.push({
             severity: 'info',
             title: `Asset · ${asset.name ?? asset.id}`,
-            message: `${asset.kind} · ${formatBytes(asset.byteSize)} · ${asset.mimeType}`,
+            message: `${asset.kind} · ${formatBytes(asset.byteSize ?? 0)} · ${asset.mimeType}`,
             source: 'global-search',
             details: asset,
             persistent: false,
