@@ -38,7 +38,7 @@ test('Studio Tools exposes search, persisted settings, notifications, help and i
     name: 'one-pixel.png',
     mimeType: 'image/png',
     buffer: Buffer.from(
-      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZlZ8AAAAASUVORK5CYII=',
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==',
       'base64',
     ),
   });
