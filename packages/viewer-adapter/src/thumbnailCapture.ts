@@ -31,9 +31,9 @@ function fallbackThumbnail(): Blob {
 }
 
 function skippedThumbnail(): Blob {
-  // Studio's optional thumbnail normalizer will reject this immediately and
-  // continue the import. A valid image Blob can make createImageBitmap wait
-  // indefinitely under SwiftShader, so do not hand one to that decoder.
+  // Studio's optional thumbnail normalizer rejects this immediately and follows
+  // its existing non-fatal path. A valid image Blob can make createImageBitmap
+  // wait indefinitely under software WebGL.
   return new Blob([], { type: 'application/x-kyxos-thumbnail-skip' });
 }
 
@@ -59,6 +59,14 @@ function usesSoftwareWebGl(canvas: HTMLCanvasElement): boolean {
   }
 }
 
+function hasActiveImportTransaction(): boolean {
+  return Boolean(
+    document.querySelector(
+      '.import-task.uploading, .import-task.processing, .import-task.parsing, .import-task.importing',
+    ),
+  );
+}
+
 export function installNonBlockingThumbnailCapture(): void {
   const prototype = BrowserKyxosViewportAdapter.prototype as unknown as AdapterPrototype;
   if (prototype[installed]) return;
@@ -72,9 +80,17 @@ export function installNonBlockingThumbnailCapture(): void {
       throw new Error('Viewport adapter is not mounted.');
     }
 
-    // Headless/automated Chromium commonly forces SwiftShader while hiding the
-    // unmasked renderer string. Skip both GPU readback and image decoding there;
-    // thumbnails are decorative and must not block model import or publishing.
+    // Model import is committed once the SceneDocument and Viewer finish loading.
+    // Thumbnail generation is optional decoration and must never sit on that
+    // transaction's critical path. Publishing, which has no active import task,
+    // continues to capture the real viewport.
+    if (hasActiveImportTransaction()) {
+      canvas.dataset.thumbnailCapture = 'skipped-active-import';
+      return skippedThumbnail();
+    }
+
+    // Automated/software renderers can hide their renderer identity and block GPU
+    // readback for minutes. Skip both readback and image decoding in that case.
     if (navigator.webdriver || usesSoftwareWebGl(canvas)) {
       canvas.dataset.thumbnailCapture = navigator.webdriver
         ? 'skipped-automated-browser'
@@ -82,17 +98,13 @@ export function installNonBlockingThumbnailCapture(): void {
       return skippedThumbnail();
     }
 
-    // Scene operations are normally already complete when a thumbnail is
-    // requested. Give a late edit a short grace period, but never let an
-    // unrelated queue entry block import or publishing indefinitely.
     await Promise.race([
       internal.operationQueue.catch(() => undefined),
       delay(QUEUE_GRACE_MS),
     ]);
 
     // The Viewer animation loop has already produced the visible frame. Read the
-    // composited canvas directly instead of calling viewer.capture(), which forces
-    // a synchronous RenderPipeline render before its Promise exists.
+    // composited canvas directly instead of forcing another RenderPipeline render.
     return new Promise<Blob>((resolve) => {
       let settled = false;
       const finish = (blob?: Blob | null) => {
