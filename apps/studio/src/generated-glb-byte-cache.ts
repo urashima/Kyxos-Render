@@ -1,4 +1,4 @@
-import { registerLocalBlobBytes } from './blob-read-cache';
+import { registerLocalBlobBytes } from './local-blob-byte-registry';
 
 const installed = Symbol.for('kyxos.generatedGlbByteCache.installed');
 const cachedReads = new WeakMap<File, Promise<ArrayBuffer>>();
