@@ -13,6 +13,14 @@ type ObjectUrlRegistryGlobal = typeof globalThis & {
   [objectUrlBlobRegistryKey]?: Map<string, Blob>;
 };
 
+function markLoadStage(stage: string): void {
+  if (typeof document !== 'undefined') {
+    document.documentElement.dataset.gltfLoadStage = stage;
+    const canvas = document.querySelector<HTMLCanvasElement>('#studio-canvas');
+    if (canvas) canvas.dataset.gltfLoadStage = stage;
+  }
+}
+
 function registeredObjectUrlBlob(url: string): Blob | null {
   const registry = (globalThis as ObjectUrlRegistryGlobal)[objectUrlBlobRegistryKey];
   return registry?.get(url) ?? null;
@@ -23,7 +31,11 @@ async function loadRegisteredBlob(
   onProgress?: ProgressCallback,
 ): Promise<ArrayBuffer | null> {
   const blob = registeredObjectUrlBlob(url);
-  if (!blob) return null;
+  if (!blob) {
+    markLoadStage('registered-blob-miss');
+    return null;
+  }
+  markLoadStage(blob instanceof File ? 'picker-file-read-start' : 'registered-blob-read-start');
   onProgress?.(
     new ProgressEvent('progress', {
       lengthComputable: true,
@@ -32,6 +44,7 @@ async function loadRegisteredBlob(
     }),
   );
   const buffer = await blob.arrayBuffer();
+  markLoadStage(blob instanceof File ? 'picker-file-read-complete' : 'registered-blob-read-complete');
   onProgress?.(
     new ProgressEvent('progress', {
       lengthComputable: true,
@@ -46,6 +59,7 @@ function loadLocalBlob(
   url: string,
   onProgress?: ProgressCallback,
 ): Promise<ArrayBuffer> {
+  markLoadStage('blob-xhr-start');
   return new Promise<ArrayBuffer>((resolve, reject) => {
     const request = new XMLHttpRequest();
     request.open('GET', url, true);
@@ -61,6 +75,7 @@ function loadLocalBlob(
         reject(new Error('GLB Blob request returned an unexpected response.'));
         return;
       }
+      markLoadStage('blob-xhr-complete');
       resolve(request.response);
     };
     request.onerror = () => reject(new Error('GLB Blob request failed.'));
@@ -102,10 +117,19 @@ export function createConfiguredGltfLoader(
     // that Blob directly avoids Chromium's network-style Blob URL path, which can
     // remain pending for IndexedDB-cloned Blobs. Object URLs created elsewhere
     // retain the XHR fallback before the official GLTFLoader parser is invoked.
+    markLoadStage('blob-url-received');
     const progress = onProgress as ProgressCallback | undefined;
     const buffer =
       (await loadRegisteredBlob(url, progress)) ?? (await loadLocalBlob(url, progress));
-    return loader.parseAsync(buffer, '');
+    markLoadStage('gltf-parse-start');
+    try {
+      const result = await loader.parseAsync(buffer, '');
+      markLoadStage('gltf-parse-complete');
+      return result;
+    } catch (error) {
+      markLoadStage('gltf-parse-error');
+      throw error;
+    }
   };
 
   return loader;
