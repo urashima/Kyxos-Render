@@ -10,6 +10,14 @@ interface InspectorDocumentPrototype {
   __kyxosGltfInspectorInstalled?: boolean;
 }
 
+interface StudioHistoryApi {
+  applyPatch(label: string, patch: ScenePatch): void;
+}
+
+interface InspectorGlobal {
+  kyxosStudio?: { api?: StudioHistoryApi };
+}
+
 let activeDocument: SceneDocument | null = null;
 let renderQueued = false;
 let observer: MutationObserver | null = null;
@@ -38,6 +46,17 @@ function inspectorSignature(
       ...(node.morphWeights ?? []),
     ].join(':'))
     .join('|');
+}
+
+function applyAuthoringPatch(label: string, patch: ScenePatch, mergeKey?: string): void {
+  if (!patch.length) return;
+  const api = (globalThis as typeof globalThis & InspectorGlobal).kyxosStudio?.api;
+  const historyLabel = mergeKey ? `${label}:${mergeKey}` : label;
+  if (api) {
+    api.applyPatch(historyLabel, patch);
+    return;
+  }
+  activeDocument?.apply(patch, historyLabel);
 }
 
 function renderInspector(): void {
@@ -76,10 +95,7 @@ function renderInspector(): void {
     nodes: authorable,
     container,
     canEdit,
-    applyPatch(label, patch, mergeKey) {
-      if (!activeDocument || !patch.length) return;
-      activeDocument.apply(patch, mergeKey ? `${label}:${mergeKey}` : label);
-    },
+    applyPatch: applyAuthoringPatch,
   });
 }
 
