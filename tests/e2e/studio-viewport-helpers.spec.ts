@@ -1,11 +1,11 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import {
   createGltfAuthoringGlb,
   createTriangleGlb,
 } from '../../packages/test-fixtures/src/index';
 
 async function createStudioProject(
-  page: Parameters<typeof test>[0] extends never ? never : any,
+  page: Page,
   email: string,
   name: string,
 ): Promise<void> {
@@ -14,12 +14,12 @@ async function createStudioProject(
   await page.getByLabel('Email').fill(email);
   await page.getByLabel('Password').fill('helpers-test');
   await page.getByRole('button', { name: 'Sign in' }).click();
-  page.once('dialog', (dialog: { accept(value: string): Promise<void> }) => dialog.accept(name));
+  page.once('dialog', (dialog) => dialog.accept(name));
   await page.getByRole('button', { name: 'New project' }).click();
   await expect(page.locator('#studio-canvas')).toBeVisible({ timeout: 60_000 });
 }
 
-async function waitForImport(page: any): Promise<void> {
+async function waitForImport(page: Page): Promise<void> {
   await expect(page.locator('html')).toHaveAttribute(
     'data-import-core-complete',
     'true',
