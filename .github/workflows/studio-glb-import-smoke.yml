@@ -14,96 +14,14 @@ on:
       - '.github/workflows/studio-glb-import-smoke.yml'
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: studio-glb-import-smoke-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
-  refactor-import:
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Checkout pull request
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.head_ref }}
-          fetch-depth: 0
-
-      - name: Apply one-time import transaction refactor
-        shell: bash
-        run: |
-          if grep -q "from './asset-import-runtime'" apps/studio/src/main.ts; then
-            echo "Studio import is already refactored."
-            exit 0
-          fi
-          python <<'PY'
-          from pathlib import Path
-
-          path = Path('apps/studio/src/main.ts')
-          text = path.read_text()
-          text = text.replace(
-              "  type InspectorFieldSchema,\n  type OfflineDraftStore,",
-              "  type ImportTaskContext,\n  type InspectorFieldSchema,\n  type OfflineDraftStore,",
-              1,
-          )
-          text = text.replace(
-              "import { mountCodeEditor } from './code-editor-ui';",
-              "import { mountCodeEditor } from './code-editor-ui';\nimport {\n  runImportJob,\n  scheduleImportPostprocess,\n  throwIfImportAborted,\n} from './asset-import-runtime';",
-              1,
-          )
-
-          reimport_start_marker = "    importQueue.enqueue(`Reimport ${files[0].name}`, async (context) => {"
-          reimport_start = text.index(reimport_start_marker)
-          reimport_end = text.index("\n    });", reimport_start) + len("\n    });")
-          new_reimport = """    importQueue.enqueue(`Reimport ${files[0].name}`, async (context) => {
-              try {
-                const gltf = files.find((file) => file.name.toLowerCase().endsWith('.gltf'));
-                let bundle: ExternalGltfBundleResult | undefined;
-                if (gltf) {
-                  context.report('parsing', 0.05);
-                  bundle = await bundleExternalGltf(files, gltf.name);
-                  throwIfImportAborted(context.signal);
-                }
-                await importAsset(
-                  bundle?.file ?? files[0],
-                  context,
-                  bundle,
-                  { assetId, mode },
-                );
-              } catch (error) {
-                showNotice(errorMessage(error), true);
-                throw error;
-              }
-            });"""
-          text = text[:reimport_start] + new_reimport + text[reimport_end:]
-
-          workflow = Path('.github/workflows/refactor-studio-import-once.yml').read_text()
-          marker = "          python <<'PY'\n"
-          script_start = workflow.index(marker) + len(marker)
-          script_end = workflow.index("\n          PY", script_start)
-          script = workflow[script_start:script_end]
-          script = '\n'.join(
-              line[10:] if line.startswith('          ') else line
-              for line in script.splitlines()
-          )
-          suffix = script[script.index('start_marker ='):]
-          exec(compile(suffix, 'refactor-studio-import-once', 'exec'))
-          PY
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add apps/studio/src/main.ts
-          git diff --cached --check
-          if git diff --cached --quiet; then
-            echo "No import refactor changes were required."
-            exit 0
-          fi
-          git commit -m "refactor Studio asset import jobs"
-          git push origin HEAD:${{ github.head_ref }}
-
   glb-import:
-    needs: refactor-import
     runs-on: ubuntu-24.04
     timeout-minutes: 12
     steps:
