@@ -31,7 +31,7 @@ type AdapterPrototype = {
   setCoordinateSpace: KyxosViewportAdapter['setCoordinateSpace'];
   setSnap: KyxosViewportAdapter['setSnap'];
   dispose: KyxosViewportAdapter['dispose'];
-  [installed]: unknown;
+  [key: symbol]: unknown;
 };
 
 interface NativeBridgeState {
