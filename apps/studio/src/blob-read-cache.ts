@@ -1,3 +1,5 @@
+import './glb-import-diagnostics';
+
 const originalArrayBuffer = Blob.prototype.arrayBuffer;
 const cachedReads = new WeakMap<Blob, Promise<ArrayBuffer>>();
 const READ_TIMEOUT_MS = 30_000;
