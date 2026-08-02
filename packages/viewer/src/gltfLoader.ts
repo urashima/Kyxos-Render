@@ -6,11 +6,13 @@ import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 const dracoLoader = new DRACOLoader().setWorkerLimit(2);
 const ktx2Loaders = new WeakMap<object, KTX2Loader>();
 const objectUrlBlobRegistryKey = Symbol.for('kyxos.objectUrlBlobRegistry');
+const localBlobBytesRegistryKey = Symbol.for('kyxos.localBlobBytesRegistry');
 const LOCAL_BLOB_TIMEOUT_MS = 30_000;
 
 type ProgressCallback = (event: ProgressEvent<EventTarget>) => void;
 type ObjectUrlRegistryGlobal = typeof globalThis & {
   [objectUrlBlobRegistryKey]?: Map<string, Blob>;
+  [localBlobBytesRegistryKey]?: WeakMap<Blob, Uint8Array>;
 };
 
 function markLoadStage(stage: string): void {
@@ -32,6 +34,27 @@ function registeredObjectUrlBlob(url: string): Blob | null {
   return registry?.get(url) ?? null;
 }
 
+function registeredObjectUrlBytes(url: string): Uint8Array | null {
+  const runtime = globalThis as ObjectUrlRegistryGlobal;
+  const blob = runtime[objectUrlBlobRegistryKey]?.get(url);
+  if (!blob) return null;
+  return runtime[localBlobBytesRegistryKey]?.get(blob) ?? null;
+}
+
+function progress(
+  callback: ProgressCallback | undefined,
+  loaded: number,
+  total: number,
+): void {
+  callback?.(
+    new ProgressEvent('progress', {
+      lengthComputable: true,
+      loaded,
+      total,
+    }),
+  );
+}
+
 async function loadRegisteredBlob(
   url: string,
   onProgress?: ProgressCallback,
@@ -41,23 +64,22 @@ async function loadRegisteredBlob(
     markLoadStage('registered-blob-miss');
     return null;
   }
+
+  const exact = registeredObjectUrlBytes(url);
+  if (exact) {
+    markLoadStage('registered-bytes-read-start');
+    progress(onProgress, 0, exact.byteLength);
+    const buffer = exact.slice().buffer;
+    progress(onProgress, exact.byteLength, exact.byteLength);
+    markLoadStage('registered-bytes-read-complete');
+    return buffer;
+  }
+
   markLoadStage(blob instanceof File ? 'picker-file-read-start' : 'registered-blob-read-start');
-  onProgress?.(
-    new ProgressEvent('progress', {
-      lengthComputable: true,
-      loaded: 0,
-      total: blob.size,
-    }),
-  );
+  progress(onProgress, 0, blob.size);
   const buffer = await blob.arrayBuffer();
   markLoadStage(blob instanceof File ? 'picker-file-read-complete' : 'registered-blob-read-complete');
-  onProgress?.(
-    new ProgressEvent('progress', {
-      lengthComputable: true,
-      loaded: blob.size,
-      total: blob.size,
-    }),
-  );
+  progress(onProgress, blob.size, blob.size);
   return buffer;
 }
 
@@ -92,20 +114,23 @@ function loadLocalBlob(
 }
 
 export interface ConfiguredGltfLoaderOptions {
-  /** Only initialize the KTX2 transcoder when the asset actually declares Basis/KTX2. */
+  /** Kept for API compatibility; KTX2 is now always configured when a renderer exists. */
   ktx2?: boolean;
 }
 
-/** Create a loader with Draco and Meshopt support, plus KTX2/Basis when requested. */
+/** Create a loader with Draco, Meshopt and KTX2/Basis support. */
 export function createConfiguredGltfLoader(
   renderer?: object | null,
-  options: ConfiguredGltfLoaderOptions = {},
+  _options: ConfiguredGltfLoaderOptions = {},
 ): GLTFLoader {
   const loader = new GLTFLoader();
   loader.setDRACOLoader(dracoLoader);
   loader.setMeshoptDecoder(MeshoptDecoder);
 
-  if (renderer && options.ktx2) {
+  // KTX2Loader uses its official import.meta-relative Basis transcoder assets.
+  // Keeping it attached is cheap; the worker/WASM is loaded only when a KTX2
+  // texture is encountered. This also handles assets that omit extensionsUsed.
+  if (renderer) {
     let ktx2Loader = ktx2Loaders.get(renderer);
     if (!ktx2Loader) {
       ktx2Loader = new KTX2Loader().setWorkerLimit(2);
@@ -130,13 +155,10 @@ export function createConfiguredGltfLoader(
       }
     }
 
-    // Studio registers the original Blob when it creates an object URL. Reading
-    // that Blob directly avoids Chromium's network-style Blob URL path, which can
-    // remain pending for IndexedDB-cloned Blobs. Object URLs created elsewhere
-    // retain the XHR fallback before the official GLTFLoader parser is invoked.
-    const progress = onProgress as ProgressCallback | undefined;
+    const progressCallback = onProgress as ProgressCallback | undefined;
     const buffer =
-      (await loadRegisteredBlob(url, progress)) ?? (await loadLocalBlob(url, progress));
+      (await loadRegisteredBlob(url, progressCallback))
+      ?? (await loadLocalBlob(url, progressCallback));
     markLoadStage('gltf-parse-start');
     try {
       const result = await loader.parseAsync(buffer, '');
