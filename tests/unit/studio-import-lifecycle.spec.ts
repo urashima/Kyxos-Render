@@ -105,10 +105,10 @@ describe('PlayCanvas-style Studio import lifecycle', () => {
     );
   });
 
-  it('completes the core job without awaiting viewport activation', async () => {
+  it('awaits core viewport activation before resolving the import job', async () => {
     const controller = new AbortController();
     const stages: string[] = [];
-    let activationStarted = false;
+    let activationCompleted = false;
     const state = { committed: false };
 
     const result = await runImportJob(
@@ -132,9 +132,9 @@ describe('PlayCanvas-style Studio import lifecycle', () => {
           id: 'activate-asset',
           stage: 'building',
           progress: 0.92,
-          run() {
-            activationStarted = true;
-            return new Promise<void>(() => undefined);
+          async run() {
+            await new Promise((resolve) => setTimeout(resolve, 5));
+            activationCompleted = true;
           },
         },
       ],
@@ -142,10 +142,36 @@ describe('PlayCanvas-style Studio import lifecycle', () => {
 
     expect(result).toBe(state);
     expect(result.committed).toBe(true);
+    expect(activationCompleted).toBe(true);
     expect(stages).toEqual(['building', 'building']);
-    expect(activationStarted).toBe(false);
-    await new Promise((resolve) => setTimeout(resolve, 5));
-    expect(activationStarted).toBe(true);
+  });
+
+  it('detaches only explicitly optional import post-processing', async () => {
+    const controller = new AbortController();
+    let postprocessStarted = false;
+
+    await runImportJob(
+      {
+        signal: controller.signal,
+        report() {},
+      },
+      {},
+      [
+        {
+          id: 'thumbnail',
+          stage: 'building',
+          progress: 0.95,
+          completion: 'postprocess',
+          run() {
+            postprocessStarted = true;
+          },
+        },
+      ],
+    );
+
+    expect(postprocessStarted).toBe(false);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(postprocessStarted).toBe(true);
   });
 
   it('preserves terminal completion when an import worker reports normal stages', async () => {
