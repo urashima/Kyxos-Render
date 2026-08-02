@@ -27,6 +27,7 @@ interface ViewerInternals {
   modelRoot: THREE.Object3D;
   resizeToCanvas(): void;
   resetTemporal(reason: string): void;
+  queuePipelineRebuild(reason: string): void;
 }
 
 const installed = Symbol('kyxos.editorViewportNavigation.installed');
@@ -94,7 +95,6 @@ export function setEditorViewPreset(
   this: KyxosViewer,
   preset: EditorViewPreset,
 ): void {
-  const internal = internals(this);
   const sphere = sceneBounds(this);
   const radius = Math.max(0.5, sphere.radius);
   const distance = Math.max(2, radius * 3);
@@ -163,17 +163,22 @@ export function getEditorViewPreset(this: KyxosViewer): EditorViewPreset {
   return activePresets.get(this) ?? 'perspective';
 }
 
-const prototype = KyxosViewer.prototype as KyxosViewer & { [installed]?: boolean };
+const prototype = KyxosViewer.prototype as unknown as KyxosViewer & {
+  [installed]?: boolean;
+};
 if (!prototype[installed]) {
   const originalSetCameraState = prototype.setCameraState;
   prototype.setCameraState = function setCameraStateWithEditorControls(
     this: KyxosViewer,
     camera,
   ): void {
+    const before = internals(this).camera;
     originalSetCameraState.call(this, camera);
+    const after = internals(this).camera;
+    if (after !== before) internals(this).queuePipelineRebuild('editor-camera-projection');
     refreshEditorTransformCamera(this);
     this.canvas.dataset.editorCameraProjection =
-      internals(this).camera instanceof THREE.OrthographicCamera
+      after instanceof THREE.OrthographicCamera
         ? 'orthographic'
         : 'perspective';
   };
