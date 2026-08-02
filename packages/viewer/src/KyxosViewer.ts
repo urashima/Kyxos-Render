@@ -478,18 +478,22 @@ export class KyxosViewer extends EventTarget {
           const settings = this.effects.ssr;
           const temporalEnabled = this.effects.temporalReprojection.enabled;
           const temporalDenoiseEnabled = temporalEnabled && this.effects.temporalDenoise.enabled;
+          const stochasticEnvironment = this.getStochasticSsrEnvironment();
+          const stochasticEnabled = temporalEnabled && stochasticEnvironment !== null;
           // SSR internally samples its color input, so keep the original Scene Pass texture here.
           // Temporal reprojection/denoise are designed for the stochastic GGX path. The
           // deterministic mirror/blur path is already stable and makes both controls appear
-          // ineffective, so only switch to stochastic SSR when the temporal chain is active.
+          // ineffective, so prefer stochastic SSR when the temporal chain is active. The
+          // pinned Three.js SSRNode requires an equirectangular texture with CPU-side pixels
+          // for every stochastic environment miss; PMREM targets cannot initialize that
+          // sampler and otherwise compile a null sampleEnvironmentBRDF call.
           const ssrNode = ssr(beauty, depth, sceneNormal, {
             camera: this.camera,
-            stochastic: temporalEnabled,
+            stochastic: stochasticEnabled,
             diffuseNode: diffuseMetal,
             metalnessNode: metalRough.r,
             roughnessNode: metalRough.g,
-            // PMREM scene.environment is not an equirectangular SSR sampling source.
-            // Keep screen-space reflections enabled without compiling the null MIS path.
+            environmentNode: stochasticEnvironment,
             envImportanceSampling: false,
             binaryRefine: true,
           });
@@ -647,7 +651,10 @@ export class KyxosViewer extends EventTarget {
 
     if (this.effects.fxaa.enabled) {
       try {
-        source = fxaa(source);
+        // Three.js' official FXAANode explicitly consumes display-referred sRGB
+        // input. Feeding it the linear HDR effect chain can compile to an empty
+        // WebGPU output on SwiftShader, while SMAA correctly stays in linear space.
+        source = fxaa(renderOutput(source));
       } catch (error) {
         this.effectFailure('fxaa', error);
       }
@@ -938,6 +945,13 @@ export class KyxosViewer extends EventTarget {
     this.scene.environmentIntensity = 0.75;
     this.updateBackground();
     if (resetHistory) this.resetTemporal('environment-switch');
+  }
+
+  private getStochasticSsrEnvironment(): THREE.Texture | null {
+    const resource = this.environmentResource as
+      | (THREE.Texture & { image?: { data?: ArrayBufferView } })
+      | null;
+    return resource?.isTexture === true && resource.image?.data ? resource : null;
   }
 
   private updateBackground() {
