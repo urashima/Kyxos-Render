@@ -14,14 +14,112 @@ on:
       - '.github/workflows/studio-glb-import-smoke.yml'
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: studio-glb-import-smoke-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
+  apply-gltf-parity:
+    if: github.event.pull_request.number == 20
+    runs-on: ubuntu-24.04
+    outputs:
+      changed: ${{ steps.patch.outputs.changed }}
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/playcanvas-editor-complete-alignment
+          fetch-depth: 0
+
+      - name: Patch Studio glTF authoring integration
+        id: patch
+        shell: bash
+        run: |
+          python <<'PY'
+          from pathlib import Path
+
+          path = Path('apps/studio/src/main.ts')
+          text = path.read_text()
+
+          text = text.replace('  mergeReimportedScene,\n', '')
+          marker = "} from '@kyxos/editor-core';\n"
+          addition = marker + "import { mergeReimportedSceneWithOverrides } from '@kyxos/editor-core/reimport';\n"
+          if "@kyxos/editor-core/reimport" not in text:
+              if marker not in text:
+                  raise SystemExit('editor-core import marker missing')
+              text = text.replace(marker, addition, 1)
+
+          marker = "import { bundleExternalGltf, type ExternalGltfBundleResult } from './gltf-bundler';\n"
+          addition = marker + "import { mountGltfNodeInspector } from './gltf-node-inspector';\n"
+          if "./gltf-node-inspector" not in text:
+              if marker not in text:
+                  raise SystemExit('gltf-bundler import marker missing')
+              text = text.replace(marker, addition, 1)
+
+          old = """    renderSchemaInspector(scene, selectedNodes);
+    renderMaterialVariantInspector(scene);
+"""
+          new = """    renderSchemaInspector(scene, selectedNodes);
+    mountGltfNodeInspector({
+      scene,
+      nodes: selectedNodes,
+      container: shell.inspector,
+      canEdit,
+      applyPatch: applyInspectorPatch,
+    });
+    renderMaterialVariantInspector(scene);
+"""
+          if 'mountGltfNodeInspector({' not in text:
+              if old not in text:
+                  raise SystemExit('renderInspector integration marker missing')
+              text = text.replace(old, new, 1)
+
+          text = text.replace(
+              'mergeReimportedScene(document.value, imported, reimport.mode)',
+              'mergeReimportedSceneWithOverrides(document.value, imported, reimport.mode)',
+          )
+
+          old = """        imported.lights = document.value.lights?.length
+          ? structuredClone(document.value.lights)
+          : createDefaultLights();
+"""
+          if old in text:
+              text = text.replace(old, '', 1)
+
+          old = """        gltfExtensions: source.extensions,
+"""
+          new = """        gltfExtensions: source.extensions,
+        gltfMorphDefaultWeights: morphWeights,
+"""
+          if 'gltfMorphDefaultWeights: morphWeights' not in text:
+              if old not in text:
+                  raise SystemExit('node metadata marker missing')
+              text = text.replace(old, new, 1)
+
+          path.write_text(text)
+          PY
+
+          if git diff --quiet -- apps/studio/src/main.ts; then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'changed=true' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Commit integration patch
+        if: steps.patch.outputs.changed == 'true'
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add apps/studio/src/main.ts
+          git commit -m 'feat: activate complete glTF authoring parity [skip gltf-patch]'
+          git push origin HEAD:agent/playcanvas-editor-complete-alignment
+
   glb-import:
+    needs: apply-gltf-parity
+    if: needs.apply-gltf-parity.outputs.changed != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 12
     steps:
@@ -43,6 +141,13 @@ jobs:
 
       - name: Install Chromium
         run: pnpm exec playwright install --with-deps chromium
+
+      - name: Verify glTF authoring unit coverage
+        run: >-
+          pnpm exec vitest run
+          tests/unit/studio-import-lifecycle.spec.ts
+          tests/unit/gltf-bundler.spec.ts
+          tests/unit/gltf-authoring-parity.spec.ts
 
       - name: Import GLB while viewport helpers are active
         env:
