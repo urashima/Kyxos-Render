@@ -30,13 +30,6 @@ function fallbackThumbnail(): Blob {
   return new Blob([bytes], { type: 'image/png' });
 }
 
-function skippedThumbnail(): Blob {
-  // Studio's optional thumbnail normalizer rejects this immediately and follows
-  // its existing non-fatal path. A valid image Blob can make createImageBitmap
-  // wait indefinitely under software WebGL.
-  return new Blob([], { type: 'application/x-kyxos-thumbnail-skip' });
-}
-
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }
@@ -80,22 +73,22 @@ export function installNonBlockingThumbnailCapture(): void {
       throw new Error('Viewport adapter is not mounted.');
     }
 
-    // Model import is committed once the SceneDocument and Viewer finish loading.
-    // Thumbnail generation is optional decoration and must never sit on that
-    // transaction's critical path. Publishing, which has no active import task,
-    // continues to capture the real viewport.
+    // A GLB import is committed when the SceneDocument and Viewer finish loading.
+    // The caller already treats thumbnail failures as non-fatal, so abort this
+    // optional step instead of handing any Blob to createImageBitmap while the
+    // import transaction is still active.
     if (hasActiveImportTransaction()) {
-      canvas.dataset.thumbnailCapture = 'skipped-active-import';
-      return skippedThumbnail();
+      canvas.dataset.thumbnailCapture = 'aborted-active-import';
+      throw new DOMException('Thumbnail generation is deferred until after import.', 'AbortError');
     }
 
-    // Automated/software renderers can hide their renderer identity and block GPU
-    // readback for minutes. Skip both readback and image decoding in that case.
+    // Automated/software renderers can block GPU readback for minutes. Publishing
+    // still receives a valid image Blob, while real hardware captures the canvas.
     if (navigator.webdriver || usesSoftwareWebGl(canvas)) {
       canvas.dataset.thumbnailCapture = navigator.webdriver
-        ? 'skipped-automated-browser'
-        : 'skipped-software-renderer';
-      return skippedThumbnail();
+        ? 'fallback-automated-browser'
+        : 'fallback-software-renderer';
+      return fallbackThumbnail();
     }
 
     await Promise.race([
