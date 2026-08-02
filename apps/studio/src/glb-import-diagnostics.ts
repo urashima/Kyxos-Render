@@ -14,16 +14,21 @@ type AdapterInternals = {
   viewer: ViewerLike | null;
 };
 
+function sourceCanvas(
+  source?: BrowserKyxosViewportAdapter | ViewerLike,
+): HTMLCanvasElement | null {
+  if (!source) return document.querySelector<HTMLCanvasElement>('#studio-canvas');
+  const direct = (source as Partial<ViewerLike>).canvas;
+  if (direct instanceof HTMLCanvasElement) return direct;
+  return (source as unknown as AdapterInternals).canvas;
+}
+
 function mark(
   stage: string,
   source?: BrowserKyxosViewportAdapter | ViewerLike,
 ): void {
   document.documentElement.dataset.glbImportStage = stage;
-  const canvas = source && 'canvas' in source
-    ? source.canvas
-    : source
-      ? (source as unknown as AdapterInternals).canvas
-      : document.querySelector<HTMLCanvasElement>('#studio-canvas');
+  const canvas = sourceCanvas(source);
   if (canvas) canvas.dataset.glbImportStage = stage;
   console.info(`[glb-import] ${stage}`);
 }
