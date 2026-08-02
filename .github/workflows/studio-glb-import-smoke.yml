@@ -23,7 +23,7 @@ concurrency:
 jobs:
   glb-import:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 12
     steps:
       - name: Checkout pull request
         uses: actions/checkout@v4
@@ -52,6 +52,8 @@ jobs:
           tests/e2e/studio-viewport-helpers.spec.ts
           --project=chromium
           --workers=1
+          --retries=0
+          --timeout=90000
 
       - name: Upload diagnostics
         if: failure()
