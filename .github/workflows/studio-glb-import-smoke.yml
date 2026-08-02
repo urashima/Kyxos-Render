@@ -14,76 +14,14 @@ on:
       - '.github/workflows/studio-glb-import-smoke.yml'
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: studio-glb-import-smoke-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
-  patch-notice:
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Checkout pull request branch
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.head_ref }}
-          fetch-depth: 0
-
-      - name: Make viewport notices non-blocking
-        shell: bash
-        run: |
-          python <<'PY'
-          from pathlib import Path
-
-          path = Path('apps/studio/src/main.ts')
-          text = path.read_text()
-          old = """  function showNotice(message: string, error = false): void {
-    diagnosticConsole.log(error ? 'error' : 'info', message, undefined, 'studio');
-    viewportNotice.replaceChildren(element('span', { text: message }));
-    viewportNotice.classList.toggle('error-notice', error);
-    if (!error) {
-      window.setTimeout(() => {
-        if (viewportNotice.textContent === message) viewportNotice.replaceChildren();
-      }, 5000);
-    }
-  }
-"""
-          new = """  function showNotice(message: string, error = false): void {
-    // UI status is part of the user-facing operation and must be committed
-    // before optional Console observers run. Import progress already has a
-    // dedicated lifecycle stream, so only errors are duplicated to Console.
-    viewportNotice.replaceChildren(element('span', { text: message }));
-    viewportNotice.classList.toggle('error-notice', error);
-    if (error) {
-      diagnosticConsole.log('error', message, undefined, 'studio');
-      return;
-    }
-    window.setTimeout(() => {
-      if (viewportNotice.textContent === message) viewportNotice.replaceChildren();
-    }, 5000);
-  }
-"""
-          if old not in text:
-              if 'UI status is part of the user-facing operation' in text:
-                  raise SystemExit(0)
-              raise SystemExit('showNotice block not found')
-          path.write_text(text.replace(old, new, 1))
-          PY
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add apps/studio/src/main.ts
-          git diff --cached --check
-          if git diff --cached --quiet; then
-            echo "Notice implementation already updated."
-            exit 0
-          fi
-          git commit -m "fix non-blocking Studio notices"
-          git push origin HEAD:${{ github.head_ref }}
-
   glb-import:
-    needs: patch-notice
     runs-on: ubuntu-24.04
     timeout-minutes: 12
     steps:
