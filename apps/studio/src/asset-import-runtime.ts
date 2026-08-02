@@ -116,13 +116,6 @@ function commitCoreImportCompletion(state: unknown): void {
   }
 }
 
-function yieldToBrowser(): Promise<void> {
-  return new Promise((resolve) => {
-    if (typeof window === 'undefined') setTimeout(resolve, 0);
-    else window.setTimeout(resolve, 0);
-  });
-}
-
 export async function runImportJob<TState>(
   context: ImportTaskContext,
   state: TState,
@@ -213,11 +206,12 @@ export async function runImportJob<TState>(
     progress: 1,
     aborted: context.signal.aborted,
   });
-  await yieldToBrowser();
 
-  // Schedule only after the durable transaction has yielded and is ready to
-  // resolve. The scheduled callbacks cannot start until the caller regains the
-  // event loop, preserving the strict core-before-optional lifecycle.
+  // The durable scene, Viewer activation, Hierarchy and completion marker are
+  // already committed synchronously. Resolve immediately so ImportTaskQueue can
+  // emit its core-complete lifecycle while the Studio renderer remains paused.
+  // Waiting for another timer here allowed browser GPU scheduling to starve the
+  // transaction after all import work had already succeeded.
   pendingPostprocess.forEach((schedule) => schedule());
   console.info('[studio-import] core-import · return-void');
 }
