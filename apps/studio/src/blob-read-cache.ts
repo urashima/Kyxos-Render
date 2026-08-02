@@ -5,8 +5,10 @@ const originalCreateObjectUrl = URL.createObjectURL.bind(URL);
 const originalRevokeObjectUrl = URL.revokeObjectURL.bind(URL);
 const objectUrlBlobRegistryKey = Symbol.for('kyxos.objectUrlBlobRegistry');
 const pickerFiles = new WeakSet<File>();
+const recentPickerFiles: Array<{ file: File; capturedAt: number }> = [];
 const cachedReads = new WeakMap<File, Promise<ArrayBuffer>>();
 const READ_TIMEOUT_MS = 30_000;
+const PICKER_SOURCE_TTL_MS = 60_000;
 
 type ObjectUrlRegistryGlobal = typeof globalThis & {
   [objectUrlBlobRegistryKey]?: Map<string, Blob>;
@@ -17,13 +19,40 @@ const objectUrlBlobRegistry =
   registryGlobal[objectUrlBlobRegistryKey] ?? new Map<string, Blob>();
 registryGlobal[objectUrlBlobRegistryKey] = objectUrlBlobRegistry;
 
-// Keep a direct reference to every local Blob behind an object URL. Chromium can
-// leave network-style reads of IndexedDB-cloned Blob URLs pending indefinitely;
-// the Viewer reads registered Blobs directly and still falls back to the normal
-// URL path for object URLs created outside Studio.
+function pruneRecentPickerFiles(now = Date.now()): void {
+  while (
+    recentPickerFiles.length &&
+    (recentPickerFiles.length > 32 ||
+      now - recentPickerFiles[0].capturedAt > PICKER_SOURCE_TTL_MS)
+  ) {
+    recentPickerFiles.shift();
+  }
+}
+
+function sourceBlobForObjectUrl(blob: Blob): Blob {
+  const now = Date.now();
+  pruneRecentPickerFiles(now);
+  for (let index = recentPickerFiles.length - 1; index >= 0; index -= 1) {
+    const candidate = recentPickerFiles[index].file;
+    if (candidate.size !== blob.size) continue;
+    if (candidate.type && blob.type && candidate.type !== blob.type) continue;
+    return candidate;
+  }
+  return blob;
+}
+
+// Keep a direct reference to every local Blob behind an object URL. During the
+// active import, prefer the original picker File over the IndexedDB clone with
+// the same size/type. Chromium can leave reads of cloned Blob data pending even
+// when the generated object URL itself is valid.
 URL.createObjectURL = function createTrackedObjectUrl(blob: Blob | MediaSource): string {
   const url = originalCreateObjectUrl(blob);
-  if (blob instanceof Blob) objectUrlBlobRegistry.set(url, blob);
+  if (blob instanceof Blob) {
+    const source = sourceBlobForObjectUrl(blob);
+    objectUrlBlobRegistry.set(url, source);
+    document.documentElement.dataset.localBlobSource =
+      source instanceof File ? 'picker-file' : 'persisted-blob';
+  }
   return url;
 };
 
@@ -32,15 +61,20 @@ URL.revokeObjectURL = function revokeTrackedObjectUrl(url: string): void {
   originalRevokeObjectUrl(url);
 };
 
-// Capture before the input's own change handler starts the async import. Files
-// cloned back out of IndexedDB are different objects and therefore stay on the
-// native Blob/File read path used by Three.js.
+// Capture before the input's own change handler starts the async import. The
+// same File is hashed and parsed, and remains available as the preferred source
+// when the local asset manifest creates an object URL from its IndexedDB clone.
 document.addEventListener(
   'change',
   (event) => {
     const input = event.target;
     if (!(input instanceof HTMLInputElement) || input.type !== 'file') return;
-    for (const file of input.files ?? []) pickerFiles.add(file);
+    const capturedAt = Date.now();
+    for (const file of input.files ?? []) {
+      pickerFiles.add(file);
+      recentPickerFiles.push({ file, capturedAt });
+    }
+    pruneRecentPickerFiles(capturedAt);
   },
   true,
 );
@@ -82,9 +116,6 @@ function readFile(file: File): Promise<ArrayBuffer> {
  * Studio hashes and parses the same picker-owned File. Cache that one source
  * read and return a fresh copy to each consumer so transferring the parser copy
  * cannot detach the cached bytes.
- *
- * Persisted Files/Blobs are deliberately not cached here: Three.js must retain
- * the browser's native object-URL loading behavior after assets leave the picker.
  */
 File.prototype.arrayBuffer = function guardedFileArrayBuffer(): Promise<ArrayBuffer> {
   if (!pickerFiles.has(this)) return originalFileArrayBuffer.call(this);
