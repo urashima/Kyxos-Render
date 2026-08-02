@@ -13,6 +13,7 @@ import {
   type SnapSettings,
 } from './index';
 import { getAdapterTransformPivot } from './transformPivot';
+import { getAdapterViewportHelpers } from './viewportHelpers';
 
 type AdapterInternals = {
   viewer: KyxosViewer | null;
@@ -65,6 +66,8 @@ function syncNativeControls(adapter: BrowserKyxosViewportAdapter): void {
   viewer.setEditorTransformSpace(internal.coordinateSpace);
   viewer.setEditorTransformPivot(getAdapterTransformPivot(adapter));
   viewer.setEditorTransformSnap(internal.snap);
+  viewer.setEditorViewportHelperSettings(getAdapterViewportHelpers(adapter));
+  viewer.setEditorViewportHelperSelection(internal.selected);
   removeFallbackGizmo(adapter);
 }
 
@@ -76,6 +79,7 @@ function detachNativeBridge(adapter: BrowserKyxosViewportAdapter): void {
   state.viewer.removeEventListener('editor-transform-end', state.onEnd);
   state.viewer.removeEventListener('editor-transform-dragging', state.onDragging);
   state.viewer.disposeEditorTransformControls();
+  state.viewer.disposeEditorViewportHelpers();
   bridgeStates.delete(adapter);
 }
 
@@ -100,6 +104,7 @@ export function installNativeTransformBridge(): void {
     const viewer = internals(this).viewer;
     if (!viewer) return;
     viewer.createEditorTransformControls();
+    viewer.createEditorViewportHelpers();
     const onChange = (event: Event) => {
       this.dispatchEvent(new CustomEvent('transform-change', {
         detail: (event as CustomEvent).detail,
@@ -134,6 +139,7 @@ export function installNativeTransformBridge(): void {
   ): Promise<void> {
     await originalLoadDocument.call(this, document);
     syncNativeControls(this);
+    internals(this).viewer?.refreshEditorViewportHelpers();
   };
 
   prototype.applyPatch = async function applyPatchWithNativeTransform(
@@ -141,7 +147,9 @@ export function installNativeTransformBridge(): void {
     patch,
   ): Promise<void> {
     await originalApplyPatch.call(this, patch);
-    internals(this).viewer?.refreshEditorTransformControls();
+    const viewer = internals(this).viewer;
+    viewer?.refreshEditorTransformControls();
+    viewer?.refreshEditorViewportHelpers();
   };
 
   prototype.select = function selectWithNativeTransform(
