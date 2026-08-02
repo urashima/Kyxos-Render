@@ -16,6 +16,7 @@ import {
   mountAdvancedTools as mountAdvancedToolsFull,
   type AdvancedToolsOptions as FullAdvancedToolsOptions,
 } from './advanced-tools-ui-full';
+import './editor-experience.css';
 
 export interface AdvancedToolsOptions {
   dialog: HTMLDialogElement;
@@ -50,7 +51,39 @@ export function mountAdvancedTools(options: AdvancedToolsOptions): () => void {
     notifications: options.notifications ?? defaults.notifications,
     help: options.help ?? defaults.help,
   };
-  return mountAdvancedToolsFull(resolved);
+  const studioRoot = options.dialog.closest<HTMLElement>('.kyxos-studio-shell');
+  const applySettings = () => {
+    const value = resolved.settings.value;
+    studioRoot?.classList.toggle('compact-density', value.compactDensity);
+    studioRoot?.classList.toggle('reduced-motion', value.reducedMotion);
+    studioRoot?.classList.toggle('hide-studio-tooltips', !value.showTooltips);
+    studioRoot?.style.setProperty('--kyxos-hierarchy-row-height', `${value.hierarchyRowHeight}px`);
+  };
+  const focusAsset = (event: Event) => {
+    const assetId = (event as CustomEvent<{ assetId?: string }>).detail?.assetId;
+    if (!assetId) return;
+    const card = document.querySelector<HTMLElement>(`[data-asset-id="${CSS.escape(assetId)}"]`);
+    if (!card) return;
+    card.tabIndex = -1;
+    card.scrollIntoView({ block: 'nearest', behavior: resolved.settings.value.reducedMotion ? 'auto' : 'smooth' });
+    card.focus({ preventScroll: true });
+    card.classList.add('asset-search-highlight');
+    window.setTimeout(() => card.classList.remove('asset-search-highlight'), 1_500);
+  };
+  resolved.settings.addEventListener('change', applySettings);
+  window.addEventListener('kyxos:asset-search-result', focusAsset);
+  applySettings();
+  const disposeFull = mountAdvancedToolsFull(resolved);
+  let disposed = false;
+  const dispose = () => {
+    if (disposed) return;
+    disposed = true;
+    resolved.settings.removeEventListener('change', applySettings);
+    window.removeEventListener('kyxos:asset-search-result', focusAsset);
+    disposeFull();
+  };
+  options.dialog.addEventListener('close', dispose, { once: true });
+  return dispose;
 }
 
 function createServices(api: StudioApi, diagnosticConsole: DiagnosticConsole): AdvancedServices {
