@@ -5,9 +5,42 @@ import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 
 const dracoLoader = new DRACOLoader().setWorkerLimit(2);
 const ktx2Loaders = new WeakMap<object, KTX2Loader>();
+const objectUrlBlobRegistryKey = Symbol.for('kyxos.objectUrlBlobRegistry');
 const LOCAL_BLOB_TIMEOUT_MS = 30_000;
 
 type ProgressCallback = (event: ProgressEvent<EventTarget>) => void;
+type ObjectUrlRegistryGlobal = typeof globalThis & {
+  [objectUrlBlobRegistryKey]?: Map<string, Blob>;
+};
+
+function registeredObjectUrlBlob(url: string): Blob | null {
+  const registry = (globalThis as ObjectUrlRegistryGlobal)[objectUrlBlobRegistryKey];
+  return registry?.get(url) ?? null;
+}
+
+async function loadRegisteredBlob(
+  url: string,
+  onProgress?: ProgressCallback,
+): Promise<ArrayBuffer | null> {
+  const blob = registeredObjectUrlBlob(url);
+  if (!blob) return null;
+  onProgress?.(
+    new ProgressEvent('progress', {
+      lengthComputable: true,
+      loaded: 0,
+      total: blob.size,
+    }),
+  );
+  const buffer = await blob.arrayBuffer();
+  onProgress?.(
+    new ProgressEvent('progress', {
+      lengthComputable: true,
+      loaded: blob.size,
+      total: blob.size,
+    }),
+  );
+  return buffer;
+}
 
 function loadLocalBlob(
   url: string,
@@ -65,11 +98,13 @@ export function createConfiguredGltfLoader(
   loader.loadAsync = async (url, onProgress) => {
     if (!url.startsWith('blob:')) return nativeLoadAsync(url, onProgress);
 
-    // Three.js FileLoader uses fetch for URLs. Chromium can leave a
-    // fetch-backed Blob URL pending when that Blob was cloned out of IndexedDB.
-    // Read local Blob URLs through XHR, then keep the official GLTFLoader parser
-    // and its Draco / Meshopt / KTX2 extension stack unchanged.
-    const buffer = await loadLocalBlob(url, onProgress as ProgressCallback | undefined);
+    // Studio registers the original Blob when it creates an object URL. Reading
+    // that Blob directly avoids Chromium's network-style Blob URL path, which can
+    // remain pending for IndexedDB-cloned Blobs. Object URLs created elsewhere
+    // retain the XHR fallback before the official GLTFLoader parser is invoked.
+    const progress = onProgress as ProgressCallback | undefined;
+    const buffer =
+      (await loadRegisteredBlob(url, progress)) ?? (await loadLocalBlob(url, progress));
     return loader.parseAsync(buffer, '');
   };
 
