@@ -71,14 +71,25 @@ export function mountAdvancedTools(options: AdvancedToolsOptions): () => void {
     card.classList.add('asset-search-highlight');
     window.setTimeout(() => card.classList.remove('asset-search-highlight'), 1_500);
   };
+  const normalizeSearchCopy = () => {
+    const input = options.dialog.querySelector<HTMLInputElement>('.global-search-input');
+    if (input) input.placeholder = 'Search commands, active-scene entities and assets';
+    const intro = [...options.dialog.querySelectorAll<HTMLElement>('.advanced-intro')]
+      .find((entry) => entry.textContent?.startsWith('One index across'));
+    if (intro) intro.textContent = 'Search Studio commands plus entities and assets in the active scene.';
+  };
+  const copyObserver = new MutationObserver(normalizeSearchCopy);
+  copyObserver.observe(options.dialog, { childList: true, subtree: true });
   resolved.settings.addEventListener('change', applySettings);
   window.addEventListener('kyxos:asset-search-result', focusAsset);
   applySettings();
   const disposeFull = mountAdvancedToolsFull(resolved);
+  normalizeSearchCopy();
   let disposed = false;
   const dispose = () => {
     if (disposed) return;
     disposed = true;
+    copyObserver.disconnect();
     resolved.settings.removeEventListener('change', applySettings);
     window.removeEventListener('kyxos:asset-search-result', focusAsset);
     disposeFull();
@@ -117,9 +128,8 @@ function createServices(api: StudioApi, diagnosticConsole: DiagnosticConsole): A
           id: node.id,
           kind: 'entity' as const,
           label: node.name,
-          description: `${nodeKind} · ${node.children.length} children`,
+          description: `${nodeKind} · ${node.children.length} children${node.locked ? ' · locked' : ''}`,
           keywords: [node.id, nodeKind, node.meshAssetId ?? '', ...(node.materialSlots ?? [])],
-          disabled: Boolean(node.locked),
           run: () => api.setSelection([node.id]),
         };
       }),
