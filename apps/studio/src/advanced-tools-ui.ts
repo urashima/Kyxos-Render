@@ -17,6 +17,7 @@ import {
   type AdvancedToolsOptions as FullAdvancedToolsOptions,
 } from './advanced-tools-ui-full';
 import './editor-experience.css';
+import './editor-experience-overrides.css';
 
 export interface AdvancedToolsOptions {
   dialog: HTMLDialogElement;
