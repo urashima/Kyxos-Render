@@ -1,8 +1,18 @@
 import './glb-import-diagnostics';
 
 const originalFileArrayBuffer = File.prototype.arrayBuffer;
+const pickerFiles = new WeakSet<File>();
 const cachedReads = new WeakMap<File, Promise<ArrayBuffer>>();
 const READ_TIMEOUT_MS = 30_000;
+
+// Capture before the input's own change handler starts the async import. Files
+// cloned back out of IndexedDB are different objects and therefore stay on the
+// native Blob/File read path used by Three.js.
+document.addEventListener('change', (event) => {
+  const input = event.target;
+  if (!(input instanceof HTMLInputElement) || input.type !== 'file') return;
+  for (const file of input.files ?? []) pickerFiles.add(file);
+}, true);
 
 function readFile(file: File): Promise<ArrayBuffer> {
   if (typeof FileReader === 'undefined') {
@@ -35,14 +45,15 @@ function readFile(file: File): Promise<ArrayBuffer> {
 }
 
 /**
- * Studio hashes and parses the same user-selected File. Cache that one source
+ * Studio hashes and parses the same picker-owned File. Cache that one source
  * read and return a fresh copy to each consumer so transferring the parser copy
  * cannot detach the cached bytes.
  *
- * Do not patch Blob.prototype: Three.js loads persisted models from Blob URLs,
- * and replacing the platform Blob reader also intercepts that runtime path.
+ * Persisted Files/Blobs are deliberately not cached here: Three.js must retain
+ * the browser's native object-URL loading behavior after assets leave the picker.
  */
 File.prototype.arrayBuffer = function guardedFileArrayBuffer(): Promise<ArrayBuffer> {
+  if (!pickerFiles.has(this)) return originalFileArrayBuffer.call(this);
   let cached = cachedReads.get(this);
   if (!cached) {
     cached = readFile(this);
