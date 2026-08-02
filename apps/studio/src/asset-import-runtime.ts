@@ -1,16 +1,9 @@
 import type { ImportTaskContext, ImportTaskStage } from '@kyxos/editor-core';
 
 export interface ImportJobStep<TState> {
-  /** Stable machine-readable step name used in diagnostics. */
   id: string;
-  /** Queue stage surfaced to the Studio task strip. */
   stage: Exclude<ImportTaskStage, 'queued' | 'complete' | 'failed' | 'cancelled'>;
-  /** Monotonic progress value reported before this step starts. */
   progress: number;
-  /**
-   * Only explicitly optional work may be detached from the import transaction.
-   * Scene activation, hierarchy refresh and runtime resource creation stay core.
-   */
   completion?: 'core' | 'postprocess';
   run(state: TState, signal: AbortSignal): Promise<void> | void;
 }
@@ -75,9 +68,6 @@ function reportImportStep(detail: ImportStepLifecycleDetail): void {
   document.documentElement.dataset.importStepStage = detail.stage;
   document.documentElement.dataset.importStepProgress = String(detail.progress);
   document.documentElement.dataset.importStepAborted = String(detail.aborted);
-  // Lifecycle consumers are optional observers. Never run them synchronously
-  // inside the core asset transaction because a panel/plugin listener must not
-  // prevent the import promise from resolving.
   deferredDispatch('kyxos:studio-import-step', detail);
 }
 
@@ -105,34 +95,30 @@ function completionMessage(state: unknown): string {
   return `Import complete · ${nodes} nodes · ${materials} materials · ${animations} animations`;
 }
 
-/**
- * Commit the durable core completion status only after the imported scene has
- * been activated by the runtime. Optional thumbnails and autosave observers
- * cannot hold the task open or turn a valid import into a failed task.
- */
 function commitCoreImportCompletion(state: unknown): void {
   if (typeof document === 'undefined') return;
   const message = completionMessage(state);
   document.documentElement.dataset.importCoreComplete = 'true';
   document.documentElement.dataset.importCompleteMessage = message;
-  const notice = document.querySelector<HTMLElement>('.viewport-overlay');
-  if (!notice) return;
-  const text = document.createElement('span');
-  text.textContent = message;
-  notice.replaceChildren(text);
-  notice.classList.remove('error-notice');
+  document.documentElement.dataset.importCompletedAt = String(Date.now());
+  for (const notice of document.querySelectorAll<HTMLElement>('.viewport-overlay')) {
+    const text = document.createElement('span');
+    text.textContent = message;
+    notice.replaceChildren(text);
+    notice.classList.remove('error-notice');
+  }
 }
 
 /**
- * Execute an import as an explicit, observable job pipeline. Each durable phase
- * reports state, honours cancellation and is awaited unless it is deliberately
- * marked as optional post-processing.
+ * Execute the durable import transaction. The caller owns the mutable state,
+ * so this function resolves with void rather than returning a third-party-
+ * enriched state object through the Promise resolution algorithm.
  */
 export async function runImportJob<TState>(
   context: ImportTaskContext,
   state: TState,
   steps: readonly ImportJobStep<TState>[],
-): Promise<TState> {
+): Promise<void> {
   let lastProgress = 0;
   for (const step of steps) {
     throwIfImportAborted(context.signal);
@@ -215,15 +201,9 @@ export async function runImportJob<TState>(
     progress: 1,
     aborted: context.signal.aborted,
   });
-  console.info('[studio-import] core-import · return');
-  return state;
+  console.info('[studio-import] core-import · return-void');
 }
 
-/**
- * Optional work such as thumbnails and draft flushing must never keep an asset
- * task in uploading/building. Schedule it after core scene activation and
- * report failures independently instead of rejecting the import promise.
- */
 export function scheduleImportPostprocess(
   options: ImportPostprocessOptions,
 ): void {
