@@ -3310,20 +3310,30 @@ function mimeFor(extension: string): string {
   )[extension] ?? 'application/octet-stream';
 }
 
-function parseGlb(file: File): Promise<any> {
-  return new Promise(async (resolve, reject) => {
+async function parseGlb(file: File): Promise<any> {
+  const buffer = await file.arrayBuffer();
+  return new Promise((resolve, reject) => {
     const worker = new Worker(new URL('./importWorker.ts', import.meta.url), {
       type: 'module',
     });
-    worker.onmessage = (event) => {
+    const timeout = window.setTimeout(() => {
       worker.terminate();
-      event.data.ok ? resolve(event.data.result) : reject(new Error(event.data.error));
+      reject(new Error('GLB parsing timed out.'));
+    }, 30_000);
+    const finish = (callback: () => void) => {
+      window.clearTimeout(timeout);
+      worker.terminate();
+      callback();
+    };
+    worker.onmessage = (event) => {
+      finish(() => {
+        event.data.ok ? resolve(event.data.result) : reject(new Error(event.data.error));
+      });
     };
     worker.onerror = (event) => {
-      worker.terminate();
-      reject(new Error(event.message));
+      finish(() => reject(new Error(event.message || 'GLB parser worker failed.')));
     };
-    worker.postMessage({ name: file.name, buffer: await file.arrayBuffer() });
+    worker.postMessage({ name: file.name, buffer }, [buffer]);
   });
 }
 

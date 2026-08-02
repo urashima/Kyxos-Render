@@ -417,7 +417,14 @@ export async function loadScene(
   current.resolver = resolver;
 
   const model = Object.values(contract.assets).find((asset) => asset.kind === 'model');
-  if (model) await this.loadModel(await resolver.resolve(model));
+  if (model) {
+    const extensions = Array.isArray(model.metadata?.extensionsUsed)
+      ? model.metadata.extensionsUsed.map(String)
+      : [];
+    await this.loadModel(await resolver.resolve(model), {
+      ktx2: extensions.includes('KHR_texture_basisu'),
+    });
+  }
 
   const environmentAsset = contract.environment.assetId
     ? contract.assets[contract.environment.assetId]

@@ -6,12 +6,20 @@ import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 const dracoLoader = new DRACOLoader().setWorkerLimit(2);
 const ktx2Loaders = new WeakMap<object, KTX2Loader>();
 
-/** Create a loader with Draco, Meshopt, KTX2 and Basis support enabled. */
-export function createConfiguredGltfLoader(renderer?: object | null): GLTFLoader {
+export interface ConfiguredGltfLoaderOptions {
+  /** Only initialize the KTX2 transcoder when the asset actually declares Basis/KTX2. */
+  ktx2?: boolean;
+}
+
+/** Create a loader with Draco and Meshopt support, plus KTX2/Basis when requested. */
+export function createConfiguredGltfLoader(
+  renderer?: object | null,
+  options: ConfiguredGltfLoaderOptions = {},
+): GLTFLoader {
   const loader = new GLTFLoader();
   loader.setDRACOLoader(dracoLoader);
   loader.setMeshoptDecoder(MeshoptDecoder);
-  if (renderer) {
+  if (renderer && options.ktx2) {
     let ktx2Loader = ktx2Loaders.get(renderer);
     if (!ktx2Loader) {
       ktx2Loader = new KTX2Loader().setWorkerLimit(2);

@@ -114,6 +114,7 @@ export class KyxosViewer extends EventTarget {
   private rebuildQueued = false;
   private pipelineGeneration = 0;
   private webgpuRecoveryActive = false;
+  private webgpuVisibilityRetryCount = 0;
   private lastFrameTime = performance.now();
   private elapsed = 0;
   private fpsAccumulator = 0;
@@ -281,6 +282,9 @@ export class KyxosViewer extends EventTarget {
 
   private buildPipeline(reason: string) {
     if (this.disposed) return;
+    if (!reason.startsWith('webgpu-visibility-retry:')) {
+      this.webgpuVisibilityRetryCount = 0;
+    }
     const generation = ++this.pipelineGeneration;
     this.disposePipeline();
     this.debugNodes.clear();
@@ -722,6 +726,11 @@ export class KyxosViewer extends EventTarget {
             }
           }
           if (visible <= verificationCanvas.width * verificationCanvas.height * 0.02) {
+            if (this.webgpuVisibilityRetryCount < 1) {
+              this.webgpuVisibilityRetryCount += 1;
+              this.queuePipelineRebuild(`webgpu-visibility-retry:${reason}`);
+              return;
+            }
             this.activateWebGPURecovery(`black-output:${reason}`);
           }
         } catch (error) {
@@ -839,14 +848,14 @@ export class KyxosViewer extends EventTarget {
     return [...this.warnings.values()];
   }
 
-  async loadModel(url: string) {
+  async loadModel(url: string, options: { ktx2?: boolean } = {}) {
     if (url.startsWith('procedural:')) {
       this.replaceWithProceduralModel(url.slice('procedural:'.length));
       this.resetTemporal('model-switch');
       return;
     }
 
-    const loader = createConfiguredGltfLoader(this.renderer);
+    const loader = createConfiguredGltfLoader(this.renderer, options);
     const gltf = await loader.loadAsync(url);
     (this as unknown as Record<string, unknown>).loadedGltfAnimations = gltf.animations.map((clip) => clip.clone());
     disposeObject3D(this.modelRoot);
@@ -911,6 +920,13 @@ export class KyxosViewer extends EventTarget {
   }
 
   private async setStudioEnvironment(resetHistory: boolean) {
+    const currentTarget = this.environmentResource as { texture?: THREE.Texture } | null;
+    if (currentTarget?.texture && this.scene.environment === currentTarget.texture) {
+      this.scene.environmentIntensity = 0.75;
+      this.updateBackground();
+      if (resetHistory) this.resetTemporal('environment-switch');
+      return;
+    }
     disposeUnknown(this.environmentResource);
     const room = new RoomEnvironment();
     const pmrem = new THREE.PMREMGenerator(this.renderer);

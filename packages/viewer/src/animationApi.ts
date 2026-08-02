@@ -304,8 +304,9 @@ function startGraph(viewer: KyxosViewer, current: RuntimeAnimationState): boolea
 const originalLoadModel = KyxosViewer.prototype.loadModel;
 KyxosViewer.prototype.loadModel = async function loadModelWithAnimation(
   url: string,
+  options: { ktx2?: boolean } = {},
 ): Promise<void> {
-  await originalLoadModel.call(this, url);
+  await originalLoadModel.call(this, url, options);
   const current = state(this);
   current.mixer?.stopAllAction();
   current.mixer = null;
