@@ -1,7 +1,8 @@
 import { expect, test } from '@playwright/test';
+import { createTriangleGlb } from '../../packages/test-fixtures/src/index';
 
-test('Studio viewport helper controls update the Viewer overlay state', async ({ page }) => {
-  test.setTimeout(120_000);
+test('Studio viewport helpers survive GLB scene replacement', async ({ page }) => {
+  test.setTimeout(180_000);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/studio/');
   await page.getByLabel('Email').fill('helpers@kyxos.local');
@@ -26,4 +27,15 @@ test('Studio viewport helper controls update the Viewer overlay state', async ({
   await expect(canvas).not.toHaveAttribute('data-editor-helpers', /(?:^|,)grid(?:,|$)/);
   await skeletons.check();
   await expect(canvas).toHaveAttribute('data-editor-helpers', /skeletons/);
+
+  await page.locator('#asset-import-input').setInputFiles({
+    name: 'helpers-import.glb',
+    mimeType: 'model/gltf-binary',
+    buffer: Buffer.from(createTriangleGlb()),
+  });
+
+  await expect(page.getByText(/Import complete/)).toBeVisible({ timeout: 60_000 });
+  await expect(page.locator('.hierarchy-row', { hasText: 'Triangle' })).toBeVisible();
+  await expect(canvas).toHaveAttribute('data-editor-helpers', /skeletons/);
+  await expect(canvas).not.toHaveAttribute('data-editor-helpers', /(?:^|,)grid(?:,|$)/);
 });
