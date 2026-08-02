@@ -77,6 +77,18 @@ function clearDynamic(state: EditorViewportHelperState): void {
   for (const child of [...state.dynamic.children]) disposeOverlay(child);
 }
 
+function helperSettingsEqual(
+  left: EditorViewportHelperSettings,
+  right: EditorViewportHelperSettings,
+): boolean {
+  return (Object.keys(DEFAULT_EDITOR_VIEWPORT_HELPERS) as Array<keyof EditorViewportHelperSettings>)
+    .every((key) => left[key] === right[key]);
+}
+
+function stringArraysEqual(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
 function findNodeObject(viewer: KyxosViewer, nodeId: string): THREE.Object3D | null {
   let result: THREE.Object3D | null = null;
   internals(viewer).modelRoot.traverse((object) => {
@@ -117,8 +129,15 @@ function addSceneHelpers(viewer: KyxosViewer, state: EditorViewportHelperState):
     });
   }
 
+  // Never mutate Scene.children from inside Scene.traverse(). Keep a stable
+  // snapshot of runtime entries first, then attach generated helpers afterwards.
+  // This is especially important while a GLB load replaces modelRoot contents.
+  const sceneEntries: THREE.Object3D[] = [];
   internal.scene.traverse((entry) => {
-    if (entry.userData.kyxosToolOverlay) return;
+    if (!entry.userData.kyxosToolOverlay) sceneEntries.push(entry);
+  });
+
+  for (const entry of sceneEntries) {
     if (state.settings.lights) {
       let helper: THREE.Object3D | null = null;
       if ((entry as THREE.DirectionalLight).isDirectionalLight) {
@@ -147,7 +166,7 @@ function addSceneHelpers(viewer: KyxosViewer, state: EditorViewportHelperState):
       markEditorOverlay(helper);
       state.dynamic.add(helper);
     }
-  });
+  }
 }
 
 function rebuildEditorViewportHelpers(viewer: KyxosViewer): void {
@@ -254,7 +273,9 @@ export function setEditorViewportHelperSettings(
 ): void {
   const state = helperStates.get(this);
   if (!state) return;
-  state.settings = { ...state.settings, ...settings };
+  const next = { ...state.settings, ...settings };
+  if (helperSettingsEqual(state.settings, next)) return;
+  state.settings = next;
   if (!state.settings.hover) state.hoverNodeId = null;
   rebuildEditorViewportHelpers(this);
 }
@@ -273,7 +294,9 @@ export function setEditorViewportHelperSelection(
 ): void {
   const state = helperStates.get(this);
   if (!state) return;
-  state.selectedNodeIds = [...new Set(nodeIds)];
+  const next = [...new Set(nodeIds)];
+  if (stringArraysEqual(state.selectedNodeIds, next)) return;
+  state.selectedNodeIds = next;
   rebuildEditorViewportHelpers(this);
 }
 
