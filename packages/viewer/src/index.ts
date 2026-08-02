@@ -5,6 +5,7 @@ import './lightingApi';
 import './capabilityApi';
 import './environmentApi';
 import './editorTransformControls';
+import './editorViewportNavigation';
 
 import { KyxosViewer } from './KyxosViewer';
 import { installEditorSceneModeExtension } from './editorSceneMode';
@@ -44,6 +45,7 @@ export type {
   EditorTransformSnap,
   EditorTransformSpace,
 } from './editorTransformControls';
+export type { EditorViewPreset } from './editorViewportNavigation';
 export type {
   BackendName,
   BackendPreference,
