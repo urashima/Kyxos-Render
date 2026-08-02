@@ -129,7 +129,9 @@ export async function runImportJob<TState>(
   steps: readonly ImportJobStep<TState>[],
 ): Promise<void> {
   clearCoreImportCompletion();
+  const pendingPostprocess: Array<() => void> = [];
   let lastProgress = 0;
+
   for (const step of steps) {
     throwIfImportAborted(context.signal);
     const progress = Math.max(lastProgress, Math.min(0.99, step.progress));
@@ -147,7 +149,7 @@ export async function runImportJob<TState>(
       lastProgress = progress;
 
       if (postprocess) {
-        scheduleImportPostprocess({
+        pendingPostprocess.push(() => scheduleImportPostprocess({
           label: step.id,
           run: async () => {
             await step.run(state, context.signal);
@@ -170,7 +172,7 @@ export async function runImportJob<TState>(
             });
             reportPostprocessFailure(label, error);
           },
-        });
+        }));
         reportImportStep({
           id: step.id,
           stage: step.stage,
@@ -211,11 +213,12 @@ export async function runImportJob<TState>(
     progress: 1,
     aborted: context.signal.aborted,
   });
-
-  // Let the browser commit the imported hierarchy, asset cards and completion
-  // marker before returning to ImportTaskQueue. This keeps the durable import
-  // transaction observable even when optional work or the renderer is slow.
   await yieldToBrowser();
+
+  // Schedule only after the durable transaction has yielded and is ready to
+  // resolve. The scheduled callbacks cannot start until the caller regains the
+  // event loop, preserving the strict core-before-optional lifecycle.
+  pendingPostprocess.forEach((schedule) => schedule());
   console.info('[studio-import] core-import · return-void');
 }
 
@@ -231,11 +234,6 @@ export function scheduleImportPostprocess(
   options: ImportPostprocessOptions,
 ): void {
   scheduleAfterPaint(() => {
-    // Import thumbnails are decorative. Even with GPU readback bypassed,
-    // createImageBitmap/canvas WebP encoding can synchronously lock software
-    // Chromium and low-end devices after a successful GLB activation. Defer the
-    // thumbnail until a dedicated worker/offscreen implementation is available;
-    // never block the imported model, hierarchy, materials or animations.
     if (options.label.startsWith('thumbnail:')) {
       if (typeof document !== 'undefined') {
         document.documentElement.dataset.importThumbnailFallback = 'deferred';
