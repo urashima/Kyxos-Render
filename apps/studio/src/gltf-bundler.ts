@@ -1,3 +1,5 @@
+import './image-bitmap-guard';
+
 interface GltfBuffer { uri?: string; byteLength: number; [key: string]: unknown }
 interface GltfBufferView { buffer: number; byteOffset?: number; byteLength: number; [key: string]: unknown }
 interface GltfImage { uri?: string; bufferView?: number; mimeType?: string; [key: string]: unknown }
