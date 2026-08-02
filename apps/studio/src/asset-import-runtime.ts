@@ -39,6 +39,10 @@ interface ImportCompletionState {
   report?: ImportCompletionReport | null;
 }
 
+interface ImportRuntimeGlobal {
+  __kyxosImportThumbnailPostprocess?: boolean;
+}
+
 export function throwIfImportAborted(signal: AbortSignal): void {
   if (!signal.aborted) return;
   throw signal.reason instanceof Error
@@ -109,11 +113,6 @@ function commitCoreImportCompletion(state: unknown): void {
   }
 }
 
-/**
- * Execute the durable import transaction. The caller owns the mutable state,
- * so this function resolves with void rather than returning a third-party-
- * enriched state object through the Promise resolution algorithm.
- */
 export async function runImportJob<TState>(
   context: ImportTaskContext,
   state: TState,
@@ -204,16 +203,26 @@ export async function runImportJob<TState>(
   console.info('[studio-import] core-import · return-void');
 }
 
+function scheduleAfterPaint(callback: () => void): void {
+  if (typeof window === 'undefined' || typeof requestAnimationFrame === 'undefined') {
+    setTimeout(callback, 0);
+    return;
+  }
+  requestAnimationFrame(() => requestAnimationFrame(() => window.setTimeout(callback, 0)));
+}
+
 export function scheduleImportPostprocess(
   options: ImportPostprocessOptions,
 ): void {
-  const delayMs = typeof window === 'undefined' ? 0 : 16;
-  const schedule = typeof window === 'undefined'
-    ? (callback: () => void) => setTimeout(callback, delayMs)
-    : (callback: () => void) => window.setTimeout(callback, delayMs);
-  schedule(() => {
+  scheduleAfterPaint(() => {
+    const runtime = globalThis as typeof globalThis & ImportRuntimeGlobal;
+    const thumbnail = options.label.startsWith('thumbnail:');
+    if (thumbnail) runtime.__kyxosImportThumbnailPostprocess = true;
     Promise.resolve()
       .then(() => options.run())
-      .catch((error) => options.onWarning(options.label, error));
+      .catch((error) => options.onWarning(options.label, error))
+      .finally(() => {
+        if (thumbnail) runtime.__kyxosImportThumbnailPostprocess = false;
+      });
   });
 }
