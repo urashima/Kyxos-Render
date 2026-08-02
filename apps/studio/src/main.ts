@@ -35,6 +35,7 @@ import {
   resolveMergeConflicts,
   roleCan,
   threeWayMerge,
+  type ImportTaskContext,
   type InspectorFieldSchema,
   type OfflineDraftStore,
   type ProjectWorkspace,
@@ -62,6 +63,11 @@ import { bundleExternalGltf, type ExternalGltfBundleResult } from './gltf-bundle
 import { mountAnimationGraphEditor } from './animation-graph-ui';
 import { mountAdvancedTools } from './advanced-tools-ui';
 import { mountCodeEditor } from './code-editor-ui';
+import {
+  runImportJob,
+  scheduleImportPostprocess,
+  throwIfImportAborted,
+} from './asset-import-runtime';
 
 const app = document.querySelector<HTMLElement>('#app')!;
 const client = createApiClient({
@@ -445,13 +451,25 @@ async function openProject(project: ProjectSummary): Promise<void> {
     const answer = prompt('Reimport mode: keep-overrides, reset-overrides, replace', 'keep-overrides');
     const mode = answer === 'reset-overrides' || answer === 'replace' ? answer : 'keep-overrides';
     importQueue.enqueue(`Reimport ${files[0].name}`, async (context) => {
-      context.report('parsing', 0.1);
+    try {
       const gltf = files.find((file) => file.name.toLowerCase().endsWith('.gltf'));
-      const bundle = gltf ? await bundleExternalGltf(files, gltf.name) : undefined;
-      context.report('uploading', 0.25);
-      await importAsset(bundle?.file ?? files[0], bundle, { assetId, mode });
-      context.report('building', 0.95);
-    });
+      let bundle: ExternalGltfBundleResult | undefined;
+      if (gltf) {
+        context.report('parsing', 0.05);
+        bundle = await bundleExternalGltf(files, gltf.name);
+        throwIfImportAborted(context.signal);
+      }
+      await importAsset(
+        bundle?.file ?? files[0],
+        context,
+        bundle,
+        { assetId, mode },
+      );
+    } catch (error) {
+      showNotice(errorMessage(error), true);
+      throw error;
+    }
+  });
   });
   const uploadButton = button('Upload', () => uploadInput.click());
   const publishButton = button('Publish', () => void publish(), 'primary');
@@ -2262,81 +2280,146 @@ async function openProject(project: ProjectSummary): Promise<void> {
   }
 
   async function importFiles(files: File[]): Promise<void> {
-    const gltf = files.find((file) => file.name.toLowerCase().endsWith('.gltf'));
-    if (gltf) {
-      importQueue.enqueue(gltf.name, async (context) => {
-        context.report('parsing', 0.1);
+  const gltf = files.find((file) => file.name.toLowerCase().endsWith('.gltf'));
+  if (gltf) {
+    importQueue.enqueue(gltf.name, async (context) => {
+      try {
+        context.report('parsing', 0.05);
         const bundle = await bundleExternalGltf(files, gltf.name);
-        context.report('uploading', 0.25);
-        await importAsset(bundle.file, bundle);
-        context.report('building', 0.95);
-      });
-      return;
-    }
-    for (const file of files.filter((entry) => !entry.name.toLowerCase().endsWith('.bin'))) {
-      importQueue.enqueue(file.name, async (context) => {
-        context.report('uploading', 0.15);
-        await importAsset(file);
-        context.report('building', 0.95);
-      });
-    }
+        throwIfImportAborted(context.signal);
+        await importAsset(bundle.file, context, bundle);
+      } catch (error) {
+        showNotice(errorMessage(error), true);
+        throw error;
+      }
+    });
+    return;
+  }
+  for (const file of files.filter((entry) => !entry.name.toLowerCase().endsWith('.bin'))) {
+    importQueue.enqueue(file.name, async (context) => {
+      try {
+        await importAsset(file, context);
+      } catch (error) {
+        showNotice(errorMessage(error), true);
+        throw error;
+      }
+    });
+  }
+}
+
+async function importAsset(
+  file: File,
+  context: ImportTaskContext,
+  externalBundle?: ExternalGltfBundleResult,
+  reimport?: { assetId: string; mode: 'replace' | 'keep-overrides' | 'reset-overrides' },
+): Promise<void> {
+  if (!canEdit) throw new Error('Viewer members cannot import or reimport assets.');
+  const extension = file.name.split('.').pop()?.toLowerCase() ?? '';
+  const allowed = ['glb', 'hdr', 'exr', 'png', 'jpg', 'jpeg', 'webp', 'ktx2'];
+  if (!allowed.includes(extension)) throw new Error('Unsupported file type.');
+  if (file.size > 512 * 1024 * 1024) {
+    throw new Error('File exceeds the configured 512 MB upload limit.');
   }
 
-  async function importAsset(
-    file: File,
-    externalBundle?: ExternalGltfBundleResult,
-    reimport?: { assetId: string; mode: 'replace' | 'keep-overrides' | 'reset-overrides' },
-  ): Promise<void> {
-    if (!canEdit) {
-      showNotice('Viewer members cannot import or reimport assets.', true);
-      return;
-    }
-    const extension = file.name.split('.').pop()?.toLowerCase() ?? '';
-    const allowed = ['glb', 'hdr', 'exr', 'png', 'jpg', 'jpeg', 'webp', 'ktx2'];
-    if (!allowed.includes(extension)) {
-      showNotice('Unsupported file type.', true);
-      return;
-    }
-    if (file.size > 512 * 1024 * 1024) {
-      showNotice('File exceeds the configured 512 MB upload limit.', true);
-      return;
-    }
+  const state: {
+    hash: string;
+    ticket: Awaited<ReturnType<typeof client.assets.createUpload>> | null;
+    report: any;
+    imported: KyxosSceneContract | null;
+  } = {
+    hash: '',
+    ticket: null,
+    report: null,
+    imported: null,
+  };
 
-    try {
-      showNotice(`Hashing ${file.name}…`);
-      const hash = await hashBlob(file);
-      const ticket = await client.assets.createUpload({
-        hash,
-        name: file.name,
-        mimeType: file.type || mimeFor(extension),
-        byteSize: file.size,
-      });
-      await client.assets.upload(ticket, file);
-      await client.assets.completeUpload(ticket.assetId, {
-        originalName: file.name,
-        extension,
-      });
-      const freshManifest = await client.assets.getManifest([
-        ...new Set([...Object.keys(document.value.assets), ticket.assetId]),
-      ]);
-      manifest = {
-        assets: { ...manifest.assets, ...freshManifest.assets },
-      };
-
-      if (extension === 'glb') {
+  await runImportJob(context, state, [
+    {
+      id: 'hash-source',
+      stage: 'hashing',
+      progress: 0.12,
+      async run(current, signal) {
+        showNotice(`Hashing ${file.name}…`);
+        current.hash = await hashBlob(file);
+        throwIfImportAborted(signal);
+      },
+    },
+    {
+      id: 'upload-source',
+      stage: 'uploading',
+      progress: 0.24,
+      async run(current, signal) {
+        current.ticket = await client.assets.createUpload({
+          hash: current.hash,
+          name: file.name,
+          mimeType: file.type || mimeFor(extension),
+          byteSize: file.size,
+        });
+        throwIfImportAborted(signal);
+        await client.assets.upload(current.ticket, file);
+        throwIfImportAborted(signal);
+      },
+    },
+    {
+      id: 'register-source',
+      stage: 'uploading',
+      progress: 0.46,
+      async run(current, signal) {
+        const ticket = current.ticket!;
+        await client.assets.completeUpload(ticket.assetId, {
+          originalName: file.name,
+          extension,
+        });
+        throwIfImportAborted(signal);
+        const freshManifest = await client.assets.getManifest([
+          ...new Set([...Object.keys(document.value.assets), ticket.assetId]),
+        ]);
+        manifest = {
+          assets: { ...manifest.assets, ...freshManifest.assets },
+        };
+      },
+    },
+    {
+      id: 'parse-source',
+      stage: 'parsing',
+      progress: 0.58,
+      async run(current, signal) {
+        if (extension !== 'glb') return;
         showNotice('Parsing GLB in a worker…');
-        const report = await parseGlb(file);
+        current.report = await parseGlb(file);
+        throwIfImportAborted(signal);
+      },
+    },
+    {
+      id: 'build-contract',
+      stage: 'building',
+      progress: 0.76,
+      run(current) {
+        const ticket = current.ticket!;
+        if (extension !== 'glb') {
+          const scene = document.value;
+          const kind = ['hdr', 'exr'].includes(extension) ? 'environment' : 'texture';
+          scene.assets[ticket.assetId] = {
+            id: ticket.assetId,
+            uri: `asset://${current.hash}`,
+            contentHash: current.hash,
+            kind,
+            mimeType: file.type || mimeFor(extension),
+            byteSize: file.size,
+            name: file.name,
+          };
+          if (kind === 'environment') scene.environment.assetId = ticket.assetId;
+          document.replace(scene, 'import-asset');
+          return;
+        }
+
         const imported = contractFromGlb(
           project.name,
           ticket.assetId,
-          hash,
+          current.hash,
           file,
-          report,
+          current.report,
         );
-        // Importing content must not silently reset the authored render profile.
-        // In particular, a new Studio project starts with an interactive profile
-        // so software/WebGL fallbacks do not compile the full cinematic graph
-        // while a model is being accepted.
         imported.renderSettings = structuredClone(document.value.renderSettings);
         if (externalBundle) {
           imported.metadata.source = {
@@ -2365,51 +2448,83 @@ async function openProject(project: ProjectSummary): Promise<void> {
         imported.lights = document.value.lights?.length
           ? structuredClone(document.value.lights)
           : createDefaultLights();
+        current.imported = imported;
         document.replace(
           reimport
             ? mergeReimportedScene(document.value, imported, reimport.mode)
             : imported,
           'import-glb',
         );
-        await adapter.loadDocument(document);
-        try {
-          const thumbnailDataUrl = await createAssetThumbnailDataUrl(await adapter.captureThumbnail());
-          const scene = document.value;
-          const importedAsset = scene.assets[ticket.assetId];
-          if (importedAsset) {
-            importedAsset.metadata = { ...(importedAsset.metadata ?? {}), thumbnailDataUrl };
-            document.replace(scene, 'asset-thumbnail');
-          }
-        } catch (error) {
-          diagnosticConsole.log('warn', `Could not generate a thumbnail for ${file.name}.`, error, 'assets');
+      },
+    },
+    {
+      id: 'activate-asset',
+      stage: 'building',
+      progress: 0.92,
+      async run(current, signal) {
+        if (extension === 'glb') {
+          await adapter.loadDocument(document);
+        } else if (['hdr', 'exr'].includes(extension)) {
+          await adapter.loadEnvironmentAsset(current.ticket!.assetId);
         }
-        showNotice(
-          report.warnings.length
-            ? `Import complete · ${report.warnings.join(' · ')}`
-            : `Import complete · ${report.nodes.length} nodes · ${report.materials.length} materials · ${report.animations.length} animations`,
+        throwIfImportAborted(signal);
+      },
+    },
+  ]);
+
+  const ticket = state.ticket!;
+  if (extension === 'glb') {
+    const report = state.report;
+    showNotice(
+      report.warnings.length
+        ? `Import complete · ${report.warnings.join(' · ')}`
+        : `Import complete · ${report.nodes.length} nodes · ${report.materials.length} materials · ${report.animations.length} animations`,
+    );
+    scheduleImportPostprocess({
+      label: `thumbnail:${file.name}`,
+      async run() {
+        const thumbnailDataUrl = await createAssetThumbnailDataUrl(
+          await adapter.captureThumbnail(),
         );
-      } else {
         const scene = document.value;
-        const kind = ['hdr', 'exr'].includes(extension) ? 'environment' : 'texture';
-        scene.assets[ticket.assetId] = {
-          id: ticket.assetId,
-          uri: `asset://${hash}`,
-          contentHash: hash,
-          kind,
-          mimeType: file.type || mimeFor(extension),
-          byteSize: file.size,
-          name: file.name,
+        const importedAsset = scene.assets[ticket.assetId];
+        if (!importedAsset) return;
+        importedAsset.metadata = {
+          ...(importedAsset.metadata ?? {}),
+          thumbnailDataUrl,
         };
-        if (kind === 'environment') scene.environment.assetId = ticket.assetId;
-        document.replace(scene, 'import-asset');
-        if (kind === 'environment') await adapter.loadEnvironmentAsset(ticket.assetId);
-        showNotice(ticket.alreadyExists ? 'Existing content-hash asset reused.' : 'Asset uploaded.');
-      }
-      await autosave.flush();
-    } catch (error) {
-      showNotice(errorMessage(error), true);
-    }
+        document.replace(scene, 'asset-thumbnail');
+      },
+      onWarning(label, error) {
+        diagnosticConsole.log(
+          'warn',
+          `Optional import post-processing failed: ${label}`,
+          error,
+          'assets',
+        );
+      },
+    });
+  } else {
+    showNotice(
+      ticket.alreadyExists
+        ? 'Existing content-hash asset reused.'
+        : 'Asset uploaded.',
+    );
   }
+
+  scheduleImportPostprocess({
+    label: `autosave:${file.name}`,
+    run: () => autosave.flush(),
+    onWarning(label, error) {
+      diagnosticConsole.log(
+        'warn',
+        `Optional import post-processing failed: ${label}`,
+        error,
+        'assets',
+      );
+    },
+  });
+}
 
   async function publish(): Promise<void> {
     if (!roleCan(currentRole, 'project:publish')) {
