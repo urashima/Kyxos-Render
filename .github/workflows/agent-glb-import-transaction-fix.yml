@@ -1,0 +1,163 @@
+name: Agent GLB Import Transaction Fix
+
+on:
+  push:
+    branches:
+      - agent/playcanvas-editor-complete-alignment
+    paths:
+      - .github/workflows/agent-glb-import-transaction-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: ${{ !contains(github.event.head_commit.message, '[skip agent-glb-fix]') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/playcanvas-editor-complete-alignment
+          fetch-depth: 0
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Repair transactional GLB activation
+        shell: bash
+        run: |
+          python <<'PY'
+          from pathlib import Path
+
+          runtime = Path('apps/studio/src/asset-import-runtime.ts')
+          text = runtime.read_text()
+          old = "const postprocess = step.completion === 'postprocess' || step.id.startsWith('activate-');"
+          new = "const postprocess = step.completion === 'postprocess';"
+          if old not in text and new not in text:
+              raise SystemExit('asset-import-runtime postprocess selector not found')
+          runtime.write_text(text.replace(old, new))
+
+          main = Path('apps/studio/src/main.ts')
+          text = main.read_text()
+          old = """    {
+      id: 'activate-asset',
+      stage: 'building',
+      progress: 0.92,
+      async run(current, signal) {
+"""
+          new = """    {
+      id: 'activate-asset',
+      stage: 'building',
+      progress: 0.92,
+      completion: 'core',
+      async run(current, signal) {
+"""
+          if old not in text and new not in text:
+              raise SystemExit('activate-asset step not found')
+          main.write_text(text.replace(old, new))
+
+          test = Path('tests/unit/studio-import-lifecycle.spec.ts')
+          text = test.read_text()
+          start = text.index("  it('completes the core job without awaiting viewport activation'")
+          end = text.index("\n\n  it('preserves terminal completion", start)
+          replacement = r'''  it('awaits core viewport activation before resolving the import job', async () => {
+    const controller = new AbortController();
+    const stages: string[] = [];
+    let activationCompleted = false;
+    const state = { committed: false };
+
+    const result = await runImportJob(
+      {
+        signal: controller.signal,
+        report(stage) {
+          stages.push(stage);
+        },
+      },
+      state,
+      [
+        {
+          id: 'build-contract',
+          stage: 'building',
+          progress: 0.75,
+          run(current) {
+            current.committed = true;
+          },
+        },
+        {
+          id: 'activate-asset',
+          stage: 'building',
+          progress: 0.92,
+          completion: 'core',
+          async run() {
+            await new Promise((resolve) => setTimeout(resolve, 5));
+            activationCompleted = true;
+          },
+        },
+      ],
+    );
+
+    expect(result).toBe(state);
+    expect(result.committed).toBe(true);
+    expect(activationCompleted).toBe(true);
+    expect(stages).toEqual(['building', 'building']);
+  });
+
+  it('detaches only explicitly optional import post-processing', async () => {
+    const controller = new AbortController();
+    let postprocessStarted = false;
+
+    await runImportJob(
+      {
+        signal: controller.signal,
+        report() {},
+      },
+      {},
+      [
+        {
+          id: 'thumbnail',
+          stage: 'building',
+          progress: 0.95,
+          completion: 'postprocess',
+          run() {
+            postprocessStarted = true;
+          },
+        },
+      ],
+    );
+
+    expect(postprocessStarted).toBe(false);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(postprocessStarted).toBe(true);
+  });'''
+          test.write_text(text[:start] + replacement + text[end:])
+          PY
+
+      - name: Install workspace
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Verify import lifecycle
+        run: |
+          pnpm exec vitest run tests/unit/studio-import-lifecycle.spec.ts tests/unit/gltf-bundler.spec.ts
+          pnpm --dir apps/studio build
+
+      - name: Commit repair
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo 'No repair changes required.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add apps/studio/src/asset-import-runtime.ts apps/studio/src/main.ts tests/unit/studio-import-lifecycle.spec.ts
+          git commit -m 'fix: await GLB scene activation before import completion [skip agent-glb-fix]'
+          git push origin HEAD:agent/playcanvas-editor-complete-alignment
