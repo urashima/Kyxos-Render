@@ -2,6 +2,8 @@ import { BrowserKyxosViewportAdapter } from '@kyxos/viewer-adapter';
 
 const diagnosticsInstalled = Symbol.for('kyxos.glbImportDiagnostics.installed');
 const viewerDiagnosticsInstalled = Symbol.for('kyxos.glbImportDiagnostics.viewerInstalled');
+const FALLBACK_THUMBNAIL_BASE64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+Xc9WAAAAAElFTkSuQmCC';
 
 type ViewerLike = {
   canvas: HTMLCanvasElement;
@@ -31,6 +33,12 @@ function mark(
   const canvas = sourceCanvas(source);
   if (canvas) canvas.dataset.glbImportStage = stage;
   console.info(`[glb-import] ${stage}`);
+}
+
+function fallbackThumbnail(): Blob {
+  const binary = atob(FALLBACK_THUMBNAIL_BASE64);
+  const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  return new Blob([bytes], { type: 'image/png' });
 }
 
 function wrapViewerAsync(viewer: ViewerLike, method: string, stage: string): void {
@@ -128,8 +136,15 @@ if (!globalState[diagnosticsInstalled]) {
       mark('thumbnail-complete', this);
       return result;
     } catch (error) {
-      mark('thumbnail-error', this);
-      throw error;
+      // Thumbnail readback is a best-effort post-import task. Headless WebGL,
+      // lost contexts and protected canvases may reject readback even though the
+      // imported scene is already valid. Match PlayCanvas job semantics by
+      // completing the asset and reporting a warning instead of rejecting the
+      // core import promise.
+      console.warn('[glb-import] thumbnail readback unavailable; using fallback', error);
+      mark('thumbnail-fallback', this);
+      document.documentElement.dataset.importThumbnailFallback = 'true';
+      return fallbackThumbnail();
     }
   };
 }
