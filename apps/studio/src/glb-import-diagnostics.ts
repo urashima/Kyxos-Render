@@ -1,20 +1,25 @@
-import { KyxosViewer } from '@kyxos/viewer';
 import { BrowserKyxosViewportAdapter } from '@kyxos/viewer-adapter';
 
 const diagnosticsInstalled = Symbol.for('kyxos.glbImportDiagnostics.installed');
+const viewerDiagnosticsInstalled = Symbol.for('kyxos.glbImportDiagnostics.viewerInstalled');
+
+type ViewerLike = {
+  canvas: HTMLCanvasElement;
+  [viewerDiagnosticsInstalled]?: boolean;
+  [key: string]: unknown;
+};
 
 type AdapterInternals = {
   canvas: HTMLCanvasElement | null;
+  viewer: ViewerLike | null;
 };
-
-type ViewerPrototype = KyxosViewer & Record<string, (...args: any[]) => any>;
 
 function mark(
   stage: string,
-  source?: BrowserKyxosViewportAdapter | KyxosViewer,
+  source?: BrowserKyxosViewportAdapter | ViewerLike,
 ): void {
   document.documentElement.dataset.glbImportStage = stage;
-  const canvas = source instanceof KyxosViewer
+  const canvas = source && 'canvas' in source
     ? source.canvas
     : source
       ? (source as unknown as AdapterInternals).canvas
@@ -23,50 +28,49 @@ function mark(
   console.info(`[glb-import] ${stage}`);
 }
 
-function wrapViewerAsync(
-  prototype: ViewerPrototype,
-  method: string,
-  stage: string,
-): void {
-  const original = prototype[method];
+function wrapViewerAsync(viewer: ViewerLike, method: string, stage: string): void {
+  const original = viewer[method];
   if (typeof original !== 'function') return;
-  prototype[method] = async function viewerAsyncDiagnostic(
-    this: KyxosViewer,
-    ...args: any[]
-  ) {
-    mark(`${stage}-start`, this);
+  viewer[method] = async (...args: unknown[]) => {
+    mark(`${stage}-start`, viewer);
     try {
-      const result = await original.apply(this, args);
-      mark(`${stage}-complete`, this);
+      const result = await original.apply(viewer, args);
+      mark(`${stage}-complete`, viewer);
       return result;
     } catch (error) {
-      mark(`${stage}-error`, this);
+      mark(`${stage}-error`, viewer);
       throw error;
     }
   };
 }
 
-function wrapViewerSync(
-  prototype: ViewerPrototype,
-  method: string,
-  stage: string,
-): void {
-  const original = prototype[method];
+function wrapViewerSync(viewer: ViewerLike, method: string, stage: string): void {
+  const original = viewer[method];
   if (typeof original !== 'function') return;
-  prototype[method] = function viewerSyncDiagnostic(
-    this: KyxosViewer,
-    ...args: any[]
-  ) {
-    mark(`${stage}-start`, this);
+  viewer[method] = (...args: unknown[]) => {
+    mark(`${stage}-start`, viewer);
     try {
-      const result = original.apply(this, args);
-      mark(`${stage}-complete`, this);
+      const result = original.apply(viewer, args);
+      mark(`${stage}-complete`, viewer);
       return result;
     } catch (error) {
-      mark(`${stage}-error`, this);
+      mark(`${stage}-error`, viewer);
       throw error;
     }
   };
+}
+
+function instrumentViewer(adapter: BrowserKyxosViewportAdapter): void {
+  const viewer = (adapter as unknown as AdapterInternals).viewer;
+  if (!viewer || viewer[viewerDiagnosticsInstalled]) return;
+  viewer[viewerDiagnosticsInstalled] = true;
+  wrapViewerAsync(viewer, 'loadScene', 'scene-load');
+  wrapViewerAsync(viewer, 'loadModel', 'model-load');
+  wrapViewerAsync(viewer, 'restoreStudioEnvironment', 'environment-restore');
+  wrapViewerAsync(viewer, 'setMaterial', 'material-bind');
+  wrapViewerSync(viewer, 'setCameraState', 'camera-apply');
+  wrapViewerSync(viewer, 'setEnvironment', 'environment-apply');
+  wrapViewerSync(viewer, 'setRenderSettings', 'render-settings-apply');
 }
 
 const globalState = window as typeof window & { [diagnosticsInstalled]?: boolean };
@@ -93,15 +97,6 @@ if (!globalState[diagnosticsInstalled]) {
     },
   }) as typeof Worker;
 
-  const viewerPrototype = KyxosViewer.prototype as ViewerPrototype;
-  wrapViewerAsync(viewerPrototype, 'loadScene', 'scene-load');
-  wrapViewerAsync(viewerPrototype, 'loadModel', 'model-load');
-  wrapViewerAsync(viewerPrototype, 'restoreStudioEnvironment', 'environment-restore');
-  wrapViewerAsync(viewerPrototype, 'setMaterial', 'material-bind');
-  wrapViewerSync(viewerPrototype, 'setCameraState', 'camera-apply');
-  wrapViewerSync(viewerPrototype, 'setEnvironment', 'environment-apply');
-  wrapViewerSync(viewerPrototype, 'setRenderSettings', 'render-settings-apply');
-
   const prototype = BrowserKyxosViewportAdapter.prototype as BrowserKyxosViewportAdapter & {
     loadDocument: BrowserKyxosViewportAdapter['loadDocument'];
     captureThumbnail: BrowserKyxosViewportAdapter['captureThumbnail'];
@@ -110,6 +105,7 @@ if (!globalState[diagnosticsInstalled]) {
   const originalCaptureThumbnail = prototype.captureThumbnail;
 
   prototype.loadDocument = function loadDocumentWithDiagnostics(document) {
+    instrumentViewer(this);
     mark('viewer-load-start', this);
     return originalLoadDocument.call(this, document).then(
       () => mark('viewer-load-complete', this),
