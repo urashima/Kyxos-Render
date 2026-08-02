@@ -30,6 +30,13 @@ function fallbackThumbnail(): Blob {
   return new Blob([bytes], { type: 'image/png' });
 }
 
+function skippedThumbnail(): Blob {
+  // Studio's optional thumbnail normalizer will reject this immediately and
+  // continue the import. A valid image Blob can make createImageBitmap wait
+  // indefinitely under SwiftShader, so do not hand one to that decoder.
+  return new Blob([], { type: 'application/x-kyxos-thumbnail-skip' });
+}
+
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }
@@ -66,13 +73,13 @@ export function installNonBlockingThumbnailCapture(): void {
     }
 
     // Headless/automated Chromium commonly forces SwiftShader while hiding the
-    // unmasked renderer string. GPU readback is decorative and may block its main
-    // thread for minutes, so automated browsers always receive a valid placeholder.
+    // unmasked renderer string. Skip both GPU readback and image decoding there;
+    // thumbnails are decorative and must not block model import or publishing.
     if (navigator.webdriver || usesSoftwareWebGl(canvas)) {
       canvas.dataset.thumbnailCapture = navigator.webdriver
-        ? 'fallback-automated-browser'
-        : 'fallback-software-renderer';
-      return fallbackThumbnail();
+        ? 'skipped-automated-browser'
+        : 'skipped-software-renderer';
+      return skippedThumbnail();
     }
 
     // Scene operations are normally already complete when a thumbnail is
