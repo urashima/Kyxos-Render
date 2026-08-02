@@ -5,7 +5,13 @@ import type {
   KyxosViewer,
 } from '@kyxos/viewer';
 
-import { BrowserKyxosViewportAdapter } from './index';
+import {
+  BrowserKyxosViewportAdapter,
+  type CoordinateSpace,
+  type EditorTool,
+  type KyxosViewportAdapter,
+  type SnapSettings,
+} from './index';
 
 type AdapterInternals = BrowserKyxosViewportAdapter & {
   viewer: KyxosViewer | null;
@@ -14,6 +20,18 @@ type AdapterInternals = BrowserKyxosViewportAdapter & {
   tool: EditorTransformMode;
   coordinateSpace: EditorTransformSpace;
   snap: EditorTransformSnap;
+};
+
+type AdapterPrototype = {
+  mount: KyxosViewportAdapter['mount'];
+  loadDocument: KyxosViewportAdapter['loadDocument'];
+  applyPatch: KyxosViewportAdapter['applyPatch'];
+  select: KyxosViewportAdapter['select'];
+  setTool: KyxosViewportAdapter['setTool'];
+  setCoordinateSpace: KyxosViewportAdapter['setCoordinateSpace'];
+  setSnap: KyxosViewportAdapter['setSnap'];
+  dispose: KyxosViewportAdapter['dispose'];
+  [installed]: unknown;
 };
 
 interface NativeBridgeState {
@@ -60,7 +78,7 @@ function detachNativeBridge(adapter: BrowserKyxosViewportAdapter): void {
 }
 
 export function installNativeTransformBridge(): void {
-  const prototype = BrowserKyxosViewportAdapter.prototype as BrowserKyxosViewportAdapter['constructor']['prototype'] & Record<PropertyKey, unknown>;
+  const prototype = BrowserKyxosViewportAdapter.prototype as unknown as AdapterPrototype;
   if (prototype[installed]) return;
 
   const originalMount = prototype.mount;
@@ -134,7 +152,7 @@ export function installNativeTransformBridge(): void {
 
   prototype.setTool = function setToolWithNativeTransform(
     this: BrowserKyxosViewportAdapter,
-    tool,
+    tool: EditorTool,
   ): void {
     originalSetTool.call(this, tool);
     syncNativeControls(this);
@@ -142,7 +160,7 @@ export function installNativeTransformBridge(): void {
 
   prototype.setCoordinateSpace = function setCoordinateSpaceWithNativeTransform(
     this: BrowserKyxosViewportAdapter,
-    space,
+    space: CoordinateSpace,
   ): void {
     originalSetCoordinateSpace.call(this, space);
     syncNativeControls(this);
@@ -150,7 +168,7 @@ export function installNativeTransformBridge(): void {
 
   prototype.setSnap = function setSnapWithNativeTransform(
     this: BrowserKyxosViewportAdapter,
-    snap,
+    snap: SnapSettings,
   ): void {
     originalSetSnap.call(this, snap);
     syncNativeControls(this);
