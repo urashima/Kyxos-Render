@@ -14,14 +14,57 @@ on:
       - '.github/workflows/studio-glb-import-smoke.yml'
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: studio-glb-import-smoke-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
+  refactor-import:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout pull request
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+
+      - name: Apply one-time import transaction refactor
+        shell: bash
+        run: |
+          if grep -q "from './asset-import-runtime'" apps/studio/src/main.ts; then
+            echo "Studio import is already refactored."
+            exit 0
+          fi
+          python <<'PY'
+          from pathlib import Path
+
+          workflow = Path('.github/workflows/refactor-studio-import-once.yml').read_text()
+          marker = "          python <<'PY'\n"
+          start = workflow.index(marker) + len(marker)
+          end = workflow.index("\n          PY", start)
+          script = workflow[start:end]
+          script = '\n'.join(
+              line[10:] if line.startswith('          ') else line
+              for line in script.splitlines()
+          )
+          exec(compile(script, 'refactor-studio-import-once', 'exec'))
+          PY
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/studio/src/main.ts
+          git diff --cached --check
+          if git diff --cached --quiet; then
+            echo "No import refactor changes were required."
+            exit 0
+          fi
+          git commit -m "refactor Studio asset import jobs"
+          git push origin HEAD:${{ github.head_ref }}
+
   glb-import:
+    needs: refactor-import
     runs-on: ubuntu-24.04
     timeout-minutes: 12
     steps:
