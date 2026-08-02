@@ -24,7 +24,7 @@ test('orthographic view presets and frame all preserve native transform state', 
   const nodeId = await row.getAttribute('data-node');
   expect(nodeId).toBeTruthy();
 
-  await page.getByRole('button', { name: 'Move' }).click();
+  await page.getByRole('banner').getByRole('button', { name: 'Move', exact: true }).click();
   const canvas = page.locator('#studio-canvas');
   await expect(canvas).toHaveAttribute('data-editor-tool', 'translate');
   await expect(canvas).toHaveAttribute('data-editor-selection', nodeId!);

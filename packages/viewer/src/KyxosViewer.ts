@@ -652,9 +652,10 @@ export class KyxosViewer extends EventTarget {
     if (this.effects.fxaa.enabled) {
       try {
         // Three.js' official FXAANode explicitly consumes display-referred sRGB
-        // input. Feeding it the linear HDR effect chain can compile to an empty
-        // WebGPU output on SwiftShader, while SMAA correctly stays in linear space.
-        source = fxaa(renderOutput(source));
+        // input. `source` was converted with renderOutput() above, so wrapping it
+        // a second time double tone-maps the frame and can produce black WebGPU
+        // output on SwiftShader.
+        source = fxaa(source);
       } catch (error) {
         this.effectFailure('fxaa', error);
       }

@@ -211,15 +211,16 @@ async function openProject(project: ProjectSummary): Promise<void> {
   const currentRole = projectMembers.find((member) => member.userId === authSession.userId)?.role ?? 'viewer';
   const canEdit = roleCan(currentRole, 'project:edit');
   const canManageMembers = roleCan(currentRole, 'project:manage-members');
+  const starterScene = draft?.contract ?? createStudioSceneContract(project.name);
   let workspace: SceneWorkspaceService;
   try {
     workspace = new SceneWorkspaceService(
       storedWorkspace?.workspace as unknown as ProjectWorkspace
-        ?? createProjectWorkspace(project.id, draft?.contract ?? createEmptySceneContract(project.name)),
+        ?? createProjectWorkspace(project.id, starterScene),
     );
   } catch {
     workspace = new SceneWorkspaceService(
-      createProjectWorkspace(project.id, draft?.contract ?? createEmptySceneContract(project.name)),
+      createProjectWorkspace(project.id, starterScene),
     );
   }
   let workspaceRevision = storedWorkspace?.revision ?? 0;
@@ -2332,6 +2333,11 @@ async function openProject(project: ProjectSummary): Promise<void> {
           file,
           report,
         );
+        // Importing content must not silently reset the authored render profile.
+        // In particular, a new Studio project starts with an interactive profile
+        // so software/WebGL fallbacks do not compile the full cinematic graph
+        // while a model is being accepted.
+        imported.renderSettings = structuredClone(document.value.renderSettings);
         if (externalBundle) {
           imported.metadata.source = {
             ...(imported.metadata.source ?? {}),
@@ -3308,6 +3314,14 @@ function mimeFor(extension: string): string {
       ktx2: 'image/ktx2',
     } as Record<string, string>
   )[extension] ?? 'application/octet-stream';
+}
+
+function createStudioSceneContract(name: string): KyxosSceneContract {
+  const scene = createEmptySceneContract(name);
+  // The editor viewport prioritizes interaction and can be raised explicitly in
+  // Render Settings. Public Viewer continues to honor the saved scene preset.
+  scene.renderSettings.qualityPreset = 'low';
+  return scene;
 }
 
 async function parseGlb(file: File): Promise<any> {
