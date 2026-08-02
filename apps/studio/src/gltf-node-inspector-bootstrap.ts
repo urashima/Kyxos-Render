@@ -20,7 +20,7 @@ interface InspectorGlobal {
 
 let activeDocument: SceneDocument | null = null;
 let renderQueued = false;
-let observer: MutationObserver | null = null;
+let domEventsInstalled = false;
 
 function selectedNodeIds(): string[] {
   return Array.from(
@@ -76,7 +76,9 @@ function renderInspector(): void {
 
   if (!authorable.length) {
     existing.forEach((element) => element.remove());
-    delete container.dataset.gltfInspectorSignature;
+    if (container.hasAttribute('data-gltf-inspector-signature')) {
+      container.removeAttribute('data-gltf-inspector-signature');
+    }
     return;
   }
   if (
@@ -102,7 +104,7 @@ function renderInspector(): void {
 function queueInspectorRender(): void {
   if (renderQueued || typeof document === 'undefined') return;
   renderQueued = true;
-  queueMicrotask(renderInspector);
+  window.setTimeout(renderInspector, 0);
 }
 
 function installDocumentCapture(): void {
@@ -125,29 +127,29 @@ function installDocumentCapture(): void {
   prototype.__kyxosGltfInspectorInstalled = true;
 }
 
-function installDomObserver(): void {
-  if (typeof document === 'undefined' || observer) return;
-  const start = () => {
-    if (!document.body || observer) return;
-    observer = new MutationObserver(queueInspectorRender);
-    observer.observe(document.body, {
-      childList: true,
-      subtree: true,
-      attributes: true,
-      attributeFilter: ['aria-selected', 'class', 'data-node'],
-    });
-    queueInspectorRender();
-  };
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', start, { once: true });
-  } else {
-    start();
-  }
+function installDomEvents(): void {
+  if (typeof document === 'undefined' || domEventsInstalled) return;
+  domEventsInstalled = true;
+  document.addEventListener('click', (event) => {
+    if ((event.target as Element | null)?.closest('.hierarchy-row')) {
+      queueInspectorRender();
+    }
+  }, true);
+  document.addEventListener('keydown', (event) => {
+    if (
+      event.key === 'ArrowUp'
+      || event.key === 'ArrowDown'
+      || event.key === 'Home'
+      || event.key === 'End'
+    ) {
+      queueInspectorRender();
+    }
+  }, true);
 }
 
 export function installGltfNodeInspectorBootstrap(): void {
   installDocumentCapture();
-  installDomObserver();
+  installDomEvents();
 }
 
 installGltfNodeInspectorBootstrap();
