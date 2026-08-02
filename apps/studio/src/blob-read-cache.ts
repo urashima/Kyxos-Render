@@ -1,18 +1,18 @@
 import './glb-import-diagnostics';
 
-const originalArrayBuffer = Blob.prototype.arrayBuffer;
-const cachedReads = new WeakMap<Blob, Promise<ArrayBuffer>>();
+const originalFileArrayBuffer = File.prototype.arrayBuffer;
+const cachedReads = new WeakMap<File, Promise<ArrayBuffer>>();
 const READ_TIMEOUT_MS = 30_000;
 
-function readBlob(blob: Blob): Promise<ArrayBuffer> {
+function readFile(file: File): Promise<ArrayBuffer> {
   if (typeof FileReader === 'undefined') {
-    return originalArrayBuffer.call(blob);
+    return originalFileArrayBuffer.call(file);
   }
   return new Promise<ArrayBuffer>((resolve, reject) => {
     const reader = new FileReader();
     const timeout = window.setTimeout(() => {
       reader.abort();
-      reject(new Error(`Reading ${blob instanceof File ? blob.name : 'blob'} timed out.`));
+      reject(new Error(`Reading ${file.name} timed out.`));
     }, READ_TIMEOUT_MS);
     const finish = (callback: () => void) => {
       window.clearTimeout(timeout);
@@ -23,28 +23,29 @@ function readBlob(blob: Blob): Promise<ArrayBuffer> {
     };
     reader.onload = () => finish(() => {
       if (!(reader.result instanceof ArrayBuffer)) {
-        reject(new Error('Blob reader returned an unexpected result.'));
+        reject(new Error('File reader returned an unexpected result.'));
         return;
       }
       resolve(reader.result);
     });
-    reader.onerror = () => finish(() => reject(reader.error ?? new Error('Blob reading failed.')));
-    reader.onabort = () => finish(() => reject(new Error('Blob reading was aborted.')));
-    reader.readAsArrayBuffer(blob);
+    reader.onerror = () => finish(() => reject(reader.error ?? new Error('File reading failed.')));
+    reader.onabort = () => finish(() => reject(new Error('File reading was aborted.')));
+    reader.readAsArrayBuffer(file);
   });
 }
 
 /**
- * Studio imports hash and parse the same File. Chromium can stall when an
- * ephemeral File supplied by a picker/test is read repeatedly while a worker is
- * also receiving a transferable buffer. Cache one FileReader result and return
- * a fresh copy for every consumer so transferring a parser copy never detaches
- * the cached source.
+ * Studio hashes and parses the same user-selected File. Cache that one source
+ * read and return a fresh copy to each consumer so transferring the parser copy
+ * cannot detach the cached bytes.
+ *
+ * Do not patch Blob.prototype: Three.js loads persisted models from Blob URLs,
+ * and replacing the platform Blob reader also intercepts that runtime path.
  */
-Blob.prototype.arrayBuffer = function guardedArrayBuffer(): Promise<ArrayBuffer> {
+File.prototype.arrayBuffer = function guardedFileArrayBuffer(): Promise<ArrayBuffer> {
   let cached = cachedReads.get(this);
   if (!cached) {
-    cached = readBlob(this);
+    cached = readFile(this);
     cachedReads.set(this, cached);
     cached.catch(() => cachedReads.delete(this));
   }
