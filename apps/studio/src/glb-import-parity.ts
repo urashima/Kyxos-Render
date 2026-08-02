@@ -22,9 +22,11 @@ interface PrimitiveImportReport {
 }
 
 interface MeshImportReport {
-  meshIndex: number;
+  meshIndex?: number;
+  index?: number;
   name: string;
   weights: number[];
+  extras?: { targetNames?: string[] };
   targetNames?: string[];
   primitives: PrimitiveImportReport[];
 }
@@ -45,11 +47,18 @@ interface GlbImportMetadata {
   textures?: unknown[];
   samplers?: unknown[];
   meshPrimitives?: MeshImportReport[];
+  meshes?: MeshImportReport[];
   skins?: unknown[];
+  lights?: GltfPunctualLight[];
   rootExtensions?: {
     KHR_lights_punctual?: { lights?: GltfPunctualLight[] };
     [key: string]: unknown;
   };
+}
+
+interface GlbParityGlobal {
+  __kyxosLastGlbImportReport?: GlbImportMetadata;
+  __kyxosImportThumbnailPostprocess?: boolean;
 }
 
 interface SceneDocumentPrototype {
@@ -108,11 +117,19 @@ function defaultPrimitiveMaterial(): SceneMaterial {
   };
 }
 
+function asImportMetadata(value: unknown): GlbImportMetadata | null {
+  return value && !Array.isArray(value) && typeof value === 'object'
+    ? value as GlbImportMetadata
+    : null;
+}
+
 function readImportMetadata(scene: KyxosSceneContract): GlbImportMetadata | null {
   const model = Object.values(scene.assets).find((asset) => asset.kind === 'model');
-  const metadata = model?.metadata?.textures;
-  if (!metadata || Array.isArray(metadata) || typeof metadata !== 'object') return null;
-  return metadata as GlbImportMetadata;
+  const embedded = asImportMetadata(model?.metadata?.gltfImportReport);
+  if (embedded) return embedded;
+  return asImportMetadata(
+    (globalThis as typeof globalThis & GlbParityGlobal).__kyxosLastGlbImportReport,
+  );
 }
 
 function readReimportMode(
@@ -137,7 +154,6 @@ function errorSummary(value: unknown): Record<string, unknown> {
   return { message: String(value) };
 }
 
-/** Convert renderer, DOM, Error and cyclic values to structured-clone-safe diagnostics. */
 export function normalizeImportDiagnostic(
   value: unknown,
   seen = new WeakSet<object>(),
@@ -232,7 +248,9 @@ function restorePunctualLights(
   scene: KyxosSceneContract,
   metadata: GlbImportMetadata,
 ): void {
-  const definitions = metadata.rootExtensions?.KHR_lights_punctual?.lights ?? [];
+  const definitions = metadata.rootExtensions?.KHR_lights_punctual?.lights
+    ?? metadata.lights
+    ?? [];
   if (!definitions.length) return;
   const lights: SceneLight[] = [];
 
@@ -269,7 +287,6 @@ function restorePunctualLights(
   if (lights.length) scene.lights = lights.slice(0, 4);
 }
 
-/** Restore all primitive slots, morph defaults and root glTF component data. */
 export function normalizeGlbImportContract(
   input: KyxosSceneContract,
 ): KyxosSceneContract {
@@ -292,9 +309,10 @@ export function normalizeGlbImportContract(
     return material.id;
   };
 
+  const meshes = metadata.meshPrimitives ?? metadata.meshes ?? [];
   for (const node of scene.nodes) {
     if (node.meshIndex == null) continue;
-    const mesh = metadata.meshPrimitives?.find((entry) => entry.meshIndex === node.meshIndex);
+    const mesh = meshes.find((entry) => (entry.meshIndex ?? entry.index) === node.meshIndex);
     if (!mesh) continue;
 
     node.materialSlots = mesh.primitives.map((primitive) =>
@@ -313,8 +331,9 @@ export function normalizeGlbImportContract(
       gltfMeshWeights: mesh.weights,
       gltfMorphDefaultWeights: structuredClone(defaults),
     };
-    if ((!node.morphTargetNames?.length) && mesh.targetNames?.length) {
-      node.morphTargetNames = structuredClone(mesh.targetNames);
+    const targetNames = mesh.targetNames ?? mesh.extras?.targetNames;
+    if ((!node.morphTargetNames?.length) && targetNames?.length) {
+      node.morphTargetNames = structuredClone(targetNames);
     }
   }
 
@@ -334,16 +353,21 @@ function installSceneContractNormalization(): void {
     let next = source === 'import-glb' ? normalizeGlbImportContract(scene) : scene;
     if (source === 'import-glb') {
       const mode = readReimportMode(next);
-      if (mode) {
-        next = mergeReimportedSceneWithOverrides(this.value, next, mode);
-      }
+      if (mode) next = mergeReimportedSceneWithOverrides(this.value, next, mode);
     }
     originalReplace.call(this, next, source);
+    if (source === 'import-glb') {
+      (globalThis as typeof globalThis & GlbParityGlobal).__kyxosLastGlbImportReport = undefined;
+      console.info('[studio-import] document-activated', {
+        nodes: this.value.nodes.length,
+        assets: Object.keys(this.value.assets).length,
+        lights: this.value.lights?.length ?? 0,
+      });
+    }
   };
   prototype.__kyxosGlbParityInstalled = true;
 }
 
-/** Mirror the PlayCanvas asset-task lifecycle without coupling editor-core to Studio. */
 function installImportLifecycle(): void {
   const prototype = ImportTaskQueue.prototype as unknown as ImportTaskQueuePrototype;
   if (prototype.__kyxosImportLifecycleInstalled) return;
@@ -400,13 +424,20 @@ function installSafeImportDiagnostics(): void {
   prototype.__kyxosSafeImportDiagnosticsInstalled = true;
 }
 
-/** Return a deterministic PNG when optional GPU thumbnail readback is unavailable. */
 function installNonBlockingThumbnailCapture(): void {
   const prototype = BrowserKyxosViewportAdapter.prototype as unknown as ViewportAdapterPrototype;
   if (prototype.__kyxosNonBlockingThumbnailInstalled) return;
 
   const originalCapture = prototype.captureThumbnail;
   prototype.captureThumbnail = async function captureThumbnailBestEffort() {
+    const runtime = globalThis as typeof globalThis & GlbParityGlobal;
+    if (runtime.__kyxosImportThumbnailPostprocess) {
+      emitImportLifecycle('thumbnail', 'postprocess-fallback', 1);
+      if (typeof document !== 'undefined') {
+        document.documentElement.dataset.importThumbnailFallback = 'true';
+      }
+      return fallbackThumbnail();
+    }
     try {
       return await originalCapture.call(this);
     } catch (error) {
