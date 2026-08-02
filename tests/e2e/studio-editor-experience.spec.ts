@@ -24,7 +24,7 @@ test('Studio Tools exposes search, persisted settings, notifications, help and i
   await expect(dialog.getByRole('button', { name: /Validate Scene Contract/ })).toBeVisible();
 
   await dialog.getByRole('button', { name: 'Settings' }).click();
-  const compact = dialog.getByText('Compact editor density').locator('..').getByRole('checkbox');
+  const compact = dialog.getByText('Compact editor density').locator('..').locator('input[type="checkbox"]');
   await compact.check();
   await expect(page.locator('.kyxos-studio-shell')).toHaveClass(/compact-density/);
   expect(await page.evaluate(() => localStorage.getItem('kyxos.studio.user-settings.v1'))).toContain('compactDensity');
@@ -43,10 +43,11 @@ test('Studio Tools exposes search, persisted settings, notifications, help and i
     ),
   });
   await expect(dialog.locator('.image-inspection')).toContainText('1 × 1');
-  const download = page.waitForEvent('download');
+  const downloadPromise = page.waitForEvent('download');
   await dialog.getByRole('button', { name: 'Convert image' }).click();
-  await expect(await download).toHaveSuggestedFilename('one-pixel-converted.png');
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe('one-pixel-converted.png');
 
   await dialog.getByRole('button', { name: /Notifications/ }).click();
-  await expect(dialog.getByText(/No notifications|Asset|Studio/)).toBeVisible();
+  await expect(dialog.getByText('No notifications match this filter.')).toBeVisible();
 });
