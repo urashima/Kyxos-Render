@@ -5,6 +5,7 @@ import './lightingApi';
 import './capabilityApi';
 import './environmentApi';
 import './editorTransformControls';
+import './editorViewportHelpers';
 import './editorViewportNavigation';
 
 import { KyxosViewer } from './KyxosViewer';
@@ -39,6 +40,10 @@ export {
   DEFAULT_SCREEN_SPACE_SSS_SETTINGS,
   resolveScreenSpaceSSSSettings,
 } from './materials/screenSpaceSSS';
+export {
+  DEFAULT_EDITOR_VIEWPORT_HELPERS,
+  type EditorViewportHelperSettings,
+} from './editorViewportHelpers';
 export type { AnimationState, CameraState, PickResult } from './sceneTypes';
 export type {
   EditorTransformMode,
