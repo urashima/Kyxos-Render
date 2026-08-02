@@ -1,5 +1,6 @@
 const installed = Symbol.for('kyxos.imageBitmapGuard.installed');
 const IMAGE_BITMAP_TIMEOUT_MS = 5_000;
+const skippedThumbnailType = 'application/x-kyxos-thumbnail-skip';
 
 type GuardGlobal = typeof globalThis & {
   [installed]?: boolean;
@@ -13,11 +14,25 @@ function hasActiveImportTransaction(): boolean {
   );
 }
 
+function isSkippedThumbnailSource(source: unknown): boolean {
+  return source instanceof Blob && source.type === skippedThumbnailType;
+}
+
 const guardGlobal = globalThis as GuardGlobal;
 const originalCreateImageBitmap = globalThis.createImageBitmap?.bind(globalThis);
 
 if (!guardGlobal[installed] && originalCreateImageBitmap) {
   const guardedCreateImageBitmap = ((...args: unknown[]): Promise<ImageBitmap> => {
+    // The viewport adapter uses a dedicated MIME type when thumbnail generation
+    // is intentionally skipped. Reject that sentinel before calling the browser
+    // decoder; unlike DOM status classes, the Blob travels with the exact request.
+    if (isSkippedThumbnailSource(args[0])) {
+      document.documentElement.dataset.imageBitmapGuard = 'skipped-thumbnail-blob';
+      return Promise.reject(
+        new DOMException('Thumbnail decoding was intentionally skipped.', 'AbortError'),
+      );
+    }
+
     // Asset thumbnails are optional decoration. Never invoke the browser image
     // decoder while an import transaction is active: software Chromium can block
     // synchronously inside createImageBitmap before a timeout can even be armed.
