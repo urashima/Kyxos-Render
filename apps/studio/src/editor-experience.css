@@ -1,0 +1,213 @@
+.advanced-tools-dialog {
+  width: min(1120px, calc(100vw - 48px));
+  max-height: min(860px, calc(100vh - 48px));
+}
+
+.advanced-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--pcui-border, #343a46);
+}
+
+.advanced-tools-content {
+  min-height: 420px;
+  max-height: calc(100vh - 190px);
+  overflow: auto;
+  padding: 16px;
+}
+
+.global-search-input,
+.help-topic-list + input,
+.studio-settings-form input[type='number'] {
+  width: 100%;
+}
+
+.global-search-results,
+.notification-list,
+.help-topic-list,
+.onboarding-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.global-search-result {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  width: 100%;
+  min-height: 54px;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px;
+  text-align: left;
+}
+
+.global-search-copy,
+.notification-copy,
+.onboarding-step > span,
+.help-topic summary {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.global-search-copy small,
+.notification-copy small,
+.onboarding-step small,
+.help-topic summary small {
+  color: var(--pcui-text-secondary, #9ca7b7);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.search-kind {
+  display: inline-flex;
+  justify-content: center;
+  border: 1px solid var(--pcui-border, #3d4655);
+  border-radius: 999px;
+  padding: 3px 8px;
+  color: var(--pcui-text-secondary, #a7b0bf);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.notification-row,
+.settings-row,
+.onboarding-step,
+.help-topic,
+.image-inspection {
+  border: 1px solid var(--pcui-border, #343a46);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--pcui-bg, #20242c) 92%, white 8%);
+}
+
+.notification-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  padding: 12px;
+  border-left-width: 3px;
+}
+
+.notification-row.info { border-left-color: #5f9cff; }
+.notification-row.success { border-left-color: #58c98b; }
+.notification-row.warning { border-left-color: #e7b257; }
+.notification-row.error { border-left-color: #ef6b73; }
+.notification-row.read { opacity: 0.68; }
+.notification-copy p { margin: 2px 0; }
+.notification-copy code { max-height: 100px; overflow: auto; }
+
+.studio-settings-form {
+  display: grid;
+  gap: 8px;
+}
+
+.settings-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(110px, 220px);
+  align-items: center;
+  gap: 16px;
+  padding: 10px 12px;
+}
+
+.settings-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.inline-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.onboarding-step {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  padding: 10px 12px;
+}
+
+.onboarding-step.complete strong {
+  text-decoration: line-through;
+  opacity: 0.75;
+}
+
+.help-topic {
+  padding: 0;
+}
+
+.help-topic summary {
+  cursor: pointer;
+  padding: 11px 12px;
+}
+
+.help-topic p,
+.help-topic kbd {
+  margin: 0 12px 12px;
+}
+
+.image-inspection {
+  min-height: 120px;
+  padding: 12px;
+  overflow: auto;
+}
+
+.image-tool-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(90px, 1fr)) repeat(2, minmax(120px, 1fr));
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.image-tool-preview {
+  display: block;
+  max-width: 100%;
+  max-height: 420px;
+  margin: 12px auto 0;
+  border: 1px solid var(--pcui-border, #343a46);
+  background-image:
+    linear-gradient(45deg, #333 25%, transparent 25%),
+    linear-gradient(-45deg, #333 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #333 75%),
+    linear-gradient(-45deg, transparent 75%, #333 75%);
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+  background-size: 16px 16px;
+}
+
+.studio-root.compact-density {
+  --kyxos-panel-gap: 4px;
+}
+
+.studio-root.reduced-motion *,
+.studio-root.reduced-motion *::before,
+.studio-root.reduced-motion *::after {
+  scroll-behavior: auto !important;
+  transition-duration: 0.01ms !important;
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+}
+
+@media (max-width: 760px) {
+  .advanced-tools-dialog {
+    width: calc(100vw - 20px);
+  }
+
+  .global-search-result,
+  .notification-row,
+  .settings-row {
+    grid-template-columns: 1fr;
+  }
+
+  .image-tool-controls {
+    grid-template-columns: 1fr 1fr;
+  }
+}
