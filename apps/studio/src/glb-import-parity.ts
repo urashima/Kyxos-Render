@@ -3,8 +3,10 @@ import {
   ImportTaskQueue,
   SceneDocument,
 } from '@kyxos/editor-core';
+import { mergeReimportedSceneWithOverrides } from '@kyxos/editor-core/reimport';
 import type {
   KyxosSceneContract,
+  SceneLight,
   SceneMaterial,
 } from '@kyxos/scene-contract';
 import { BrowserKyxosViewportAdapter } from '@kyxos/viewer-adapter';
@@ -23,7 +25,20 @@ interface MeshImportReport {
   meshIndex: number;
   name: string;
   weights: number[];
+  targetNames?: string[];
   primitives: PrimitiveImportReport[];
+}
+
+interface GltfPunctualLight {
+  name?: string;
+  type?: 'directional' | 'point' | 'spot';
+  color?: number[];
+  intensity?: number;
+  range?: number;
+  spot?: {
+    innerConeAngle?: number;
+    outerConeAngle?: number;
+  };
 }
 
 interface GlbImportMetadata {
@@ -31,11 +46,15 @@ interface GlbImportMetadata {
   samplers?: unknown[];
   meshPrimitives?: MeshImportReport[];
   skins?: unknown[];
-  rootExtensions?: Record<string, unknown>;
+  rootExtensions?: {
+    KHR_lights_punctual?: { lights?: GltfPunctualLight[] };
+    [key: string]: unknown;
+  };
 }
 
 interface SceneDocumentPrototype {
   replace(scene: KyxosSceneContract, source?: string): void;
+  value: KyxosSceneContract;
   __kyxosGlbParityInstalled?: boolean;
 }
 
@@ -96,6 +115,16 @@ function readImportMetadata(scene: KyxosSceneContract): GlbImportMetadata | null
   return metadata as GlbImportMetadata;
 }
 
+function readReimportMode(
+  scene: KyxosSceneContract,
+): 'replace' | 'keep-overrides' | 'reset-overrides' | null {
+  const model = Object.values(scene.assets).find((asset) => asset.kind === 'model');
+  const mode = model?.metadata?.reimportMode;
+  return mode === 'replace' || mode === 'keep-overrides' || mode === 'reset-overrides'
+    ? mode
+    : null;
+}
+
 function errorSummary(value: unknown): Record<string, unknown> {
   if (value instanceof Error) {
     return {
@@ -108,12 +137,7 @@ function errorSummary(value: unknown): Record<string, unknown> {
   return { message: String(value) };
 }
 
-/**
- * Diagnostic payloads are allowed to contain Error, DOM and renderer objects.
- * DiagnosticConsole deliberately clones entries, so import warnings must first
- * be converted to a structured-clone-safe representation. A failed optional
- * diagnostic must never turn a completed asset import into a failed task.
- */
+/** Convert renderer, DOM, Error and cyclic values to structured-clone-safe diagnostics. */
 export function normalizeImportDiagnostic(
   value: unknown,
   seen = new WeakSet<object>(),
@@ -139,14 +163,9 @@ export function normalizeImportDiagnostic(
     };
   }
   if (ArrayBuffer.isView(value)) {
-    return {
-      kind: value.constructor.name,
-      byteLength: value.byteLength,
-    };
+    return { kind: value.constructor.name, byteLength: value.byteLength };
   }
-  if (value instanceof ArrayBuffer) {
-    return { kind: 'ArrayBuffer', byteLength: value.byteLength };
-  }
+  if (value instanceof ArrayBuffer) return { kind: 'ArrayBuffer', byteLength: value.byteLength };
   if (typeof Node !== 'undefined' && value instanceof Node) {
     return {
       kind: value.constructor.name,
@@ -157,9 +176,7 @@ export function normalizeImportDiagnostic(
   if (typeof value !== 'object') return String(value);
   if (seen.has(value)) return '[Circular]';
   seen.add(value);
-  if (Array.isArray(value)) {
-    return value.map((entry) => normalizeImportDiagnostic(entry, seen));
-  }
+  if (Array.isArray(value)) return value.map((entry) => normalizeImportDiagnostic(entry, seen));
 
   const result: Record<string, unknown> = {};
   for (const key of Object.keys(value)) {
@@ -192,9 +209,7 @@ function emitImportLifecycle(
   };
   document.documentElement.dataset.importLifecycleStage = stage;
   document.dispatchEvent(
-    new CustomEvent<StudioImportLifecycleDetail>('kyxos:studio-import-lifecycle', {
-      detail,
-    }),
+    new CustomEvent<StudioImportLifecycleDetail>('kyxos:studio-import-lifecycle', { detail }),
   );
 }
 
@@ -204,17 +219,62 @@ function fallbackThumbnail(): Blob {
   return new Blob([bytes], { type: 'image/png' });
 }
 
-/**
- * Restores every glTF primitive-to-material binding after the importer creates
- * its initial Scene Contract. The old path selected only primitives[0], which
- * made additional material slots invisible to the Inspector even though the
- * runtime loader rendered them.
- */
+function linearRgbHex(value: number[] | undefined): string {
+  const components = value?.slice(0, 3) ?? [1, 1, 1];
+  return `#${components
+    .map((component) => Math.round(Math.max(0, Math.min(1, component)) * 255)
+      .toString(16)
+      .padStart(2, '0'))
+    .join('')}`;
+}
+
+function restorePunctualLights(
+  scene: KyxosSceneContract,
+  metadata: GlbImportMetadata,
+): void {
+  const definitions = metadata.rootExtensions?.KHR_lights_punctual?.lights ?? [];
+  if (!definitions.length) return;
+  const lights: SceneLight[] = [];
+
+  for (const node of scene.nodes) {
+    const extensions = node.metadata?.gltfExtensions as
+      | { KHR_lights_punctual?: { light?: number } }
+      | undefined;
+    const lightIndex = extensions?.KHR_lights_punctual?.light;
+    if (typeof lightIndex !== 'number') continue;
+    const definition = definitions[lightIndex];
+    if (!definition) continue;
+    const spot = definition.spot ?? {};
+    const id = node.lightId ?? crypto.randomUUID();
+    node.lightId = id;
+    lights.push({
+      id,
+      name: definition.name || node.name || `Light ${lightIndex + 1}`,
+      type: definition.type === 'point' || definition.type === 'spot'
+        ? definition.type
+        : 'directional',
+      color: linearRgbHex(definition.color),
+      intensity: definition.intensity ?? 1,
+      transform: structuredClone(node.transform),
+      castShadow: true,
+      range: definition.range,
+      decay: definition.type === 'directional' ? undefined : 2,
+      innerConeAngle: definition.type === 'spot' ? spot.innerConeAngle ?? 0 : undefined,
+      outerConeAngle: definition.type === 'spot'
+        ? spot.outerConeAngle ?? Math.PI / 4
+        : undefined,
+    });
+  }
+
+  if (lights.length) scene.lights = lights.slice(0, 4);
+}
+
+/** Restore all primitive slots, morph defaults and root glTF component data. */
 export function normalizeGlbImportContract(
   input: KyxosSceneContract,
 ): KyxosSceneContract {
   const metadata = readImportMetadata(input);
-  if (!metadata?.meshPrimitives?.length) return input;
+  if (!metadata) return input;
 
   const scene = structuredClone(input);
   const materialsByGltfIndex = new Map<number, string>();
@@ -234,9 +294,7 @@ export function normalizeGlbImportContract(
 
   for (const node of scene.nodes) {
     if (node.meshIndex == null) continue;
-    const mesh = metadata.meshPrimitives.find(
-      (entry) => entry.meshIndex === node.meshIndex,
-    );
+    const mesh = metadata.meshPrimitives?.find((entry) => entry.meshIndex === node.meshIndex);
     if (!mesh) continue;
 
     node.materialSlots = mesh.primitives.map((primitive) =>
@@ -244,17 +302,23 @@ export function normalizeGlbImportContract(
         ? getFallbackMaterial()
         : materialsByGltfIndex.get(primitive.material) ?? getFallbackMaterial(),
     );
+    const defaults = node.morphWeights?.length
+      ? node.morphWeights
+      : mesh.weights ?? [];
     node.metadata = {
       ...(node.metadata ?? {}),
       gltfPrimitiveCount: mesh.primitives.length,
       gltfPrimitiveModes: mesh.primitives.map((primitive) => primitive.mode),
-      gltfMorphTargetCounts: mesh.primitives.map(
-        (primitive) => primitive.targets.length,
-      ),
+      gltfMorphTargetCounts: mesh.primitives.map((primitive) => primitive.targets.length),
       gltfMeshWeights: mesh.weights,
+      gltfMorphDefaultWeights: structuredClone(defaults),
     };
+    if ((!node.morphTargetNames?.length) && mesh.targetNames?.length) {
+      node.morphTargetNames = structuredClone(mesh.targetNames);
+    }
   }
 
+  restorePunctualLights(scene, metadata);
   return scene;
 }
 
@@ -267,21 +331,19 @@ function installSceneContractNormalization(): void {
     scene: KyxosSceneContract,
     source = 'replace',
   ): void {
-    originalReplace.call(
-      this,
-      source === 'import-glb' ? normalizeGlbImportContract(scene) : scene,
-      source,
-    );
+    let next = source === 'import-glb' ? normalizeGlbImportContract(scene) : scene;
+    if (source === 'import-glb') {
+      const mode = readReimportMode(next);
+      if (mode) {
+        next = mergeReimportedSceneWithOverrides(this.value, next, mode);
+      }
+    }
+    originalReplace.call(this, next, source);
   };
   prototype.__kyxosGlbParityInstalled = true;
 }
 
-/**
- * PlayCanvas Editor treats import as a stateful task rather than a single UI
- * promise. Mirror that contract here without coupling the editor core to the
- * Studio application: queued/progress/core-complete/failed are observable and
- * post-processing may report warnings independently.
- */
+/** Mirror the PlayCanvas asset-task lifecycle without coupling editor-core to Studio. */
 function installImportLifecycle(): void {
   const prototype = ImportTaskQueue.prototype as unknown as ImportTaskQueuePrototype;
   if (prototype.__kyxosImportLifecycleInstalled) return;
@@ -338,12 +400,7 @@ function installSafeImportDiagnostics(): void {
   prototype.__kyxosSafeImportDiagnosticsInstalled = true;
 }
 
-/**
- * Thumbnail capture is an optional post-import task. WebGL/WebGPU readback may
- * legitimately be unavailable in headless browsers, lost contexts or tainted
- * canvases. Return a deterministic PNG placeholder and let the asset become
- * ready instead of keeping the import queue in uploading/building forever.
- */
+/** Return a deterministic PNG when optional GPU thumbnail readback is unavailable. */
 function installNonBlockingThumbnailCapture(): void {
   const prototype = BrowserKyxosViewportAdapter.prototype as unknown as ViewportAdapterPrototype;
   if (prototype.__kyxosNonBlockingThumbnailInstalled) return;
