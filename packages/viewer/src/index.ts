@@ -13,6 +13,7 @@ import { installEditorSceneModeExtension } from './editorSceneMode';
 import { installScreenSpaceSSSExtension } from './materials/screenSpaceSSS';
 import { installScreenSpaceSSSDebugExtension } from './materials/screenSpaceSSSDebug';
 import { installViewerMetricsBroadcast } from './metricsBroadcast';
+import { installNonBlockingVisibilityRecovery } from './nonBlockingVisibilityRecovery';
 import { installSSSStudyModelExtension } from './scene/sssStudyModel';
 import { installSsrEnvironmentGuard } from './ssrEnvironmentGuard';
 import { installTimestampQueryGuard } from './timestampQueryGuard';
@@ -21,6 +22,7 @@ import { installTimestampQueryGuard } from './timestampQueryGuard';
 // guard the pinned stochastic SSR path before applications create a viewer.
 installTimestampQueryGuard(KyxosViewer as unknown as Parameters<typeof installTimestampQueryGuard>[0]);
 installSsrEnvironmentGuard();
+installNonBlockingVisibilityRecovery(KyxosViewer);
 
 // Scene API is installed by the side-effect import above. Studio scene mode then
 // removes the procedural playground model and unmanaged lights before loading
