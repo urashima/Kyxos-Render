@@ -26,11 +26,42 @@ export interface ImportPostprocessFailureDetail {
   error: unknown;
 }
 
+export interface ImportStepLifecycleDetail {
+  id: string;
+  stage: ImportTaskStage | 'core-complete';
+  state: 'start' | 'complete' | 'scheduled' | 'failed';
+  progress: number;
+  aborted: boolean;
+  error?: string;
+}
+
 export function throwIfImportAborted(signal: AbortSignal): void {
   if (!signal.aborted) return;
   throw signal.reason instanceof Error
     ? signal.reason
     : new DOMException('Asset import was cancelled.', 'AbortError');
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function reportImportStep(detail: ImportStepLifecycleDetail): void {
+  const suffix = detail.error ? ` · ${detail.error}` : '';
+  console.info(
+    `[studio-import] ${detail.id} · ${detail.state} · ${detail.stage} · ${detail.progress}${suffix}`,
+  );
+  if (typeof document === 'undefined') return;
+  document.documentElement.dataset.importStep = detail.id;
+  document.documentElement.dataset.importStepState = detail.state;
+  document.documentElement.dataset.importStepStage = detail.stage;
+  document.documentElement.dataset.importStepProgress = String(detail.progress);
+  document.documentElement.dataset.importStepAborted = String(detail.aborted);
+  document.dispatchEvent(
+    new CustomEvent<ImportStepLifecycleDetail>('kyxos:studio-import-step', {
+      detail,
+    }),
+  );
 }
 
 function reportPostprocessFailure(label: string, error: unknown): void {
@@ -58,21 +89,83 @@ export async function runImportJob<TState>(
   for (const step of steps) {
     throwIfImportAborted(context.signal);
     const progress = Math.max(lastProgress, Math.min(0.99, step.progress));
-    context.report(step.stage, progress);
-    lastProgress = progress;
+    const postprocess = step.completion === 'postprocess' || step.id.startsWith('activate-');
+    reportImportStep({
+      id: step.id,
+      stage: step.stage,
+      state: 'start',
+      progress,
+      aborted: context.signal.aborted,
+    });
 
-    if (step.completion === 'postprocess' || step.id.startsWith('activate-')) {
-      scheduleImportPostprocess({
-        label: step.id,
-        run: () => step.run(state, context.signal),
-        onWarning: reportPostprocessFailure,
+    try {
+      context.report(step.stage, progress);
+      lastProgress = progress;
+
+      if (postprocess) {
+        scheduleImportPostprocess({
+          label: step.id,
+          run: async () => {
+            await step.run(state, context.signal);
+            reportImportStep({
+              id: step.id,
+              stage: step.stage,
+              state: 'complete',
+              progress,
+              aborted: context.signal.aborted,
+            });
+          },
+          onWarning(label, error) {
+            reportImportStep({
+              id: label,
+              stage: step.stage,
+              state: 'failed',
+              progress,
+              aborted: context.signal.aborted,
+              error: errorMessage(error),
+            });
+            reportPostprocessFailure(label, error);
+          },
+        });
+        reportImportStep({
+          id: step.id,
+          stage: step.stage,
+          state: 'scheduled',
+          progress,
+          aborted: context.signal.aborted,
+        });
+        continue;
+      }
+
+      await step.run(state, context.signal);
+      throwIfImportAborted(context.signal);
+      reportImportStep({
+        id: step.id,
+        stage: step.stage,
+        state: 'complete',
+        progress,
+        aborted: context.signal.aborted,
       });
-      continue;
+    } catch (error) {
+      reportImportStep({
+        id: step.id,
+        stage: step.stage,
+        state: 'failed',
+        progress,
+        aborted: context.signal.aborted,
+        error: errorMessage(error),
+      });
+      throw error;
     }
-
-    await step.run(state, context.signal);
-    throwIfImportAborted(context.signal);
   }
+
+  reportImportStep({
+    id: 'core-import',
+    stage: 'core-complete',
+    state: 'complete',
+    progress: 1,
+    aborted: context.signal.aborted,
+  });
   return state;
 }
 
