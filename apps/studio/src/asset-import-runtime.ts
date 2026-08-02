@@ -8,8 +8,8 @@ export interface ImportJobStep<TState> {
   /** Monotonic progress value reported before this step starts. */
   progress: number;
   /**
-   * Viewport activation and other consumer refreshes are post-processing. They
-   * start in order but do not control whether the imported asset is ready.
+   * Only explicitly optional work may be detached from the import transaction.
+   * Scene activation, hierarchy refresh and runtime resource creation stay core.
    */
   completion?: 'core' | 'postprocess';
   run(state: TState, signal: AbortSignal): Promise<void> | void;
@@ -106,10 +106,9 @@ function completionMessage(state: unknown): string {
 }
 
 /**
- * Commit the durable core completion status before any optional Console,
- * plugin, renderer, thumbnail or autosave observer can run. This follows the
- * PlayCanvas asset-job model: the task itself owns readiness; UI consumers only
- * reflect it and cannot keep the task stuck in uploading/building.
+ * Commit the durable core completion status only after the imported scene has
+ * been activated by the runtime. Optional thumbnails and autosave observers
+ * cannot hold the task open or turn a valid import into a failed task.
  */
 function commitCoreImportCompletion(state: unknown): void {
   if (typeof document === 'undefined') return;
@@ -125,9 +124,9 @@ function commitCoreImportCompletion(state: unknown): void {
 }
 
 /**
- * Execute an import as an explicit, observable job pipeline. This mirrors the
- * PlayCanvas Editor asset job model: each durable phase reports state, honours
- * cancellation, and only core asset availability controls task completion.
+ * Execute an import as an explicit, observable job pipeline. Each durable phase
+ * reports state, honours cancellation and is awaited unless it is deliberately
+ * marked as optional post-processing.
  */
 export async function runImportJob<TState>(
   context: ImportTaskContext,
@@ -138,7 +137,7 @@ export async function runImportJob<TState>(
   for (const step of steps) {
     throwIfImportAborted(context.signal);
     const progress = Math.max(lastProgress, Math.min(0.99, step.progress));
-    const postprocess = step.completion === 'postprocess' || step.id.startsWith('activate-');
+    const postprocess = step.completion === 'postprocess';
     reportImportStep({
       id: step.id,
       stage: step.stage,
@@ -221,11 +220,9 @@ export async function runImportJob<TState>(
 }
 
 /**
- * Optional work such as viewport activation, thumbnails and draft flushing
- * must never keep an asset task in uploading/building. Schedule it after the
- * core job resolves and report failures independently instead of rejecting the
- * import promise. One frame of delay lets the hierarchy, asset list and task
- * status commit before renderer readback or scene activation starts.
+ * Optional work such as thumbnails and draft flushing must never keep an asset
+ * task in uploading/building. Schedule it after core scene activation and
+ * report failures independently instead of rejecting the import promise.
  */
 export function scheduleImportPostprocess(
   options: ImportPostprocessOptions,
