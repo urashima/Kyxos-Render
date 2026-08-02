@@ -1,0 +1,31 @@
+/* Only expose preferences that are applied immediately by the Studio shell. */
+.studio-settings-form .settings-row:nth-child(4),
+.studio-settings-form .settings-row:nth-child(6),
+.studio-settings-form .settings-row:nth-child(7) {
+  display: none;
+}
+
+.kyxos-studio-shell .hierarchy-row {
+  min-height: var(--kyxos-hierarchy-row-height, 28px);
+}
+
+.kyxos-studio-shell.hide-studio-tooltips .field-tooltip,
+.kyxos-studio-shell.hide-studio-tooltips [data-tooltip]::after {
+  display: none !important;
+}
+
+.kyxos-studio-shell.compact-density .field-row,
+.kyxos-studio-shell.compact-density .schema-field {
+  min-height: 30px;
+}
+
+.kyxos-studio-shell.compact-density .inspector-section > summary,
+.kyxos-studio-shell.compact-density .effect-card > summary {
+  min-height: 30px;
+}
+
+.asset-workspace-item.asset-search-highlight {
+  border-color: var(--kx-accent) !important;
+  background: var(--kx-accent-soft) !important;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--kx-accent) 20%, transparent);
+}
