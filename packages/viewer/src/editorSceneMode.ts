@@ -25,8 +25,13 @@ type MeshLike = Object3D & {
   material?: Material | Material[];
 };
 
-interface AsyncRenderer {
-  renderAsync?(scene: Scene, camera: Camera): Promise<unknown>;
+type ControlsLike = {
+  update(): void;
+  addEventListener?(type: 'change', listener: EventListener): void;
+  removeEventListener?(type: 'change', listener: EventListener): void;
+};
+
+interface DirectRenderer {
   render?(scene: Scene, camera: Camera): unknown;
 }
 
@@ -37,8 +42,8 @@ interface StudioImportLifecycleDetail {
 interface ViewerInternals {
   scene?: Scene;
   camera?: Camera;
-  controls?: { update(): void };
-  renderer?: AsyncRenderer;
+  controls?: ControlsLike;
+  renderer?: DirectRenderer;
   modelRoot?: Group;
   animateScene?: (elapsed: number, delta: number) => void;
   animationEnabled?: boolean;
@@ -46,12 +51,13 @@ interface ViewerInternals {
   elapsed?: number;
   disposed?: boolean;
   editorDirectRender?: boolean;
-  editorRenderPending?: boolean;
   editorRenderSuspended?: boolean;
+  editorNeedsRender?: boolean;
   editorImportActive?: boolean;
   editorResumeTimer?: number;
   editorShellObserver?: MutationObserver;
   editorImportListener?: EventListener;
+  editorControlListener?: EventListener;
   editorOriginalMaterials?: Map<MeshLike, Material | Material[]>;
   editorProxyMaterials?: Set<Material>;
 }
@@ -66,6 +72,12 @@ interface ViewerPrototypeInternals {
 
 function internals(viewer: KyxosViewer): ViewerInternals {
   return viewer as unknown as ViewerInternals;
+}
+
+function requestAuthoringRender(viewer: KyxosViewer): void {
+  const internal = internals(viewer);
+  internal.editorNeedsRender = true;
+  viewer.canvas.dataset.authoringDirty = 'true';
 }
 
 function disposeProxyMaterials(internal: ViewerInternals): void {
@@ -131,6 +143,7 @@ function applyAuthoringProxyMaterials(viewer: KyxosViewer): void {
       : proxyMaterial(original, internal);
   });
   viewer.canvas.dataset.authoringMaterials = originals.size ? 'proxy' : 'none';
+  requestAuthoringRender(viewer);
 }
 
 function clearResumeTimer(internal: ViewerInternals): void {
@@ -147,7 +160,7 @@ function pauseAuthoringRender(viewer: KyxosViewer): void {
   viewer.canvas.dataset.authoringReady = 'false';
 }
 
-function resumeAuthoringRenderAfter(viewer: KyxosViewer, delay = 750): void {
+function resumeAuthoringRenderAfter(viewer: KyxosViewer, delay = 1_500): void {
   const internal = internals(viewer);
   clearResumeTimer(internal);
   internal.editorResumeTimer = window.setTimeout(() => {
@@ -155,6 +168,7 @@ function resumeAuthoringRenderAfter(viewer: KyxosViewer, delay = 750): void {
     if (internal.editorImportActive) return;
     internal.editorRenderSuspended = false;
     viewer.canvas.dataset.authoringReady = 'true';
+    requestAuthoringRender(viewer);
   }, delay);
 }
 
@@ -172,6 +186,7 @@ function clearModelRoot(viewer: KyxosViewer): void {
 
   internal.animateScene = () => undefined;
   internal.animationEnabled = false;
+  requestAuthoringRender(viewer);
 }
 
 function clearUnmanagedPlaygroundLights(viewer: KyxosViewer): void {
@@ -195,6 +210,8 @@ function setDirectAuthoringRender(viewer: KyxosViewer, enabled: boolean): void {
   } else {
     restoreOriginalMaterials(viewer);
     internal.editorRenderSuspended = false;
+    internal.editorNeedsRender = false;
+    delete viewer.canvas.dataset.authoringDirty;
     (viewer as unknown as ViewerPrototypeInternals).resetTemporal?.('studio-preview-full-pipeline');
   }
 }
@@ -222,6 +239,14 @@ function bindImportLifecycle(viewer: KyxosViewer): void {
   internal.editorImportListener = listener;
 }
 
+function bindControlRendering(viewer: KyxosViewer): void {
+  const internal = internals(viewer);
+  if (internal.editorControlListener || !internal.controls?.addEventListener) return;
+  const listener: EventListener = () => requestAuthoringRender(viewer);
+  internal.controls.addEventListener('change', listener);
+  internal.editorControlListener = listener;
+}
+
 function bindStudioMode(viewer: KyxosViewer): void {
   const internal = internals(viewer);
   internal.editorShellObserver?.disconnect();
@@ -234,6 +259,7 @@ function bindStudioMode(viewer: KyxosViewer): void {
   }
 
   bindImportLifecycle(viewer);
+  bindControlRendering(viewer);
   const update = () => setDirectAuthoringRender(
     viewer,
     !shell.classList.contains('preview-mode'),
@@ -249,8 +275,8 @@ function renderDirectFrame(viewer: KyxosViewer, time: number): void {
   if (
     internal.disposed
     || internal.editorRenderSuspended
-    || internal.editorRenderPending
-    || !internal.renderer
+    || (!internal.editorNeedsRender && !internal.animationEnabled)
+    || !internal.renderer?.render
     || !internal.scene
     || !internal.camera
   ) {
@@ -261,19 +287,16 @@ function renderDirectFrame(viewer: KyxosViewer, time: number): void {
   const delta = Math.min(0.1, Math.max(0, (time - previous) / 1000));
   internal.lastFrameTime = time;
   internal.elapsed = (internal.elapsed ?? 0) + delta;
+  internal.editorNeedsRender = Boolean(internal.animationEnabled);
+  viewer.canvas.dataset.authoringDirty = String(Boolean(internal.editorNeedsRender));
   internal.controls?.update();
   if (internal.animationEnabled) internal.animateScene?.(internal.elapsed, delta);
 
   try {
-    const result = internal.renderer.renderAsync
-      ? internal.renderer.renderAsync(internal.scene, internal.camera)
-      : internal.renderer.render?.(internal.scene, internal.camera);
-    if (result && typeof (result as Promise<unknown>).then === 'function') {
-      internal.editorRenderPending = true;
-      void Promise.resolve(result)
-        .catch((error) => viewer.dispatchEvent(new CustomEvent('error', { detail: { error } })))
-        .finally(() => { internal.editorRenderPending = false });
-    }
+    // Three.js r186 deprecates renderAsync(). The initialized WebGPURenderer
+    // supports render() for both WebGPU and forceWebGL backends; using it avoids
+    // keeping an unresolved render Promise across the import transaction.
+    internal.renderer.render(internal.scene, internal.camera);
   } catch (error) {
     viewer.dispatchEvent(new CustomEvent('error', { detail: { error } }));
   }
@@ -281,10 +304,10 @@ function renderDirectFrame(viewer: KyxosViewer, time: number): void {
 
 /**
  * Keeps reusable Playground defaults out of authored Scene Contract content.
- * Studio pauses rendering for the complete import transaction so Worker and UI
- * messages cannot be starved by GPU compilation. Authoring then uses lightweight
- * color-preserving Basic proxies; Preview restores the exact imported PBR graph
- * and full RenderPipeline. Public Viewer never uses proxies or import pausing.
+ * Studio pauses rendering for the complete import transaction and renders only
+ * dirty Authoring frames with lightweight color-preserving Basic proxies.
+ * Preview restores the exact imported PBR graph and full RenderPipeline. Public
+ * Viewer never uses proxies, import pausing or demand-driven editor rendering.
  */
 export function installEditorSceneModeExtension(ViewerClass: typeof KyxosViewer): void {
   const prototype = ViewerClass.prototype as unknown as ViewerPrototypeInternals;
@@ -338,10 +361,14 @@ export function installEditorSceneModeExtension(ViewerClass: typeof KyxosViewer)
     if (internal.editorImportListener) {
       document.removeEventListener('kyxos:studio-import-lifecycle', internal.editorImportListener);
     }
+    if (internal.editorControlListener) {
+      internal.controls?.removeEventListener?.('change', internal.editorControlListener);
+    }
     clearResumeTimer(internal);
     restoreOriginalMaterials(this);
     internal.editorShellObserver = undefined;
     internal.editorImportListener = undefined;
+    internal.editorControlListener = undefined;
     originalDispose?.call(this);
   };
 
