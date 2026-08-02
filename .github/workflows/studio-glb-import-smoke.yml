@@ -15,160 +15,6 @@ on:
       - '.github/workflows/studio-glb-import-smoke.yml'
 
 permissions:
-  contents: write
-
-concurrency:
-  group: studio-glb-import-smoke-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
-
-jobs:
-  integrate-gltf-authoring:
-    if: github.event.pull_request.number == 20
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - name: Checkout PR branch
-        uses: actions/checkout@v4
-        with:
-          ref: agent/playcanvas-editor-complete-alignment
-          fetch-depth: 0
-
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10.14.0
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Integrate complete glTF authoring path
-        shell: bash
-        run: |
-          python <<'PY'
-          from pathlib import Path
-
-          main = Path('apps/studio/src/main.ts')
-          text = main.read_text()
-
-          text = text.replace('  mergeReimportedScene,\n', '')
-          if "@kyxos/editor-core/reimport" not in text:
-              marker = "} from '@kyxos/editor-core';\n"
-              if marker not in text:
-                  raise SystemExit('editor-core import marker missing')
-              text = text.replace(
-                  marker,
-                  marker + "import { mergeReimportedSceneWithOverrides } from '@kyxos/editor-core/reimport';\n",
-                  1,
-              )
-
-          if "./gltf-node-inspector" not in text:
-              marker = "import { bundleExternalGltf, type ExternalGltfBundleResult } from './gltf-bundler';\n"
-              if marker not in text:
-                  raise SystemExit('gltf-bundler import marker missing')
-              text = text.replace(
-                  marker,
-                  marker + "import { mountGltfNodeInspector } from './gltf-node-inspector';\n",
-                  1,
-              )
-
-          if 'mountGltfNodeInspector({' not in text:
-              old = """    renderSchemaInspector(scene, selectedNodes);
-    renderMaterialVariantInspector(scene);
-"""
-              new = """    renderSchemaInspector(scene, selectedNodes);
-    mountGltfNodeInspector({
-      scene,
-      nodes: selectedNodes,
-      container: shell.inspector,
-      canEdit,
-      applyPatch: applyInspectorPatch,
-    });
-    renderMaterialVariantInspector(scene);
-"""
-              if old not in text:
-                  raise SystemExit('inspector integration marker missing')
-              text = text.replace(old, new, 1)
-
-          if 'gltfImportReport:' not in text:
-              old = """      embeddedImages: report.images,
-      textures: report.textures,
-"""
-              new = """      embeddedImages: report.images,
-      textures: report.textures,
-      gltfImportReport: {
-        meshPrimitives: report.meshes,
-        skins: report.skins,
-        cameras: report.cameras,
-        lights: report.lights,
-        materialVariants: report.materialVariants,
-        rootExtensions: report.rootExtensions,
-        textures: report.textures,
-        samplers: report.samplers,
-      },
-"""
-              if old not in text:
-                  raise SystemExit('asset report metadata marker missing')
-              text = text.replace(old, new, 1)
-
-          if 'gltfMorphDefaultWeights: morphWeights' not in text:
-              old = """        gltfNodeIndex: source.index,
-        sourceQuaternion: source.rotation,
-        gltfExtensions: source.extensions,
-"""
-              new = """        gltfNodeIndex: source.index,
-        sourceQuaternion: source.rotation,
-        gltfExtensions: source.extensions,
-        gltfMorphDefaultWeights: structuredClone(morphWeights),
-"""
-              if old not in text:
-                  raise SystemExit('node metadata marker missing')
-              text = text.replace(old, new, 1)
-
-          old = """        imported.lights = document.value.lights?.length
-          ? structuredClone(document.value.lights)
-          : createDefaultLights();
-"""
-          text = text.replace(old, '')
-          text = text.replace(
-              'mergeReimportedScene(document.value, imported, reimport.mode)',
-              'mergeReimportedSceneWithOverrides(document.value, imported, reimport.mode)',
-          )
-          main.write_text(text)
-
-          parity = Path('apps/studio/src/glb-import-parity.ts')
-          text = parity.read_text()
-          old = """  const metadata = model?.metadata?.textures;
-  if (!metadata || Array.isArray(metadata) || typeof metadata !== 'object') return null;
-  return metadata as GlbImportMetadata;
-"""
-          new = """  const metadata = model?.metadata?.gltfImportReport;
-  if (!metadata || Array.isArray(metadata) || typeof metadata !== 'object') return null;
-  return metadata as GlbImportMetadata;
-"""
-          if old not in text and new not in text:
-              raise SystemExit('glTF report metadata reader marker missing')
-          parity.write_text(text.replace(old, new, 1))
-
-          workflow = Path('.github/workflows/studio-glb-import-smoke.yml')
-          workflow.write_text("""name: Studio GLB Import Smoke
-
-on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'apps/studio/**'
-      - 'packages/editor-core/**'
-      - 'packages/scene-contract/**'
-      - 'packages/test-fixtures/**'
-      - 'packages/viewer/**'
-      - 'packages/viewer-adapter/**'
-      - 'tests/e2e/studio-viewport-helpers.spec.ts'
-      - 'tests/unit/gltf-authoring-parity.spec.ts'
-      - '.github/workflows/studio-glb-import-smoke.yml'
-
-permissions:
   contents: read
 
 concurrency:
@@ -182,24 +28,30 @@ jobs:
     steps:
       - name: Checkout pull request
         uses: actions/checkout@v4
+
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
         with:
           version: 10.14.0
+
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
           node-version: 22
+
       - name: Install workspace
         run: pnpm install --no-frozen-lockfile
+
       - name: Install Chromium
         run: pnpm exec playwright install --with-deps chromium
+
       - name: Verify glTF authoring unit coverage
         run: >-
           pnpm exec vitest run
           tests/unit/studio-import-lifecycle.spec.ts
           tests/unit/gltf-bundler.spec.ts
           tests/unit/gltf-authoring-parity.spec.ts
+
       - name: Import GLB while viewport helpers are active
         env:
           CI: true
@@ -210,6 +62,7 @@ jobs:
           --workers=1
           --retries=0
           --timeout=90000
+
       - name: Upload diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
@@ -219,26 +72,3 @@ jobs:
           path: |
             test-results
             playwright-report
-""")
-          PY
-
-      - name: Install workspace
-        run: pnpm install --no-frozen-lockfile
-
-      - name: Verify integration
-        run: |
-          pnpm exec vitest run tests/unit/studio-import-lifecycle.spec.ts tests/unit/gltf-bundler.spec.ts tests/unit/gltf-authoring-parity.spec.ts
-          pnpm --dir apps/studio build
-
-      - name: Commit integrated glTF authoring path
-        shell: bash
-        run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add apps/studio/src/main.ts apps/studio/src/glb-import-parity.ts .github/workflows/studio-glb-import-smoke.yml
-          if git diff --cached --quiet; then
-            echo 'No integration changes required.'
-            exit 0
-          fi
-          git commit -m 'feat: integrate complete glTF Studio authoring path'
-          git push origin HEAD:agent/playcanvas-editor-complete-alignment
