@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
   pages: write
   id-token: write
 
@@ -19,237 +19,131 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  integrate-gltf-authoring:
-    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.number == 20 }}
+  verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: agent/playcanvas-editor-complete-alignment
-          fetch-depth: 0
       - uses: pnpm/action-setup@v4
         with:
           version: 10.14.0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Patch complete glTF authoring integration
-        shell: bash
-        run: |
-          python <<'PY'
-          from pathlib import Path
-
-          main = Path('apps/studio/src/main.ts')
-          text = main.read_text()
-          text = text.replace('  mergeReimportedScene,\n', '')
-
-          if "@kyxos/editor-core/reimport" not in text:
-              marker = "} from '@kyxos/editor-core';\n"
-              if marker not in text:
-                  raise SystemExit('editor-core import marker missing')
-              text = text.replace(
-                  marker,
-                  marker + "import { mergeReimportedSceneWithOverrides } from '@kyxos/editor-core/reimport';\n",
-                  1,
-              )
-
-          if "./gltf-node-inspector" not in text:
-              marker = "import { bundleExternalGltf, type ExternalGltfBundleResult } from './gltf-bundler';\n"
-              if marker not in text:
-                  raise SystemExit('gltf bundler import marker missing')
-              text = text.replace(
-                  marker,
-                  marker + "import { mountGltfNodeInspector } from './gltf-node-inspector';\n",
-                  1,
-              )
-
-          if 'mountGltfNodeInspector({' not in text:
-              old = """    renderSchemaInspector(scene, selectedNodes);
-    renderMaterialVariantInspector(scene);
-"""
-              new = """    renderSchemaInspector(scene, selectedNodes);
-    mountGltfNodeInspector({
-      scene,
-      nodes: selectedNodes,
-      container: shell.inspector,
-      canEdit,
-      applyPatch: applyInspectorPatch,
-    });
-    renderMaterialVariantInspector(scene);
-"""
-              if old not in text:
-                  raise SystemExit('inspector integration marker missing')
-              text = text.replace(old, new, 1)
-
-          if 'gltfImportReport:' not in text:
-              old = """      embeddedImages: report.images,
-      textures: report.textures,
-"""
-              new = """      embeddedImages: report.images,
-      textures: report.textures,
-      gltfImportReport: {
-        meshPrimitives: report.meshes,
-        skins: report.skins,
-        cameras: report.cameras,
-        lights: report.lights,
-        materialVariants: report.materialVariants,
-        rootExtensions: report.rootExtensions,
-        textures: report.textures,
-        samplers: report.samplers,
-      },
-"""
-              if old not in text:
-                  raise SystemExit('asset metadata marker missing')
-              text = text.replace(old, new, 1)
-
-          if 'gltfMorphDefaultWeights: structuredClone(morphWeights)' not in text:
-              old = """        gltfNodeIndex: source.index,
-        sourceQuaternion: source.rotation,
-        gltfExtensions: source.extensions,
-"""
-              new = """        gltfNodeIndex: source.index,
-        sourceQuaternion: source.rotation,
-        gltfExtensions: source.extensions,
-        gltfMorphDefaultWeights: structuredClone(morphWeights),
-"""
-              if old not in text:
-                  raise SystemExit('node metadata marker missing')
-              text = text.replace(old, new, 1)
-
-          old = """        imported.lights = document.value.lights?.length
-          ? structuredClone(document.value.lights)
-          : createDefaultLights();
-"""
-          text = text.replace(old, '')
-          text = text.replace(
-              'mergeReimportedScene(document.value, imported, reimport.mode)',
-              'mergeReimportedSceneWithOverrides(document.value, imported, reimport.mode)',
-          )
-          main.write_text(text)
-
-          parity = Path('apps/studio/src/glb-import-parity.ts')
-          text = parity.read_text()
-          old = """  const metadata = model?.metadata?.textures;
-  if (!metadata || Array.isArray(metadata) || typeof metadata !== 'object') return null;
-  return metadata as GlbImportMetadata;
-"""
-          new = """  const metadata = model?.metadata?.gltfImportReport;
-  if (!metadata || Array.isArray(metadata) || typeof metadata !== 'object') return null;
-  return metadata as GlbImportMetadata;
-"""
-          if old not in text and new not in text:
-              raise SystemExit('parity metadata reader marker missing')
-          parity.write_text(text.replace(old, new, 1))
-          PY
-
-          git show origin/main:.github/workflows/ci-pages.yml > .github/workflows/ci-pages.yml
-          python <<'PY'
-          from pathlib import Path
-          Path('.github/workflows/studio-glb-import-smoke.yml').write_text("""name: Studio GLB Import Smoke
-
-on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'apps/studio/**'
-      - 'packages/editor-core/**'
-      - 'packages/scene-contract/**'
-      - 'packages/test-fixtures/**'
-      - 'packages/viewer/**'
-      - 'packages/viewer-adapter/**'
-      - 'tests/e2e/studio-viewport-helpers.spec.ts'
-      - 'tests/unit/gltf-authoring-parity.spec.ts'
-      - '.github/workflows/studio-glb-import-smoke.yml'
-
-permissions:
-  contents: read
-
-concurrency:
-  group: studio-glb-import-smoke-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
-
-jobs:
-  glb-import:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 12
-    steps:
-      - name: Checkout pull request
-        uses: actions/checkout@v4
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10.14.0
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Install workspace
-        run: pnpm install --no-frozen-lockfile
-      - name: Install Chromium
-        run: pnpm exec playwright install --with-deps chromium
-      - name: Verify glTF authoring unit coverage
-        run: >-
-          pnpm exec vitest run
-          tests/unit/studio-import-lifecycle.spec.ts
-          tests/unit/gltf-bundler.spec.ts
-          tests/unit/gltf-authoring-parity.spec.ts
-      - name: Import GLB while viewport helpers are active
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm verify
+      - run: pnpm e2e
+      - run: pnpm test:rls
+      - name: Validate optional live Supabase configuration
         env:
-          CI: true
-        run: >-
-          pnpm exec playwright test
-          tests/e2e/studio-viewport-helpers.spec.ts
-          --project=chromium
-          --workers=1
-          --retries=0
-          --timeout=90000
-      - name: Upload diagnostics
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: studio-glb-import-smoke
-          if-no-files-found: ignore
-          path: |
-            test-results
-            playwright-report
-""")
-          PY
-      - run: pnpm install --no-frozen-lockfile
-      - name: Verify patched Studio
+          KYXOS_SUPABASE_URL: ${{ secrets.KYXOS_SUPABASE_URL }}
+          KYXOS_SUPABASE_ANON_KEY: ${{ secrets.KYXOS_SUPABASE_ANON_KEY }}
+          KYXOS_OWNER_EMAIL: ${{ secrets.KYXOS_OWNER_EMAIL }}
+          KYXOS_OWNER_PASSWORD: ${{ secrets.KYXOS_OWNER_PASSWORD }}
+          KYXOS_VIEWER_EMAIL: ${{ secrets.KYXOS_VIEWER_EMAIL }}
+          KYXOS_VIEWER_PASSWORD: ${{ secrets.KYXOS_VIEWER_PASSWORD }}
         run: |
-          pnpm exec vitest run tests/unit/studio-import-lifecycle.spec.ts tests/unit/gltf-bundler.spec.ts tests/unit/gltf-authoring-parity.spec.ts
-          pnpm --dir apps/studio build
-      - name: Commit integration
-        shell: bash
-        run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add apps/studio/src/main.ts apps/studio/src/glb-import-parity.ts .github/workflows/ci-pages.yml .github/workflows/studio-glb-import-smoke.yml
-          if git diff --cached --quiet; then
-            echo 'No integration changes required.'
+          required=(
+            KYXOS_SUPABASE_URL
+            KYXOS_SUPABASE_ANON_KEY
+            KYXOS_OWNER_EMAIL
+            KYXOS_OWNER_PASSWORD
+            KYXOS_VIEWER_EMAIL
+            KYXOS_VIEWER_PASSWORD
+          )
+          missing=()
+          for key in "${required[@]}"; do
+            if [ -z "${!key}" ]; then
+              missing+=("$key")
+            fi
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "Live Supabase acceptance is conditional: missing ${missing[*]}"
             exit 0
           fi
-          git commit -m 'feat: integrate complete glTF Studio authoring path'
-          git push origin HEAD:agent/playcanvas-editor-complete-alignment
-
-  verify:
-    needs: integrate-gltf-authoring
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - run: echo 'The integration commit starts the restored formal CI run.'
+          pnpm test:rls:live
+      - run: pnpm build
+      - name: Install Chromium
+        if: github.event_name == 'pull_request'
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Run full browser acceptance
+        if: github.event_name == 'pull_request'
+        run: pnpm e2e:full
+      - name: Upload browser evidence
+        if: ${{ always() && github.event_name == 'pull_request' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-evidence
+          if-no-files-found: ignore
+          path: |
+            playwright-report
+            test-results
+            visual-evidence
+      - name: Report backend readiness
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+        run: |
+          if [ -n "$SUPABASE_ACCESS_TOKEN" ] && [ -n "$SUPABASE_PROJECT_REF" ]; then
+            echo "Supabase deployment credentials detected. Backend deployment job is enabled."
+          else
+            echo "Supabase deployment credentials are not configured; static Pages acceptance remains available."
+          fi
 
   deploy-pages:
-    if: false
+    if: github.ref == 'refs/heads/main'
     needs: verify
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - run: echo skipped
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build:pages
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v4
 
   deploy-backend:
-    if: false
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      secrets.SUPABASE_ACCESS_TOKEN != '' &&
+      secrets.SUPABASE_PROJECT_REF != ''
     needs: verify
     runs-on: ubuntu-latest
+    environment:
+      name: supabase-production
     steps:
-      - run: echo skipped
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Link project
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+        run: supabase link --project-ref "$SUPABASE_PROJECT_REF"
+      - name: Push database migrations
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: supabase db push --include-all --password "$SUPABASE_DB_PASSWORD"
+      - name: Deploy Edge Functions
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+        run: |
+          for function in create-upload complete-upload publish-scene disable-public; do
+            supabase functions deploy "$function" --project-ref "$SUPABASE_PROJECT_REF"
+          done
