@@ -4,6 +4,7 @@ import type { SceneCamera, Vec3 } from '@kyxos/scene-contract';
 import { KyxosViewer } from './KyxosViewer';
 import type {
   EditorTransformMode,
+  EditorTransformPivot,
   EditorTransformSnap,
   EditorTransformSpace,
 } from './editorTransformControls';
@@ -65,6 +66,7 @@ function refreshEditorTransformCamera(viewer: KyxosViewer): void {
   if (!canvas.dataset.editorGizmo) return;
   const mode = (canvas.dataset.editorTool ?? 'select') as EditorTransformMode;
   const space = (canvas.dataset.editorSpace ?? 'local') as EditorTransformSpace;
+  const pivot = (canvas.dataset.editorPivot ?? 'active') as EditorTransformPivot;
   const selected = (canvas.dataset.editorSelection ?? '').split(',').filter(Boolean);
   const snap: EditorTransformSnap = {
     enabled: canvas.dataset.editorSnap === 'true',
@@ -77,6 +79,7 @@ function refreshEditorTransformCamera(viewer: KyxosViewer): void {
   viewer.setEditorTransformSelection(selected);
   viewer.setEditorTransformMode(mode);
   viewer.setEditorTransformSpace(space);
+  viewer.setEditorTransformPivot(pivot);
   viewer.setEditorTransformSnap(snap);
 }
 
