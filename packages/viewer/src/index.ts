@@ -12,6 +12,11 @@ import { installScreenSpaceSSSExtension } from './materials/screenSpaceSSS';
 import { installScreenSpaceSSSDebugExtension } from './materials/screenSpaceSSSDebug';
 import { installViewerMetricsBroadcast } from './metricsBroadcast';
 import { installSSSStudyModelExtension } from './scene/sssStudyModel';
+import { installTimestampQueryGuard } from './timestampQueryGuard';
+
+// Resolve timestamp query pools while the renderer is tracking GPU timings.
+// This must be installed before applications create a viewer instance.
+installTimestampQueryGuard(KyxosViewer as unknown as Parameters<typeof installTimestampQueryGuard>[0]);
 
 // Scene API is installed by the side-effect import above. Studio scene mode then
 // removes the procedural playground model and unmanaged lights before loading
