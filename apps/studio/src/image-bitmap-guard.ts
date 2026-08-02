@@ -1,5 +1,6 @@
 import './generated-glb-byte-cache';
 import './import-task-change-deferral';
+import './workspace-import-save-guard';
 import { DiagnosticConsole, type ConsoleEntry, type ConsoleLevel } from '@kyxos/editor-core';
 
 const installed = Symbol.for('kyxos.imageBitmapGuard.installed');
