@@ -19,6 +19,12 @@ function markLoadStage(stage: string): void {
     const canvas = document.querySelector<HTMLCanvasElement>('#studio-canvas');
     if (canvas) canvas.dataset.gltfLoadStage = stage;
   }
+  console.warn(`[gltf-loader] ${stage}`);
+}
+
+function urlProtocol(url: string): string {
+  const separator = url.indexOf(':');
+  return separator > 0 ? url.slice(0, separator).toLowerCase() : 'relative';
 }
 
 function registeredObjectUrlBlob(url: string): Blob | null {
@@ -111,13 +117,23 @@ export function createConfiguredGltfLoader(
 
   const nativeLoadAsync = loader.loadAsync.bind(loader);
   loader.loadAsync = async (url, onProgress) => {
-    if (!url.startsWith('blob:')) return nativeLoadAsync(url, onProgress);
+    const protocol = urlProtocol(url);
+    markLoadStage(`load-url-${protocol}`);
+    if (!url.startsWith('blob:')) {
+      try {
+        const result = await nativeLoadAsync(url, onProgress);
+        markLoadStage(`native-${protocol}-complete`);
+        return result;
+      } catch (error) {
+        markLoadStage(`native-${protocol}-error`);
+        throw error;
+      }
+    }
 
     // Studio registers the original Blob when it creates an object URL. Reading
     // that Blob directly avoids Chromium's network-style Blob URL path, which can
     // remain pending for IndexedDB-cloned Blobs. Object URLs created elsewhere
     // retain the XHR fallback before the official GLTFLoader parser is invoked.
-    markLoadStage('blob-url-received');
     const progress = onProgress as ProgressCallback | undefined;
     const buffer =
       (await loadRegisteredBlob(url, progress)) ?? (await loadLocalBlob(url, progress));
