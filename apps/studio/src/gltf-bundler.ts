@@ -1,3 +1,4 @@
+import './glb-import-parity';
 import './image-bitmap-guard';
 
 interface GltfBuffer { uri?: string; byteLength: number; [key: string]: unknown }
