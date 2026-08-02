@@ -137,9 +137,18 @@ export function installNativeTransformBridge(): void {
     this: BrowserKyxosViewportAdapter,
     document,
   ): Promise<void> {
-    await originalLoadDocument.call(this, document);
-    syncNativeControls(this);
-    internals(this).viewer?.refreshEditorViewportHelpers();
+    const viewer = internals(this).viewer;
+    // Editor-only helpers live in the Viewer scene. Remove them while the runtime
+    // replaces a model so GLTF loading, scene traversal and pipeline compilation
+    // never observe stale helper geometry or mutate the scene being loaded.
+    viewer?.disposeEditorViewportHelpers();
+    try {
+      await originalLoadDocument.call(this, document);
+    } finally {
+      const currentViewer = internals(this).viewer;
+      currentViewer?.createEditorViewportHelpers();
+      syncNativeControls(this);
+    }
   };
 
   prototype.applyPatch = async function applyPatchWithNativeTransform(
