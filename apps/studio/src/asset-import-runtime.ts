@@ -35,6 +35,17 @@ export interface ImportStepLifecycleDetail {
   error?: string;
 }
 
+interface ImportCompletionReport {
+  warnings?: unknown[];
+  nodes?: unknown[];
+  materials?: unknown[];
+  animations?: unknown[];
+}
+
+interface ImportCompletionState {
+  report?: ImportCompletionReport | null;
+}
+
 export function throwIfImportAborted(signal: AbortSignal): void {
   if (!signal.aborted) return;
   throw signal.reason instanceof Error
@@ -76,6 +87,41 @@ function reportPostprocessFailure(label: string, error: unknown): void {
     'kyxos:studio-import-postprocess-error',
     { label, error },
   );
+}
+
+function completionMessage(state: unknown): string {
+  if (!state || typeof state !== 'object') return 'Import complete';
+  const report = (state as ImportCompletionState).report;
+  if (!report || typeof report !== 'object') return 'Import complete';
+
+  const warnings = Array.isArray(report.warnings)
+    ? report.warnings.map(String).filter(Boolean)
+    : [];
+  if (warnings.length) return `Import complete · ${warnings.join(' · ')}`;
+
+  const nodes = Array.isArray(report.nodes) ? report.nodes.length : 0;
+  const materials = Array.isArray(report.materials) ? report.materials.length : 0;
+  const animations = Array.isArray(report.animations) ? report.animations.length : 0;
+  return `Import complete · ${nodes} nodes · ${materials} materials · ${animations} animations`;
+}
+
+/**
+ * Commit the durable core completion status before any optional Console,
+ * plugin, renderer, thumbnail or autosave observer can run. This follows the
+ * PlayCanvas asset-job model: the task itself owns readiness; UI consumers only
+ * reflect it and cannot keep the task stuck in uploading/building.
+ */
+function commitCoreImportCompletion(state: unknown): void {
+  if (typeof document === 'undefined') return;
+  const message = completionMessage(state);
+  document.documentElement.dataset.importCoreComplete = 'true';
+  document.documentElement.dataset.importCompleteMessage = message;
+  const notice = document.querySelector<HTMLElement>('.viewport-overlay');
+  if (!notice) return;
+  const text = document.createElement('span');
+  text.textContent = message;
+  notice.replaceChildren(text);
+  notice.classList.remove('error-notice');
 }
 
 /**
@@ -162,6 +208,7 @@ export async function runImportJob<TState>(
     }
   }
 
+  commitCoreImportCompletion(state);
   reportImportStep({
     id: 'core-import',
     stage: 'core-complete',
