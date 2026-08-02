@@ -69,7 +69,7 @@ export interface StudioImportLifecycleDetail {
 }
 
 const FALLBACK_THUMBNAIL_BASE64 =
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+Xc9WAAAAAElFTkSuQmCC';
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGMQFJX9DwABwQFDmeGlAgAAAABJRU5ErkJggg==';
 
 function defaultPrimitiveMaterial(): SceneMaterial {
   const id = crypto.randomUUID();
