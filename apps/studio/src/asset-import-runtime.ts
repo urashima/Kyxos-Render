@@ -46,6 +46,13 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function deferredDispatch<T>(name: string, detail: T): void {
+  if (typeof document === 'undefined') return;
+  const dispatch = () => document.dispatchEvent(new CustomEvent<T>(name, { detail }));
+  if (typeof window === 'undefined') setTimeout(dispatch, 0);
+  else window.setTimeout(dispatch, 0);
+}
+
 function reportImportStep(detail: ImportStepLifecycleDetail): void {
   const suffix = detail.error ? ` · ${detail.error}` : '';
   console.info(
@@ -57,21 +64,17 @@ function reportImportStep(detail: ImportStepLifecycleDetail): void {
   document.documentElement.dataset.importStepStage = detail.stage;
   document.documentElement.dataset.importStepProgress = String(detail.progress);
   document.documentElement.dataset.importStepAborted = String(detail.aborted);
-  document.dispatchEvent(
-    new CustomEvent<ImportStepLifecycleDetail>('kyxos:studio-import-step', {
-      detail,
-    }),
-  );
+  // Lifecycle consumers are optional observers. Never run them synchronously
+  // inside the core asset transaction because a panel/plugin listener must not
+  // prevent the import promise from resolving.
+  deferredDispatch('kyxos:studio-import-step', detail);
 }
 
 function reportPostprocessFailure(label: string, error: unknown): void {
   console.warn(`[studio-import] Optional post-processing failed: ${label}`, error);
-  if (typeof document === 'undefined') return;
-  document.dispatchEvent(
-    new CustomEvent<ImportPostprocessFailureDetail>(
-      'kyxos:studio-import-postprocess-error',
-      { detail: { label, error } },
-    ),
+  deferredDispatch<ImportPostprocessFailureDetail>(
+    'kyxos:studio-import-postprocess-error',
+    { label, error },
   );
 }
 
@@ -166,6 +169,7 @@ export async function runImportJob<TState>(
     progress: 1,
     aborted: context.signal.aborted,
   });
+  console.info('[studio-import] core-import · return');
   return state;
 }
 
@@ -173,14 +177,16 @@ export async function runImportJob<TState>(
  * Optional work such as viewport activation, thumbnails and draft flushing
  * must never keep an asset task in uploading/building. Schedule it after the
  * core job resolves and report failures independently instead of rejecting the
- * import promise.
+ * import promise. One frame of delay lets the hierarchy, asset list and task
+ * status commit before renderer readback or scene activation starts.
  */
 export function scheduleImportPostprocess(
   options: ImportPostprocessOptions,
 ): void {
+  const delayMs = typeof window === 'undefined' ? 0 : 16;
   const schedule = typeof window === 'undefined'
-    ? (callback: () => void) => setTimeout(callback, 0)
-    : (callback: () => void) => window.setTimeout(callback, 0);
+    ? (callback: () => void) => setTimeout(callback, delayMs)
+    : (callback: () => void) => window.setTimeout(callback, delayMs);
   schedule(() => {
     Promise.resolve()
       .then(() => options.run())
