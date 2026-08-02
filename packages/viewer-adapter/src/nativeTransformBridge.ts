@@ -12,6 +12,7 @@ import {
   type KyxosViewportAdapter,
   type SnapSettings,
 } from './index';
+import { getAdapterTransformPivot } from './transformPivot';
 
 type AdapterInternals = {
   viewer: KyxosViewer | null;
@@ -62,6 +63,7 @@ function syncNativeControls(adapter: BrowserKyxosViewportAdapter): void {
   viewer.setEditorTransformSelection(internal.selected);
   viewer.setEditorTransformMode(internal.tool);
   viewer.setEditorTransformSpace(internal.coordinateSpace);
+  viewer.setEditorTransformPivot(getAdapterTransformPivot(adapter));
   viewer.setEditorTransformSnap(internal.snap);
   removeFallbackGizmo(adapter);
 }
