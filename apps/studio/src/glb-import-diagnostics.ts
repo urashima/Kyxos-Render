@@ -3,7 +3,7 @@ import { BrowserKyxosViewportAdapter } from '@kyxos/viewer-adapter';
 const diagnosticsInstalled = Symbol.for('kyxos.glbImportDiagnostics.installed');
 const viewerDiagnosticsInstalled = Symbol.for('kyxos.glbImportDiagnostics.viewerInstalled');
 const FALLBACK_THUMBNAIL_BASE64 =
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+Xc9WAAAAAElFTkSuQmCC';
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGMQFJX9DwABwQFDmeGlAgAAAABJRU5ErkJggg==';
 
 type ViewerLike = {
   canvas: HTMLCanvasElement;
