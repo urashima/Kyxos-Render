@@ -42,6 +42,7 @@ export {
 export type { AnimationState, CameraState, PickResult } from './sceneTypes';
 export type {
   EditorTransformMode,
+  EditorTransformPivot,
   EditorTransformSnap,
   EditorTransformSpace,
 } from './editorTransformControls';
