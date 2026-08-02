@@ -86,51 +86,42 @@ function instrumentViewer(adapter: BrowserKyxosViewportAdapter): void {
   wrapViewerSync(viewer, 'setRenderSettings', 'render-settings-apply');
 }
 
-const globalState = window as typeof window & { [diagnosticsInstalled]?: boolean };
-if (!globalState[diagnosticsInstalled]) {
-  globalState[diagnosticsInstalled] = true;
+if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+  const globalState = window as typeof window & { [diagnosticsInstalled]?: boolean };
+  if (!globalState[diagnosticsInstalled]) {
+    globalState[diagnosticsInstalled] = true;
 
-  // Worker lifecycle instrumentation used to replace window.Worker with a
-  // Proxy. That changed native event-handler identity and could leave the
-  // parser's onmessage promise pending after a valid result arrived. Import
-  // workers now remain untouched; their lifecycle is reported by the explicit
-  // import client rather than a global browser primitive monkeypatch.
+    const prototype = BrowserKyxosViewportAdapter.prototype as BrowserKyxosViewportAdapter & {
+      loadDocument: BrowserKyxosViewportAdapter['loadDocument'];
+      captureThumbnail: BrowserKyxosViewportAdapter['captureThumbnail'];
+    };
+    const originalLoadDocument = prototype.loadDocument;
+    const originalCaptureThumbnail = prototype.captureThumbnail;
 
-  const prototype = BrowserKyxosViewportAdapter.prototype as BrowserKyxosViewportAdapter & {
-    loadDocument: BrowserKyxosViewportAdapter['loadDocument'];
-    captureThumbnail: BrowserKyxosViewportAdapter['captureThumbnail'];
-  };
-  const originalLoadDocument = prototype.loadDocument;
-  const originalCaptureThumbnail = prototype.captureThumbnail;
+    prototype.loadDocument = function loadDocumentWithDiagnostics(document) {
+      instrumentViewer(this);
+      mark('viewer-load-start', this);
+      return originalLoadDocument.call(this, document).then(
+        () => mark('viewer-load-complete', this),
+        (error) => {
+          mark('viewer-load-error', this);
+          throw error;
+        },
+      );
+    };
 
-  prototype.loadDocument = function loadDocumentWithDiagnostics(document) {
-    instrumentViewer(this);
-    mark('viewer-load-start', this);
-    return originalLoadDocument.call(this, document).then(
-      () => mark('viewer-load-complete', this),
-      (error) => {
-        mark('viewer-load-error', this);
-        throw error;
-      },
-    );
-  };
-
-  prototype.captureThumbnail = async function captureThumbnailWithDiagnostics() {
-    mark('thumbnail-start', this);
-    try {
-      const result = await originalCaptureThumbnail.call(this);
-      mark('thumbnail-complete', this);
-      return result;
-    } catch (error) {
-      // Thumbnail readback is a best-effort post-import task. Headless WebGL,
-      // lost contexts and protected canvases may reject readback even though the
-      // imported scene is already valid. Match PlayCanvas job semantics by
-      // completing the asset and reporting a warning instead of rejecting the
-      // core import promise.
-      console.warn('[glb-import] thumbnail readback unavailable; using fallback', error);
-      mark('thumbnail-fallback', this);
-      document.documentElement.dataset.importThumbnailFallback = 'true';
-      return fallbackThumbnail();
-    }
-  };
+    prototype.captureThumbnail = async function captureThumbnailWithDiagnostics() {
+      mark('thumbnail-start', this);
+      try {
+        const result = await originalCaptureThumbnail.call(this);
+        mark('thumbnail-complete', this);
+        return result;
+      } catch (error) {
+        console.warn('[glb-import] thumbnail readback unavailable; using fallback', error);
+        mark('thumbnail-fallback', this);
+        document.documentElement.dataset.importThumbnailFallback = 'true';
+        return fallbackThumbnail();
+      }
+    };
+  }
 }
