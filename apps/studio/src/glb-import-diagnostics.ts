@@ -1,3 +1,4 @@
+import { KyxosViewer } from '@kyxos/viewer';
 import { BrowserKyxosViewportAdapter } from '@kyxos/viewer-adapter';
 
 const diagnosticsInstalled = Symbol.for('kyxos.glbImportDiagnostics.installed');
@@ -6,13 +7,66 @@ type AdapterInternals = {
   canvas: HTMLCanvasElement | null;
 };
 
-function mark(stage: string, adapter?: BrowserKyxosViewportAdapter): void {
+type ViewerPrototype = KyxosViewer & Record<string, (...args: any[]) => any>;
+
+function mark(
+  stage: string,
+  source?: BrowserKyxosViewportAdapter | KyxosViewer,
+): void {
   document.documentElement.dataset.glbImportStage = stage;
-  const canvas = adapter
-    ? (adapter as unknown as AdapterInternals).canvas
-    : document.querySelector<HTMLCanvasElement>('#studio-canvas');
+  const canvas = source instanceof KyxosViewer
+    ? source.canvas
+    : source
+      ? (source as unknown as AdapterInternals).canvas
+      : document.querySelector<HTMLCanvasElement>('#studio-canvas');
   if (canvas) canvas.dataset.glbImportStage = stage;
   console.info(`[glb-import] ${stage}`);
+}
+
+function wrapViewerAsync(
+  prototype: ViewerPrototype,
+  method: string,
+  stage: string,
+): void {
+  const original = prototype[method];
+  if (typeof original !== 'function') return;
+  prototype[method] = async function viewerAsyncDiagnostic(
+    this: KyxosViewer,
+    ...args: any[]
+  ) {
+    mark(`${stage}-start`, this);
+    try {
+      const result = await original.apply(this, args);
+      mark(`${stage}-complete`, this);
+      return result;
+    } catch (error) {
+      mark(`${stage}-error`, this);
+      throw error;
+    }
+  };
+}
+
+function wrapViewerSync(
+  prototype: ViewerPrototype,
+  method: string,
+  stage: string,
+): void {
+  const original = prototype[method];
+  if (typeof original !== 'function') return;
+  prototype[method] = function viewerSyncDiagnostic(
+    this: KyxosViewer,
+    ...args: any[]
+  ) {
+    mark(`${stage}-start`, this);
+    try {
+      const result = original.apply(this, args);
+      mark(`${stage}-complete`, this);
+      return result;
+    } catch (error) {
+      mark(`${stage}-error`, this);
+      throw error;
+    }
+  };
 }
 
 const globalState = window as typeof window & { [diagnosticsInstalled]?: boolean };
@@ -38,6 +92,15 @@ if (!globalState[diagnosticsInstalled]) {
       return worker;
     },
   }) as typeof Worker;
+
+  const viewerPrototype = KyxosViewer.prototype as ViewerPrototype;
+  wrapViewerAsync(viewerPrototype, 'loadScene', 'scene-load');
+  wrapViewerAsync(viewerPrototype, 'loadModel', 'model-load');
+  wrapViewerAsync(viewerPrototype, 'restoreStudioEnvironment', 'environment-restore');
+  wrapViewerAsync(viewerPrototype, 'setMaterial', 'material-bind');
+  wrapViewerSync(viewerPrototype, 'setCameraState', 'camera-apply');
+  wrapViewerSync(viewerPrototype, 'setEnvironment', 'environment-apply');
+  wrapViewerSync(viewerPrototype, 'setRenderSettings', 'render-settings-apply');
 
   const prototype = BrowserKyxosViewportAdapter.prototype as BrowserKyxosViewportAdapter & {
     loadDocument: BrowserKyxosViewportAdapter['loadDocument'];
