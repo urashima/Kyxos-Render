@@ -90,25 +90,11 @@ const globalState = window as typeof window & { [diagnosticsInstalled]?: boolean
 if (!globalState[diagnosticsInstalled]) {
   globalState[diagnosticsInstalled] = true;
 
-  const NativeWorker = window.Worker;
-  window.Worker = new Proxy(NativeWorker, {
-    construct(target, args) {
-      const worker = Reflect.construct(target, args) as Worker;
-      mark('worker-created');
-      const nativePostMessage = worker.postMessage.bind(worker) as (...args: unknown[]) => void;
-      worker.postMessage = ((...postArgs: unknown[]) => {
-        mark('worker-posted');
-        nativePostMessage(...postArgs);
-      }) as typeof worker.postMessage;
-      worker.addEventListener('message', (event) => {
-        const data = (event as MessageEvent<{ ok?: boolean }>).data;
-        mark(data?.ok === true ? 'worker-result-ok' : data?.ok === false ? 'worker-result-error' : 'worker-message');
-      });
-      worker.addEventListener('messageerror', () => mark('worker-message-error'));
-      worker.addEventListener('error', () => mark('worker-runtime-error'));
-      return worker;
-    },
-  }) as typeof Worker;
+  // Worker lifecycle instrumentation used to replace window.Worker with a
+  // Proxy. That changed native event-handler identity and could leave the
+  // parser's onmessage promise pending after a valid result arrived. Import
+  // workers now remain untouched; their lifecycle is reported by the explicit
+  // import client rather than a global browser primitive monkeypatch.
 
   const prototype = BrowserKyxosViewportAdapter.prototype as BrowserKyxosViewportAdapter & {
     loadDocument: BrowserKyxosViewportAdapter['loadDocument'];
