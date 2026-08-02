@@ -140,8 +140,8 @@ describe('PlayCanvas-style Studio import lifecycle', () => {
       ],
     );
 
-    expect(result).toBe(state);
-    expect(result.committed).toBe(true);
+    expect(result).toBeUndefined();
+    expect(state.committed).toBe(true);
     expect(activationCompleted).toBe(true);
     expect(stages).toEqual(['building', 'building']);
   });
