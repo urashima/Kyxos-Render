@@ -1,5 +1,13 @@
 import type { AssetResolver, KyxosSceneContract } from '@kyxos/scene-contract';
-import type { Camera, Group, Object3D, Scene } from 'three/webgpu';
+import {
+  Color,
+  MeshBasicMaterial,
+  type Camera,
+  type Group,
+  type Material,
+  type Object3D,
+  type Scene,
+} from 'three/webgpu';
 
 import { KyxosViewer } from './KyxosViewer';
 import { disposeObject3D } from './utils/dispose';
@@ -12,6 +20,10 @@ type LoadScene = (
 
 type RenderFrame = (this: KyxosViewer, time: number) => void;
 type DisposeViewer = (this: KyxosViewer) => void;
+type MeshLike = Object3D & {
+  isMesh?: boolean;
+  material?: Material | Material[];
+};
 
 interface AsyncRenderer {
   renderAsync?(scene: Scene, camera: Camera): Promise<unknown>;
@@ -31,7 +43,11 @@ interface ViewerInternals {
   disposed?: boolean;
   editorDirectRender?: boolean;
   editorRenderPending?: boolean;
+  editorRenderSuspended?: boolean;
+  editorResumeTimer?: number;
   editorShellObserver?: MutationObserver;
+  editorOriginalMaterials?: Map<MeshLike, Material | Material[]>;
+  editorProxyMaterials?: Set<Material>;
 }
 
 interface ViewerPrototypeInternals {
@@ -46,8 +62,87 @@ function internals(viewer: KyxosViewer): ViewerInternals {
   return viewer as unknown as ViewerInternals;
 }
 
+function disposeProxyMaterials(internal: ViewerInternals): void {
+  for (const material of internal.editorProxyMaterials ?? []) material.dispose();
+  internal.editorProxyMaterials?.clear();
+}
+
+function restoreOriginalMaterials(viewer: KyxosViewer): void {
+  const internal = internals(viewer);
+  for (const [mesh, material] of internal.editorOriginalMaterials ?? []) {
+    mesh.material = material;
+  }
+  internal.editorOriginalMaterials?.clear();
+  disposeProxyMaterials(internal);
+}
+
+function sourceColor(material: Material): Color {
+  const candidate = (material as Material & { color?: Color }).color;
+  return candidate?.isColor ? candidate.clone() : new Color(0x9aa4b2);
+}
+
+function proxyMaterial(source: Material, internal: ViewerInternals): Material {
+  const candidate = source as Material & {
+    opacity?: number;
+    transparent?: boolean;
+    side?: number;
+    depthTest?: boolean;
+    depthWrite?: boolean;
+    vertexColors?: boolean;
+  };
+  const proxy = new MeshBasicMaterial({
+    color: sourceColor(source),
+    opacity: candidate.opacity ?? 1,
+    transparent: Boolean(candidate.transparent || (candidate.opacity ?? 1) < 1),
+    side: candidate.side,
+    depthTest: candidate.depthTest ?? true,
+    depthWrite: candidate.depthWrite ?? true,
+    vertexColors: Boolean(candidate.vertexColors),
+    toneMapped: false,
+  });
+  proxy.name = `${source.name || source.type} · Authoring Proxy`;
+  proxy.userData.kyxosAuthoringProxy = true;
+  internal.editorProxyMaterials ??= new Set();
+  internal.editorProxyMaterials.add(proxy);
+  return proxy;
+}
+
+function applyAuthoringProxyMaterials(viewer: KyxosViewer): void {
+  const internal = internals(viewer);
+  const root = internal.modelRoot;
+  if (!root || !internal.editorDirectRender) return;
+
+  restoreOriginalMaterials(viewer);
+  const originals = new Map<MeshLike, Material | Material[]>();
+  internal.editorOriginalMaterials = originals;
+  root.traverse((object) => {
+    const mesh = object as MeshLike;
+    if (!mesh.isMesh || !mesh.material) return;
+    const original = mesh.material;
+    originals.set(mesh, original);
+    mesh.material = Array.isArray(original)
+      ? original.map((material) => proxyMaterial(material, internal))
+      : proxyMaterial(original, internal);
+  });
+  viewer.canvas.dataset.authoringMaterials = originals.size ? 'proxy' : 'none';
+}
+
+function suspendAuthoringRender(viewer: KyxosViewer): void {
+  const internal = internals(viewer);
+  internal.editorRenderSuspended = true;
+  if (internal.editorResumeTimer != null) window.clearTimeout(internal.editorResumeTimer);
+  // Give SceneDocument listeners, Hierarchy, Asset Workspace and the completion
+  // marker a full browser turn before the first GPU compilation for the model.
+  internal.editorResumeTimer = window.setTimeout(() => {
+    internal.editorResumeTimer = undefined;
+    internal.editorRenderSuspended = false;
+    viewer.canvas.dataset.authoringReady = 'true';
+  }, 750);
+}
+
 function clearModelRoot(viewer: KyxosViewer): void {
   const internal = internals(viewer);
+  restoreOriginalMaterials(viewer);
   const root = internal.modelRoot;
   if (root) {
     for (const child of [...root.children]) {
@@ -75,7 +170,12 @@ function setDirectAuthoringRender(viewer: KyxosViewer, enabled: boolean): void {
   if (internal.editorDirectRender === enabled) return;
   internal.editorDirectRender = enabled;
   viewer.canvas.dataset.authoringRender = enabled ? 'direct' : 'pipeline';
-  if (!enabled) {
+  if (enabled) {
+    applyAuthoringProxyMaterials(viewer);
+    suspendAuthoringRender(viewer);
+  } else {
+    restoreOriginalMaterials(viewer);
+    internal.editorRenderSuspended = false;
     (viewer as unknown as ViewerPrototypeInternals).resetTemporal?.('studio-preview-full-pipeline');
   }
 }
@@ -105,6 +205,7 @@ function renderDirectFrame(viewer: KyxosViewer, time: number): void {
   const internal = internals(viewer);
   if (
     internal.disposed
+    || internal.editorRenderSuspended
     || internal.editorRenderPending
     || !internal.renderer
     || !internal.scene
@@ -137,10 +238,10 @@ function renderDirectFrame(viewer: KyxosViewer, time: number): void {
 
 /**
  * Keeps reusable Playground defaults out of authored Scene Contract content.
- * Studio Authoring uses a lightweight direct render loop so importing a real
- * mesh cannot block the UI while the complete MRT/post-processing graph compiles.
- * Entering Preview mode restores the full saved RenderPipeline. Public Viewer
- * has no Studio shell and therefore always keeps the full pipeline.
+ * Studio Authoring renders imported meshes with lightweight, color-preserving
+ * Basic proxy materials. Skinning and morph deformation remain attached to the
+ * original mesh objects, while Preview restores the exact imported PBR material
+ * graph and the complete saved RenderPipeline. Public Viewer never uses proxies.
  */
 export function installEditorSceneModeExtension(ViewerClass: typeof KyxosViewer): void {
   const prototype = ViewerClass.prototype as unknown as ViewerPrototypeInternals;
@@ -166,9 +267,15 @@ export function installEditorSceneModeExtension(ViewerClass: typeof KyxosViewer)
     resolver: AssetResolver,
   ): Promise<void> {
     bindStudioMode(this);
+    if (internals(this).editorDirectRender) suspendAuthoringRender(this);
     clearModelRoot(this);
     clearUnmanagedPlaygroundLights(this);
     await originalLoadScene.call(this, scene, resolver);
+
+    if (internals(this).editorDirectRender) {
+      applyAuthoringProxyMaterials(this);
+      suspendAuthoringRender(this);
+    }
 
     const hasModel = Object.values(scene.assets).some((asset) => asset.kind === 'model');
     this.canvas.toggleAttribute('data-empty-scene', !hasModel);
@@ -182,8 +289,11 @@ export function installEditorSceneModeExtension(ViewerClass: typeof KyxosViewer)
   };
 
   prototype.dispose = function disposeEditorSceneMode(): void {
-    internals(this).editorShellObserver?.disconnect();
-    internals(this).editorShellObserver = undefined;
+    const internal = internals(this);
+    internal.editorShellObserver?.disconnect();
+    if (internal.editorResumeTimer != null) window.clearTimeout(internal.editorResumeTimer);
+    restoreOriginalMaterials(this);
+    internal.editorShellObserver = undefined;
     originalDispose?.call(this);
   };
 
