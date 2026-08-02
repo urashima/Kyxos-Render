@@ -39,10 +39,6 @@ interface ImportCompletionState {
   report?: ImportCompletionReport | null;
 }
 
-interface ImportRuntimeGlobal {
-  __kyxosImportThumbnailPostprocess?: boolean;
-}
-
 export function throwIfImportAborted(signal: AbortSignal): void {
   if (!signal.aborted) return;
   throw signal.reason instanceof Error
@@ -118,6 +114,13 @@ function commitCoreImportCompletion(state: unknown): void {
     notice.replaceChildren(text);
     notice.classList.remove('error-notice');
   }
+}
+
+function yieldToBrowser(): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof window === 'undefined') setTimeout(resolve, 0);
+    else window.setTimeout(resolve, 0);
+  });
 }
 
 export async function runImportJob<TState>(
@@ -208,6 +211,11 @@ export async function runImportJob<TState>(
     progress: 1,
     aborted: context.signal.aborted,
   });
+
+  // Let the browser commit the imported hierarchy, asset cards and completion
+  // marker before returning to ImportTaskQueue. This keeps the durable import
+  // transaction observable even when optional work or the renderer is slow.
+  await yieldToBrowser();
   console.info('[studio-import] core-import · return-void');
 }
 
@@ -223,14 +231,21 @@ export function scheduleImportPostprocess(
   options: ImportPostprocessOptions,
 ): void {
   scheduleAfterPaint(() => {
-    const runtime = globalThis as typeof globalThis & ImportRuntimeGlobal;
-    const thumbnail = options.label.startsWith('thumbnail:');
-    if (thumbnail) runtime.__kyxosImportThumbnailPostprocess = true;
+    // Import thumbnails are decorative. Even with GPU readback bypassed,
+    // createImageBitmap/canvas WebP encoding can synchronously lock software
+    // Chromium and low-end devices after a successful GLB activation. Defer the
+    // thumbnail until a dedicated worker/offscreen implementation is available;
+    // never block the imported model, hierarchy, materials or animations.
+    if (options.label.startsWith('thumbnail:')) {
+      if (typeof document !== 'undefined') {
+        document.documentElement.dataset.importThumbnailFallback = 'deferred';
+      }
+      console.info(`[studio-import] ${options.label} · deferred-fallback`);
+      return;
+    }
+
     Promise.resolve()
       .then(() => options.run())
-      .catch((error) => options.onWarning(options.label, error))
-      .finally(() => {
-        if (thumbnail) runtime.__kyxosImportThumbnailPostprocess = false;
-      });
+      .catch((error) => options.onWarning(options.label, error));
   });
 }
