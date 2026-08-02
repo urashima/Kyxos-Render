@@ -10,6 +10,9 @@ import {
 import {
   normalizeImportDiagnostic,
 } from '../../apps/studio/src/glb-import-parity';
+import {
+  runImportJob,
+} from '../../apps/studio/src/asset-import-runtime';
 
 function crc32(input: Uint8Array): number {
   let crc = 0xffffffff;
@@ -100,6 +103,49 @@ describe('PlayCanvas-style Studio import lifecycle', () => {
     validatePng(
       fallbackPngFromSource('../../apps/studio/src/glb-import-diagnostics.ts'),
     );
+  });
+
+  it('completes the core job without awaiting viewport activation', async () => {
+    const controller = new AbortController();
+    const stages: string[] = [];
+    let activationStarted = false;
+    const state = { committed: false };
+
+    const result = await runImportJob(
+      {
+        signal: controller.signal,
+        report(stage) {
+          stages.push(stage);
+        },
+      },
+      state,
+      [
+        {
+          id: 'build-contract',
+          stage: 'building',
+          progress: 0.75,
+          run(current) {
+            current.committed = true;
+          },
+        },
+        {
+          id: 'activate-asset',
+          stage: 'building',
+          progress: 0.92,
+          run() {
+            activationStarted = true;
+            return new Promise<void>(() => undefined);
+          },
+        },
+      ],
+    );
+
+    expect(result).toBe(state);
+    expect(result.committed).toBe(true);
+    expect(stages).toEqual(['building', 'building']);
+    expect(activationStarted).toBe(false);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(activationStarted).toBe(true);
   });
 
   it('preserves terminal completion when an import worker reports normal stages', async () => {
