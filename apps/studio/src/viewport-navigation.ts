@@ -1,4 +1,11 @@
-import type { EditorViewPreset } from '@kyxos/viewer';
+type EditorViewPreset =
+  | 'perspective'
+  | 'front'
+  | 'back'
+  | 'top'
+  | 'bottom'
+  | 'left'
+  | 'right';
 
 interface NavigationBinding {
   canvas: HTMLCanvasElement;
