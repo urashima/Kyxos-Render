@@ -30,6 +30,10 @@ interface AsyncRenderer {
   render?(scene: Scene, camera: Camera): unknown;
 }
 
+interface StudioImportLifecycleDetail {
+  stage?: string;
+}
+
 interface ViewerInternals {
   scene?: Scene;
   camera?: Camera;
@@ -44,8 +48,10 @@ interface ViewerInternals {
   editorDirectRender?: boolean;
   editorRenderPending?: boolean;
   editorRenderSuspended?: boolean;
+  editorImportActive?: boolean;
   editorResumeTimer?: number;
   editorShellObserver?: MutationObserver;
+  editorImportListener?: EventListener;
   editorOriginalMaterials?: Map<MeshLike, Material | Material[]>;
   editorProxyMaterials?: Set<Material>;
 }
@@ -127,17 +133,29 @@ function applyAuthoringProxyMaterials(viewer: KyxosViewer): void {
   viewer.canvas.dataset.authoringMaterials = originals.size ? 'proxy' : 'none';
 }
 
-function suspendAuthoringRender(viewer: KyxosViewer): void {
+function clearResumeTimer(internal: ViewerInternals): void {
+  if (internal.editorResumeTimer != null) {
+    window.clearTimeout(internal.editorResumeTimer);
+    internal.editorResumeTimer = undefined;
+  }
+}
+
+function pauseAuthoringRender(viewer: KyxosViewer): void {
   const internal = internals(viewer);
+  clearResumeTimer(internal);
   internal.editorRenderSuspended = true;
-  if (internal.editorResumeTimer != null) window.clearTimeout(internal.editorResumeTimer);
-  // Give SceneDocument listeners, Hierarchy, Asset Workspace and the completion
-  // marker a full browser turn before the first GPU compilation for the model.
+  viewer.canvas.dataset.authoringReady = 'false';
+}
+
+function resumeAuthoringRenderAfter(viewer: KyxosViewer, delay = 750): void {
+  const internal = internals(viewer);
+  clearResumeTimer(internal);
   internal.editorResumeTimer = window.setTimeout(() => {
     internal.editorResumeTimer = undefined;
+    if (internal.editorImportActive) return;
     internal.editorRenderSuspended = false;
     viewer.canvas.dataset.authoringReady = 'true';
-  }, 750);
+  }, delay);
 }
 
 function clearModelRoot(viewer: KyxosViewer): void {
@@ -172,12 +190,36 @@ function setDirectAuthoringRender(viewer: KyxosViewer, enabled: boolean): void {
   viewer.canvas.dataset.authoringRender = enabled ? 'direct' : 'pipeline';
   if (enabled) {
     applyAuthoringProxyMaterials(viewer);
-    suspendAuthoringRender(viewer);
+    pauseAuthoringRender(viewer);
+    resumeAuthoringRenderAfter(viewer);
   } else {
     restoreOriginalMaterials(viewer);
     internal.editorRenderSuspended = false;
     (viewer as unknown as ViewerPrototypeInternals).resetTemporal?.('studio-preview-full-pipeline');
   }
+}
+
+function bindImportLifecycle(viewer: KyxosViewer): void {
+  const internal = internals(viewer);
+  if (internal.editorImportListener) return;
+
+  const listener: EventListener = (event) => {
+    const detail = (event as CustomEvent<StudioImportLifecycleDetail>).detail;
+    const stage = detail?.stage ?? '';
+    if (['queued', 'hashing', 'uploading', 'parsing', 'building'].includes(stage)) {
+      internal.editorImportActive = true;
+      pauseAuthoringRender(viewer);
+      viewer.canvas.dataset.authoringImport = stage;
+      return;
+    }
+    if (['core-complete', 'failed', 'cancelled'].includes(stage)) {
+      internal.editorImportActive = false;
+      viewer.canvas.dataset.authoringImport = stage;
+      resumeAuthoringRenderAfter(viewer);
+    }
+  };
+  document.addEventListener('kyxos:studio-import-lifecycle', listener);
+  internal.editorImportListener = listener;
 }
 
 function bindStudioMode(viewer: KyxosViewer): void {
@@ -191,6 +233,7 @@ function bindStudioMode(viewer: KyxosViewer): void {
     return;
   }
 
+  bindImportLifecycle(viewer);
   const update = () => setDirectAuthoringRender(
     viewer,
     !shell.classList.contains('preview-mode'),
@@ -238,10 +281,10 @@ function renderDirectFrame(viewer: KyxosViewer, time: number): void {
 
 /**
  * Keeps reusable Playground defaults out of authored Scene Contract content.
- * Studio Authoring renders imported meshes with lightweight, color-preserving
- * Basic proxy materials. Skinning and morph deformation remain attached to the
- * original mesh objects, while Preview restores the exact imported PBR material
- * graph and the complete saved RenderPipeline. Public Viewer never uses proxies.
+ * Studio pauses rendering for the complete import transaction so Worker and UI
+ * messages cannot be starved by GPU compilation. Authoring then uses lightweight
+ * color-preserving Basic proxies; Preview restores the exact imported PBR graph
+ * and full RenderPipeline. Public Viewer never uses proxies or import pausing.
  */
 export function installEditorSceneModeExtension(ViewerClass: typeof KyxosViewer): void {
   const prototype = ViewerClass.prototype as unknown as ViewerPrototypeInternals;
@@ -267,14 +310,15 @@ export function installEditorSceneModeExtension(ViewerClass: typeof KyxosViewer)
     resolver: AssetResolver,
   ): Promise<void> {
     bindStudioMode(this);
-    if (internals(this).editorDirectRender) suspendAuthoringRender(this);
+    const internal = internals(this);
+    if (internal.editorDirectRender) pauseAuthoringRender(this);
     clearModelRoot(this);
     clearUnmanagedPlaygroundLights(this);
     await originalLoadScene.call(this, scene, resolver);
 
-    if (internals(this).editorDirectRender) {
+    if (internal.editorDirectRender) {
       applyAuthoringProxyMaterials(this);
-      suspendAuthoringRender(this);
+      if (!internal.editorImportActive) resumeAuthoringRenderAfter(this);
     }
 
     const hasModel = Object.values(scene.assets).some((asset) => asset.kind === 'model');
@@ -291,9 +335,13 @@ export function installEditorSceneModeExtension(ViewerClass: typeof KyxosViewer)
   prototype.dispose = function disposeEditorSceneMode(): void {
     const internal = internals(this);
     internal.editorShellObserver?.disconnect();
-    if (internal.editorResumeTimer != null) window.clearTimeout(internal.editorResumeTimer);
+    if (internal.editorImportListener) {
+      document.removeEventListener('kyxos:studio-import-lifecycle', internal.editorImportListener);
+    }
+    clearResumeTimer(internal);
     restoreOriginalMaterials(this);
     internal.editorShellObserver = undefined;
+    internal.editorImportListener = undefined;
     originalDispose?.call(this);
   };
 
