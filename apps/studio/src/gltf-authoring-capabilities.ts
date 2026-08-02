@@ -1,4 +1,6 @@
 export const GLTF_AUTHORING_CAPABILITIES = Object.freeze({
+  transactionalSceneActivation: true,
+  nonBlockingImportThumbnail: true,
   skinJoints: true,
   morphTargets: true,
   draco: true,
