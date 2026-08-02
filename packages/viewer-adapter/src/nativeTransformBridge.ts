@@ -13,7 +13,7 @@ import {
   type SnapSettings,
 } from './index';
 
-type AdapterInternals = BrowserKyxosViewportAdapter & {
+type AdapterInternals = {
   viewer: KyxosViewer | null;
   gizmo: HTMLDivElement | null;
   selected: string[];
@@ -46,7 +46,7 @@ const bridgeStates = new WeakMap<BrowserKyxosViewportAdapter, NativeBridgeState>
 const installed = Symbol('kyxos.nativeTransformBridge.installed');
 
 function internals(adapter: BrowserKyxosViewportAdapter): AdapterInternals {
-  return adapter as AdapterInternals;
+  return adapter as unknown as AdapterInternals;
 }
 
 function removeFallbackGizmo(adapter: BrowserKyxosViewportAdapter): void {
