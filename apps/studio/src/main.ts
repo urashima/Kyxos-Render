@@ -68,6 +68,7 @@ import {
   scheduleImportPostprocess,
   throwIfImportAborted,
 } from './asset-import-runtime';
+import { parseGlbInWorker } from './glb-worker-client';
 
 const app = document.querySelector<HTMLElement>('#app')!;
 const client = createApiClient({
@@ -2386,7 +2387,7 @@ async function importAsset(
       async run(current, signal) {
         if (extension !== 'glb') return;
         showNotice('Parsing GLB in a worker…');
-        current.report = await parseGlb(file);
+        current.report = await parseGlbInWorker(file, { signal });
         throwIfImportAborted(signal);
       },
     },
