@@ -64,7 +64,7 @@ test('Studio viewport helpers survive GLB scene replacement', async ({ page }) =
   await expect(canvas).not.toHaveAttribute('data-editor-helpers', /(?:^|,)grid(?:,|$)/);
 });
 
-test('Studio imports complete glTF authoring content', async ({ page }) => {
+test('Studio imports and edits complete glTF authoring content', async ({ page }) => {
   test.setTimeout(180_000);
   await createStudioProject(page, 'gltf-authoring@kyxos.local', 'Complete glTF Fixture');
 
@@ -117,4 +117,18 @@ test('Studio imports complete glTF authoring content', async ({ page }) => {
   });
   expect(summary.cameraCount).toBeGreaterThan(1);
   expect(summary.lightTypes).toContain('spot');
+
+  await page.locator('.hierarchy-row', { hasText: 'Skinned Morph Mesh' }).click();
+  await expect(page.getByText('Morph Targets', { exact: true })).toBeVisible();
+  await expect(page.getByText('Skin / Joints', { exact: true })).toBeVisible();
+  await expect(page.getByText(/1 · Root Joint/)).toBeVisible();
+
+  const morphSlider = page.getByLabel('Raise morph weight');
+  await expect(morphSlider).toBeVisible();
+  await morphSlider.fill('0.65');
+  await expect.poll(async () => page.evaluate(() => {
+    const scene = (globalThis as any).kyxosStudio?.api?.getScene();
+    return scene?.nodes?.find((node: any) => node.name === 'Skinned Morph Mesh')
+      ?.morphWeights?.[0];
+  })).toBeCloseTo(0.65, 3);
 });
