@@ -1,5 +1,5 @@
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
-import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 
@@ -37,22 +37,6 @@ function loadLocalBlob(
   });
 }
 
-/**
- * Three.js FileLoader uses fetch for URLs. Chromium can leave a fetch-backed
- * Blob URL pending when that Blob was cloned out of IndexedDB. Read local Blob
- * URLs through XHR and keep the official GLTFLoader parser and extension stack.
- */
-class ConfiguredGltfLoader extends GLTFLoader {
-  override async loadAsync(
-    url: string,
-    onProgress?: ProgressCallback,
-  ): Promise<GLTF> {
-    if (!url.startsWith('blob:')) return super.loadAsync(url, onProgress);
-    const buffer = await loadLocalBlob(url, onProgress);
-    return this.parseAsync(buffer, '');
-  }
-}
-
 export interface ConfiguredGltfLoaderOptions {
   /** Only initialize the KTX2 transcoder when the asset actually declares Basis/KTX2. */
   ktx2?: boolean;
@@ -63,9 +47,10 @@ export function createConfiguredGltfLoader(
   renderer?: object | null,
   options: ConfiguredGltfLoaderOptions = {},
 ): GLTFLoader {
-  const loader = new ConfiguredGltfLoader();
+  const loader = new GLTFLoader();
   loader.setDRACOLoader(dracoLoader);
   loader.setMeshoptDecoder(MeshoptDecoder);
+
   if (renderer && options.ktx2) {
     let ktx2Loader = ktx2Loaders.get(renderer);
     if (!ktx2Loader) {
@@ -75,6 +60,19 @@ export function createConfiguredGltfLoader(
     }
     loader.setKTX2Loader(ktx2Loader);
   }
+
+  const nativeLoadAsync = loader.loadAsync.bind(loader);
+  loader.loadAsync = async (url, onProgress) => {
+    if (!url.startsWith('blob:')) return nativeLoadAsync(url, onProgress);
+
+    // Three.js FileLoader uses fetch for URLs. Chromium can leave a
+    // fetch-backed Blob URL pending when that Blob was cloned out of IndexedDB.
+    // Read local Blob URLs through XHR, then keep the official GLTFLoader parser
+    // and its Draco / Meshopt / KTX2 extension stack unchanged.
+    const buffer = await loadLocalBlob(url, onProgress as ProgressCallback | undefined);
+    return loader.parseAsync(buffer, '');
+  };
+
   return loader;
 }
 
