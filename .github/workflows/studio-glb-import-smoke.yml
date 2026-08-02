@@ -1,0 +1,64 @@
+name: Studio GLB Import Smoke
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'apps/studio/**'
+      - 'packages/editor-core/**'
+      - 'packages/scene-contract/**'
+      - 'packages/test-fixtures/**'
+      - 'packages/viewer/**'
+      - 'packages/viewer-adapter/**'
+      - 'tests/e2e/studio-viewport-helpers.spec.ts'
+      - '.github/workflows/studio-glb-import-smoke.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: studio-glb-import-smoke-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  glb-import:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout pull request
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install workspace
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Install Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Import GLB while viewport helpers are active
+        env:
+          CI: true
+        run: >-
+          pnpm exec playwright test
+          tests/e2e/studio-viewport-helpers.spec.ts
+          --project=chromium
+          --workers=1
+
+      - name: Upload diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: studio-glb-import-smoke
+          if-no-files-found: ignore
+          path: |
+            test-results
+            playwright-report
