@@ -1,3 +1,4 @@
+import './generated-glb-byte-cache';
 import { DiagnosticConsole, type ConsoleEntry, type ConsoleLevel } from '@kyxos/editor-core';
 
 const installed = Symbol.for('kyxos.imageBitmapGuard.installed');
@@ -41,9 +42,6 @@ function installThumbnailDiagnosticGuard(): void {
     data,
     source,
   ): ConsoleEntry {
-    // A deferred import thumbnail is expected control flow, not a Studio warning.
-    // Do not dispatch it into the synchronous notification pipeline: the import
-    // transaction must be allowed to publish its completion notice immediately.
     if (source === 'assets' && message.startsWith('Could not generate a thumbnail')) {
       return {
         id: crypto.randomUUID(),
@@ -70,9 +68,6 @@ const originalCreateImageBitmap = globalThis.createImageBitmap?.bind(globalThis)
 
 if (!guardGlobal[installed] && originalCreateImageBitmap) {
   const guardedCreateImageBitmap = ((...args: unknown[]): Promise<ImageBitmap> => {
-    // The viewport adapter uses a dedicated MIME type when thumbnail generation
-    // is intentionally skipped. Reject that sentinel before calling the browser
-    // decoder; unlike DOM status classes, the Blob travels with the exact request.
     if (isSkippedThumbnailSource(args[0])) {
       document.documentElement.dataset.imageBitmapGuard = 'skipped-thumbnail-blob';
       return Promise.reject(
@@ -80,9 +75,6 @@ if (!guardGlobal[installed] && originalCreateImageBitmap) {
       );
     }
 
-    // Asset thumbnails are optional decoration. Never invoke the browser image
-    // decoder while an import transaction is active: software Chromium can block
-    // synchronously inside createImageBitmap before a timeout can even be armed.
     if (hasActiveImportTransaction()) {
       document.documentElement.dataset.imageBitmapGuard = 'skipped-active-import';
       return Promise.reject(
