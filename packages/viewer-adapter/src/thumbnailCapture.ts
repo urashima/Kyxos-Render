@@ -34,6 +34,24 @@ function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }
 
+function usesSoftwareWebGl(canvas: HTMLCanvasElement): boolean {
+  try {
+    const gl = canvas.getContext('webgl2');
+    if (!gl) return false;
+    const debug = gl.getExtension('WEBGL_debug_renderer_info') as
+      | { UNMASKED_RENDERER_WEBGL: number }
+      | null;
+    const renderer = [
+      debug ? String(gl.getParameter(debug.UNMASKED_RENDERER_WEBGL) ?? '') : '',
+      String(gl.getParameter(gl.RENDERER) ?? ''),
+      String(gl.getParameter(gl.VENDOR) ?? ''),
+    ].join(' ');
+    return /swiftshader|llvmpipe|softpipe|lavapipe|software raster/i.test(renderer);
+  } catch {
+    return false;
+  }
+}
+
 export function installNonBlockingThumbnailCapture(): void {
   const prototype = BrowserKyxosViewportAdapter.prototype as unknown as AdapterPrototype;
   if (prototype[installed]) return;
@@ -47,6 +65,14 @@ export function installNonBlockingThumbnailCapture(): void {
       throw new Error('Viewport adapter is not mounted.');
     }
 
+    // Software WebGL readback can block the browser main thread for minutes.
+    // A placeholder is preferable in that environment: model import, editing,
+    // autosave and publishing remain usable instead of waiting on decoration.
+    if (usesSoftwareWebGl(canvas)) {
+      canvas.dataset.thumbnailCapture = 'fallback-software-renderer';
+      return fallbackThumbnail();
+    }
+
     // Scene operations are normally already complete when a thumbnail is
     // requested. Give a late edit a short grace period, but never let an
     // unrelated queue entry block import or publishing indefinitely.
@@ -57,8 +83,7 @@ export function installNonBlockingThumbnailCapture(): void {
 
     // The Viewer animation loop has already produced the visible frame. Read the
     // composited canvas directly instead of calling viewer.capture(), which forces
-    // a synchronous RenderPipeline render before its Promise exists. Software
-    // WebGL can spend minutes in that render, preventing even timeout callbacks.
+    // a synchronous RenderPipeline render before its Promise exists.
     return new Promise<Blob>((resolve) => {
       let settled = false;
       const finish = (blob?: Blob | null) => {
