@@ -13,6 +13,10 @@ import {
   sceneDigestInput,
   type KyxosSceneContract,
 } from '@kyxos/scene-contract';
+import {
+  recoverLocalAssetBlob,
+  type LocalAssetIndexEntry,
+} from './legacyAssetRecovery';
 
 const LOCAL_KEY = 'kyxos-studio-local-v1';
 const DB_NAME = 'kyxos-studio-durable';
@@ -29,15 +33,7 @@ interface LocalStateShape {
   drafts?: Record<string, LightweightDraft>;
   workspaces?: Record<string, LightweightWorkspace>;
   releases?: LightweightRelease[];
-  assets?: Record<string, {
-    id: string;
-    hash: string;
-    name?: string;
-    mimeType?: string;
-    byteSize?: number;
-    completed?: boolean;
-    metadata?: Record<string, unknown>;
-  }>;
+  assets?: Record<string, LocalAssetIndexEntry>;
   current?: Record<string, string>;
   disabled?: string[];
   [key: string]: unknown;
@@ -408,15 +404,25 @@ function createDurableLocalClient(): KyxosApiClient {
         state.assets ??= {};
         let repairedAssetIndex = false;
         for (const [assetKey, asset] of Object.entries(contract.assets)) {
-          const blobUrl = await originalAssets.getBlobUrl(asset.contentHash);
-          if (!blobUrl) throw new Error(`Missing asset ${asset.contentHash}.`);
+          let blobUrl = await originalAssets.getBlobUrl(asset.contentHash);
+          let recovered = null;
+          if (!blobUrl) {
+            recovered = await recoverLocalAssetBlob(assetKey, asset, state.assets);
+            if (recovered) blobUrl = await originalAssets.getBlobUrl(asset.contentHash);
+          }
+          if (!blobUrl) {
+            throw new Error(
+              `Missing asset ${asset.contentHash}. No matching Blob exists in local browser storage (legacy-recovery-v2).`,
+            );
+          }
           URL.revokeObjectURL(blobUrl);
 
           const stored = state.assets[assetKey];
           if (
             !stored ||
             stored.hash !== asset.contentHash ||
-            stored.completed === false
+            stored.completed === false ||
+            recovered
           ) {
             state.assets[assetKey] = {
               id: asset.id || assetKey,
@@ -428,6 +434,10 @@ function createDurableLocalClient(): KyxosApiClient {
               metadata: {
                 ...(stored?.metadata ?? {}),
                 recoveredFromSceneContract: true,
+                ...(recovered ? {
+                  recoveredFromLegacyBlobKey: recovered.sourceKey,
+                  actualContentHash: recovered.actualHash,
+                } : {}),
               },
             };
             repairedAssetIndex = true;
