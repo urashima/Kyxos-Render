@@ -14,6 +14,7 @@ on:
       - 'tests/e2e/studio-asset-virtualization.spec.ts'
       - 'tests/e2e/studio-camera-bookmarks.spec.ts'
       - 'tests/e2e/studio-render-modes.spec.ts'
+      - 'tests/e2e/studio-gltf-fidelity.spec.ts'
       - 'tests/unit/gltf-authoring-parity.spec.ts'
       - 'tests/unit/studio-glb-report.spec.ts'
       - '.github/workflows/studio-glb-import-smoke.yml'
@@ -61,6 +62,9 @@ jobs:
           - id: authoring
             spec: tests/e2e/studio-viewport-helpers.spec.ts
             grep: Studio imports, edits and reimports complete glTF authoring content
+          - id: gltf-fidelity
+            spec: tests/e2e/studio-gltf-fidelity.spec.ts
+            grep: Studio preserves glTF matrices, embedded PBR textures, skin weights and bone animation
           - id: draco-external
             spec: tests/e2e/studio-viewport-helpers.spec.ts
             grep: Studio bundles external glTF resources and decodes Draco
