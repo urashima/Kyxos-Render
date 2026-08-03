@@ -70,10 +70,11 @@ test('Studio, Public Viewer and Embed share Playground render settings and produ
   await expect(publicPage.locator('html')).toHaveAttribute('data-kx-product-theme', 'light');
   await expect(publicPage.getByRole('button', { name: /Use dark green and black theme/ })).toBeVisible();
 
+  // `site/embed` is the same built Public Viewer artifact copied by the Pages
+  // composer. Exercise its no-UI mode on the shared build here; the Pages
+  // workflow separately verifies that the `/embed/` artifact and online route exist.
   const embedPage = await context.newPage();
-  await embedPage.goto('/embed/?slug=ui-fixture&backend=webgl2&ui=0&theme=dark', {
-    waitUntil: 'domcontentloaded',
-  });
+  await embedPage.goto('/public/?slug=ui-fixture&backend=webgl2&ui=0&theme=dark');
   await expect(embedPage.locator('#viewer')).toBeVisible({ timeout: 60_000 });
   await expect(embedPage.locator('#viewer')).toHaveAttribute(
     'data-render-settings-parity',
