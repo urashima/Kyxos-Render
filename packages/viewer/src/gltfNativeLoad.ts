@@ -54,15 +54,17 @@ function annotateAssociations(gltf: any): void {
   if (!associations) return;
   for (const [resource, association] of associations) {
     if (resource instanceof THREE.Object3D) {
+      const object = resource as THREE.Object3D;
       const nodeIndex = associationIndex(association, 'nodes');
       const meshIndex = associationIndex(association, 'meshes');
       const primitiveIndex = associationIndex(association, 'primitives');
-      if (nodeIndex != null) resource.userData.gltfNodeIndex = nodeIndex;
-      if (meshIndex != null) resource.userData.gltfMeshIndex = meshIndex;
-      if (primitiveIndex != null) resource.userData.gltfPrimitiveIndex = primitiveIndex;
+      if (nodeIndex != null) object.userData.gltfNodeIndex = nodeIndex;
+      if (meshIndex != null) object.userData.gltfMeshIndex = meshIndex;
+      if (primitiveIndex != null) object.userData.gltfPrimitiveIndex = primitiveIndex;
     } else if (resource instanceof THREE.Material) {
+      const material = resource as THREE.Material;
       const materialIndex = associationIndex(association, 'materials');
-      if (materialIndex != null) resource.userData.gltfMaterialIndex = materialIndex;
+      if (materialIndex != null) material.userData.gltfMaterialIndex = materialIndex;
     }
   }
 }
