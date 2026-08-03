@@ -1,0 +1,207 @@
+name: Apply PR32 Asset Index Race Fix
+
+on:
+  push:
+    branches: [agent/fix-save-publish-public-loading-v2]
+    paths:
+      - '.github/workflows/pr32-fix-asset-index-race.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/fix-save-publish-public-loading-v2
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply durable asset transaction and recovery patch
+        run: |
+          python <<'PY'
+          from pathlib import Path
+
+          durable = Path('packages/api-client/src/durable.ts')
+          text = durable.read_text()
+
+          old = """  assets?: Record<string, {
+              id: string;
+              hash: string;
+              completed?: boolean;
+            }>;
+          """
+          new = """  assets?: Record<string, {
+              id: string;
+              hash: string;
+              name?: string;
+              mimeType?: string;
+              byteSize?: number;
+              completed?: boolean;
+              metadata?: Record<string, unknown>;
+            }>;
+          """
+          if old not in text:
+              raise SystemExit('asset state interface marker not found')
+          text = text.replace(old, new, 1)
+
+          old = """  const client = gateClient(new LocalKyxosApiClient(), ready);
+            const originalProjects = client.projects;
+          """
+          new = """  const client = gateClient(new LocalKyxosApiClient(), ready);
+            const originalProjects = client.projects;
+            const originalAssets = client.assets;
+          """
+          if old not in text:
+              raise SystemExit('original namespace marker not found')
+          text = text.replace(old, new, 1)
+
+          marker = """
+            client.drafts = {
+          """
+          replacement = """
+            client.assets = {
+              createUpload: async (input) => {
+                await ready;
+                return exclusive(() => originalAssets.createUpload(input));
+              },
+              upload: async (ticket, file) => {
+                await ready;
+                await originalAssets.upload(ticket, file);
+              },
+              completeUpload: async (assetId, metadata) => {
+                await ready;
+                await exclusive(() => originalAssets.completeUpload(assetId, metadata));
+              },
+              getManifest: async (assetIds) => {
+                await ready;
+                return exclusive(() => originalAssets.getManifest(assetIds));
+              },
+              getBlobUrl: async (hash) => {
+                await ready;
+                return exclusive(() => originalAssets.getBlobUrl(hash));
+              },
+            };
+
+            client.drafts = {
+          """
+          if marker not in text:
+              raise SystemExit('draft namespace marker not found')
+          text = text.replace(marker, replacement, 1)
+
+          old = """        const storedAssets = Object.values(state.assets ?? {});
+                  for (const asset of Object.values(contract.assets)) {
+                    const stored = storedAssets.find(
+                      (entry) => entry.hash === asset.contentHash && entry.completed !== false,
+                    );
+                    if (!stored) throw new Error(`Missing asset ${asset.contentHash}.`);
+                  }
+          """
+          new = """        state.assets ??= {};
+                  let repairedAssetIndex = false;
+                  for (const [assetKey, asset] of Object.entries(contract.assets)) {
+                    const blobUrl = await originalAssets.getBlobUrl(asset.contentHash);
+                    if (!blobUrl) throw new Error(`Missing asset ${asset.contentHash}.`);
+                    URL.revokeObjectURL(blobUrl);
+
+                    const stored = state.assets[assetKey];
+                    if (
+                      !stored ||
+                      stored.hash !== asset.contentHash ||
+                      stored.completed === false
+                    ) {
+                      state.assets[assetKey] = {
+                        id: asset.id || assetKey,
+                        hash: asset.contentHash,
+                        name: asset.name ?? asset.id ?? assetKey,
+                        mimeType: asset.mimeType ?? 'application/octet-stream',
+                        byteSize: asset.byteSize ?? 0,
+                        completed: true,
+                        metadata: {
+                          ...(stored?.metadata ?? {}),
+                          recoveredFromSceneContract: true,
+                        },
+                      };
+                      repairedAssetIndex = true;
+                    }
+                  }
+                  if (repairedAssetIndex) writeState(state);
+          """
+          if old not in text:
+              raise SystemExit('release asset validation marker not found')
+          text = text.replace(old, new, 1)
+          durable.write_text(text)
+
+          spec = Path('tests/e2e/studio-save-publish-public.spec.ts')
+          test = spec.read_text()
+          marker = """  await expect(page.locator('.save-state')).toHaveText('Saved', { timeout: 60_000 });
+
+            // This payload exceeds the practical localStorage allowance once duplicated
+          """
+          replacement = """  await expect(page.locator('.save-state')).toHaveText('Saved', { timeout: 60_000 });
+
+            // Reproduce the mobile failure where a concurrent Draft/Workspace save
+            // overwrote the just-completed GLB asset metadata. The binary Blob remains
+            // in IndexedDB, so Publish must repair the lightweight asset index from
+            // the Scene Contract instead of requiring a reimport.
+            const simulatedLostAsset = await page.evaluate(() => {
+              const api = (globalThis as any).kyxosStudio?.api;
+              const scene = api.getScene();
+              const asset = Object.values(scene.assets)[0] as any;
+              const raw = localStorage.getItem('kyxos-studio-local-v1') ?? '{}';
+              const state = JSON.parse(raw);
+              if (!asset || !state.assets?.[asset.id]) {
+                throw new Error('Imported asset metadata was not durably registered.');
+              }
+              delete state.assets[asset.id];
+              localStorage.setItem('kyxos-studio-local-v1', JSON.stringify(state));
+              return { id: asset.id, hash: asset.contentHash };
+            });
+
+            // This payload exceeds the practical localStorage allowance once duplicated
+          """
+          if marker not in test:
+              raise SystemExit('E2E insertion marker not found')
+          test = test.replace(marker, replacement, 1)
+
+          marker = """  await expect(page.locator('html')).toHaveAttribute('data-publish-state', 'published');
+
+            const localIndex = await page.evaluate(() => {
+          """
+          replacement = """  await expect(page.locator('html')).toHaveAttribute('data-publish-state', 'published');
+
+            const repairedAsset = await page.evaluate(({ id }) => {
+              const state = JSON.parse(localStorage.getItem('kyxos-studio-local-v1') ?? '{}');
+              return state.assets?.[id] ?? null;
+            }, simulatedLostAsset);
+            expect(repairedAsset).toMatchObject({
+              id: simulatedLostAsset.id,
+              hash: simulatedLostAsset.hash,
+              completed: true,
+            });
+
+            const localIndex = await page.evaluate(() => {
+          """
+          if marker not in test:
+              raise SystemExit('E2E recovery assertion marker not found')
+          test = test.replace(marker, replacement, 1)
+          spec.write_text(test)
+          PY
+      - name: Install workspace
+        run: pnpm install --no-frozen-lockfile
+      - name: Typecheck API client
+        run: pnpm --filter @kyxos/api-client typecheck
+      - name: Remove one-time workflow and commit
+        run: |
+          rm .github/workflows/pr32-fix-asset-index-race.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add packages/api-client/src/durable.ts tests/e2e/studio-save-publish-public.spec.ts .github/workflows/pr32-fix-asset-index-race.yml
+          git commit -m "fix: preserve and recover imported asset indexes"
+          git push origin HEAD:agent/fix-save-publish-public-loading-v2
