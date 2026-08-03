@@ -6,9 +6,13 @@ on:
     branches: [main]
     paths:
       - 'packages/api-client/**'
+      - 'apps/studio/src/project-chat*'
+      - 'apps/studio/chat-lab/**'
+      - 'apps/studio/vite.config.ts'
       - 'services/backend/migrations/0004_project_chat.sql'
       - 'tests/unit/project-chat.spec.ts'
       - 'tests/integration/project-chat-rls.spec.ts'
+      - 'tests/e2e/studio-project-chat.spec.ts'
       - '.github/workflows/project-chat.yml'
 
 permissions:
@@ -36,14 +40,52 @@ jobs:
           node-version: 22
       - name: Install workspace
         run: pnpm install --no-frozen-lockfile
-      - name: Typecheck API client
-        run: pnpm --filter @kyxos/api-client typecheck
+      - name: Typecheck API client and Studio
+        run: pnpm --filter @kyxos/api-client typecheck && pnpm --filter @kyxos/studio typecheck
       - name: Run local chat and static RLS acceptance
         run: >-
           pnpm exec vitest run
           tests/unit/project-chat.spec.ts
           tests/integration/project-chat-rls.spec.ts
           --reporter=verbose
+
+  studio-panel:
+    name: Studio Chat panel
+    runs-on: ubuntu-24.04
+    timeout-minutes: 16
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install workspace
+        run: pnpm install --no-frozen-lockfile
+      - name: Install Chromium
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Run two-user Chat Lab acceptance
+        env:
+          CI: true
+        run: pnpm exec playwright test tests/e2e/studio-project-chat.spec.ts --project=chromium --workers=1 --retries=0
+      - name: Build Studio pages
+        run: pnpm --filter @kyxos/studio build
+      - name: Verify Chat Lab output
+        shell: bash
+        run: test -f apps/studio/dist/chat-lab/index.html
+      - name: Upload browser diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: project-chat-panel
+          if-no-files-found: ignore
+          path: |
+            test-results
+            playwright-report
 
   live-two-user:
     name: Live two-user project chat RLS
@@ -110,7 +152,7 @@ jobs:
           {
             echo '## Live project chat RLS acceptance not executed'
             echo
-            echo 'Static migration and local client acceptance passed.'
+            echo 'Static migration, local client and Studio Chat panel acceptance passed.'
             echo
             echo "Missing: \`$MISSING\`"
             echo
