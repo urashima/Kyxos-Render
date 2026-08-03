@@ -131,18 +131,18 @@ function refresh(): void {
 
 function draw(): void {
   if (!bitmap || !editor) return;
-  const document = editor.value;
-  canvas.width = document.imageWidth;
-  canvas.height = document.imageHeight;
-  canvas.style.width = `${document.imageWidth * zoom}px`;
-  canvas.style.height = `${document.imageHeight * zoom}px`;
+  const atlas = editor.value;
+  canvas.width = atlas.imageWidth;
+  canvas.height = atlas.imageHeight;
+  canvas.style.width = `${atlas.imageWidth * zoom}px`;
+  canvas.style.height = `${atlas.imageHeight * zoom}px`;
   context.clearRect(0, 0, canvas.width, canvas.height);
-  context.drawImage(bitmap, 0, 0, document.imageWidth, document.imageHeight);
+  context.drawImage(bitmap, 0, 0, atlas.imageWidth, atlas.imageHeight);
   context.save();
   context.lineWidth = Math.max(1 / zoom, 0.5);
   context.font = `${Math.max(10 / zoom, 6)}px ui-monospace, monospace`;
   context.textBaseline = 'top';
-  for (const frame of document.frames) {
+  for (const frame of atlas.frames) {
     const rect = drag?.frameId === frame.id ? drag.preview : frame.rect;
     const selected = editor.selected.includes(frame.id);
     context.strokeStyle = selected ? '#d7ff4a' : '#ffffff';
@@ -173,14 +173,14 @@ function renderFrameList(): void {
     frameCount.textContent = '0';
     return;
   }
-  const document = editor.value;
+  const atlas = editor.value;
   const query = searchInput.value.trim().toLocaleLowerCase();
-  frameCount.textContent = String(document.frames.length);
-  const visible = document.frames.filter((frame) =>
+  frameCount.textContent = String(atlas.frames.length);
+  const visible = atlas.frames.filter((frame) =>
     !query || frame.name.toLocaleLowerCase().includes(query) || frame.id.includes(query),
   );
   if (!visible.length) {
-    const message = document.frames.length ? 'No matching frames.' : 'No frames yet.';
+    const message = atlas.frames.length ? 'No matching frames.' : 'No frames yet.';
     const emptyRow = document.createElement('p');
     emptyRow.className = 'atlas-list-empty';
     emptyRow.textContent = message;
@@ -378,18 +378,18 @@ canvas.addEventListener('pointermove', (event) => {
   const point = canvasPoint(event);
   const deltaX = Math.round(point.x - drag.startX);
   const deltaY = Math.round(point.y - drag.startY);
-  const document = editor.value;
+  const atlas = editor.value;
   if (drag.mode === 'move') {
     drag.preview = {
       ...drag.original,
-      x: Math.max(0, Math.min(document.imageWidth - drag.original.width, drag.original.x + deltaX)),
-      y: Math.max(0, Math.min(document.imageHeight - drag.original.height, drag.original.y + deltaY)),
+      x: Math.max(0, Math.min(atlas.imageWidth - drag.original.width, drag.original.x + deltaX)),
+      y: Math.max(0, Math.min(atlas.imageHeight - drag.original.height, drag.original.y + deltaY)),
     };
   } else {
     drag.preview = {
       ...drag.original,
-      width: Math.max(1, Math.min(document.imageWidth - drag.original.x, drag.original.width + deltaX)),
-      height: Math.max(1, Math.min(document.imageHeight - drag.original.y, drag.original.height + deltaY)),
+      width: Math.max(1, Math.min(atlas.imageWidth - drag.original.x, drag.original.width + deltaX)),
+      height: Math.max(1, Math.min(atlas.imageHeight - drag.original.y, drag.original.height + deltaY)),
     };
   }
   draw();
@@ -447,12 +447,12 @@ exportButton.addEventListener('click', () => {
 
 addButton.addEventListener('click', () => {
   if (!editor) return;
-  const document = editor.value;
-  const width = Math.max(1, Math.floor(document.imageWidth / 4));
-  const height = Math.max(1, Math.floor(document.imageHeight / 4));
+  const atlas = editor.value;
+  const width = Math.max(1, Math.floor(atlas.imageWidth / 4));
+  const height = Math.max(1, Math.floor(atlas.imageHeight / 4));
   editor.addFrame({
-    x: Math.floor((document.imageWidth - width) / 2),
-    y: Math.floor((document.imageHeight - height) / 2),
+    x: Math.floor((atlas.imageWidth - width) / 2),
+    y: Math.floor((atlas.imageHeight - height) / 2),
     width,
     height,
   });
