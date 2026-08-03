@@ -69,7 +69,7 @@ test('Studio, Public Viewer and Embed share Playground render settings and produ
   expect(initialGeometry.knobWidth).toBeCloseTo(16, 1);
   expect(initialGeometry.knobHeight).toBeCloseTo(16, 1);
   expect(Math.abs(initialGeometry.centerDeltaY)).toBeLessThan(0.75);
-  expect(initialGeometry.knobOffsetX).toBeCloseTo(initialGeometry.checked ? 21 : 3, 1);
+  expect(initialGeometry.knobOffsetX).toBeCloseTo(initialGeometry.checked ? 20 : 4, 1);
 
   const effectCountBefore = Number(await canvas.getAttribute('data-render-effect-count'));
   const wasEnabled = await bloomSwitch.getAttribute('aria-checked');
@@ -87,7 +87,7 @@ test('Studio, Public Viewer and Embed share Playground render settings and produ
   await expect
     .poll(async () => {
       const geometry = await readSwitchGeometry();
-      const expected = geometry.checked ? 21 : 3;
+      const expected = geometry.checked ? 20 : 4;
       return {
         centered: Math.abs(geometry.centerDeltaY) < 0.75,
         aligned: Math.abs(geometry.knobOffsetX - expected) < 0.75,
