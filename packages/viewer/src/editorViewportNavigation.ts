@@ -18,6 +18,12 @@ export type EditorViewPreset =
   | 'left'
   | 'right';
 
+export interface EditorCameraBookmarkState {
+  camera: SceneCamera;
+  up: Vec3;
+  preset?: EditorViewPreset;
+}
+
 interface ViewerInternals {
   camera: THREE.PerspectiveCamera | THREE.OrthographicCamera;
   controls: {
@@ -53,10 +59,13 @@ function vector(value: THREE.Vector3): Vec3 {
   return { x: value.x, y: value.y, z: value.z };
 }
 
-function transform(position: THREE.Vector3): SceneCamera['transform'] {
+function transform(
+  position: THREE.Vector3,
+  rotation = new THREE.Euler(),
+): SceneCamera['transform'] {
   return {
     position: vector(position),
-    rotation: { x: 0, y: 0, z: 0 },
+    rotation: { x: rotation.x, y: rotation.y, z: rotation.z },
     scale: { x: 1, y: 1, z: 1 },
   };
 }
@@ -128,6 +137,7 @@ export function setEditorViewPreset(
   next.controls.update();
   activePresets.set(this, preset);
   this.canvas.dataset.editorView = preset;
+  delete this.canvas.dataset.editorBookmarkSlot;
   this.canvas.dataset.editorCameraProjection = camera.projection ?? 'perspective';
   next.resetTemporal(`editor-view:${preset}`);
   this.dispatchEvent(new CustomEvent('editor-view-change', {
@@ -157,8 +167,62 @@ export function frameAllEditorContent(this: KyxosViewer): void {
   internal.controls.update();
   internal.resetTemporal('editor-frame-all');
   this.canvas.dataset.editorFrameAllAt = String(performance.now());
+  delete this.canvas.dataset.editorBookmarkSlot;
   this.dispatchEvent(new CustomEvent('editor-frame-all', {
     detail: { center: vector(sphere.center), radius },
+  }));
+}
+
+export function captureEditorCameraBookmark(
+  this: KyxosViewer,
+): EditorCameraBookmarkState {
+  const internal = internals(this);
+  const camera = internal.camera;
+  return {
+    camera: {
+      id: 'editor-bookmark',
+      name: 'Editor Bookmark',
+      transform: transform(camera.position, camera.rotation),
+      target: vector(internal.controls.target),
+      fov: camera instanceof THREE.PerspectiveCamera ? camera.fov : 45,
+      near: camera.near,
+      far: camera.far,
+      projection: camera instanceof THREE.OrthographicCamera
+        ? 'orthographic'
+        : 'perspective',
+      orthographicSize: camera instanceof THREE.OrthographicCamera
+        ? Number(camera.userData.kyxosOrthographicSize ?? camera.top)
+        : undefined,
+      autoRotate: false,
+    },
+    up: vector(camera.up),
+    preset: activePresets.get(this),
+  };
+}
+
+export function restoreEditorCameraBookmark(
+  this: KyxosViewer,
+  state: EditorCameraBookmarkState,
+  slot?: number,
+): void {
+  this.setCameraState(state.camera);
+  const internal = internals(this);
+  internal.camera.up.set(state.up.x, state.up.y, state.up.z);
+  internal.controls.target.set(
+    state.camera.target.x,
+    state.camera.target.y,
+    state.camera.target.z,
+  );
+  internal.camera.lookAt(internal.controls.target);
+  internal.controls.update();
+  if (state.preset) activePresets.set(this, state.preset);
+  else activePresets.delete(this);
+  this.canvas.dataset.editorView = state.preset ?? 'bookmark';
+  if (slot != null) this.canvas.dataset.editorBookmarkSlot = String(slot);
+  this.canvas.dataset.editorCameraProjection = state.camera.projection ?? 'perspective';
+  internal.resetTemporal(`editor-bookmark:${slot ?? 'custom'}`);
+  this.dispatchEvent(new CustomEvent('editor-camera-bookmark-restored', {
+    detail: { slot, state },
   }));
 }
 
@@ -188,6 +252,8 @@ if (!prototype[installed]) {
   Object.assign(prototype, {
     setEditorViewPreset,
     frameAllEditorContent,
+    captureEditorCameraBookmark,
+    restoreEditorCameraBookmark,
     getEditorViewPreset,
   });
   prototype[installed] = true;
@@ -197,6 +263,8 @@ declare module './KyxosViewer' {
   interface KyxosViewer {
     setEditorViewPreset(preset: EditorViewPreset): void;
     frameAllEditorContent(): void;
+    captureEditorCameraBookmark(): EditorCameraBookmarkState;
+    restoreEditorCameraBookmark(state: EditorCameraBookmarkState, slot?: number): void;
     getEditorViewPreset(): EditorViewPreset;
   }
 }
