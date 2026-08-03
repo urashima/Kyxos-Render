@@ -14,11 +14,13 @@ import { KyxosViewer } from './KyxosViewer';
 
 interface FidelityInternals {
   modelRoot?: THREE.Group;
+  loadedGltfAnimations?: THREE.AnimationClip[];
   gltfNativeSnapshots?: NativeGltfObjectSnapshot[];
   gltfNativeMaterialSnapshots?: NativeGltfMaterialSnapshot[];
   editorOriginalMaterials?: Map<THREE.Mesh, THREE.Material | THREE.Material[]>;
   editorProxyMaterials?: Set<THREE.Material>;
   gltfMaterialObserver?: MutationObserver;
+  gltfDiagnosticFrame?: number;
   editorNeedsRender?: boolean;
   resetTemporal?(reason?: string): void;
 }
@@ -179,6 +181,95 @@ function restoreNativeMaterials(viewer: KyxosViewer, contract: KyxosSceneContrac
   return restored;
 }
 
+function materialHasTexture(material: THREE.Material): boolean {
+  const value = material as THREE.Material & Record<string, unknown>;
+  return [
+    'map',
+    'normalMap',
+    'roughnessMap',
+    'metalnessMap',
+    'emissiveMap',
+    'aoMap',
+    'alphaMap',
+    'clearcoatMap',
+    'transmissionMap',
+    'thicknessMap',
+    'sheenColorMap',
+    'specularColorMap',
+  ].some((key) => value[key] instanceof THREE.Texture);
+}
+
+function weightDiagnostics(attribute: any): { vertices: number; invalid: number } {
+  if (!attribute || typeof attribute.count !== 'number') return { vertices: 0, invalid: 0 };
+  let invalid = 0;
+  for (let index = 0; index < attribute.count; index += 1) {
+    const sum = Number(attribute.getX(index) ?? 0)
+      + Number(attribute.getY(index) ?? 0)
+      + Number(attribute.getZ(index) ?? 0)
+      + Number(attribute.getW(index) ?? 0);
+    if (!Number.isFinite(sum) || Math.abs(sum - 1) > 0.002) invalid += 1;
+  }
+  return { vertices: attribute.count, invalid };
+}
+
+function publishFidelityDiagnostics(
+  viewer: KyxosViewer,
+  contract: KyxosSceneContract,
+): void {
+  const internal = internals(viewer);
+  const bones = new Set<THREE.Bone>();
+  let skinnedMeshes = 0;
+  let texturedMaterials = 0;
+  let weightedVertices = 0;
+  let invalidWeights = 0;
+
+  for (const snapshot of internal.gltfNativeMaterialSnapshots ?? []) {
+    texturedMaterials += snapshot.materials.filter(materialHasTexture).length;
+  }
+  internal.modelRoot?.traverse((object) => {
+    const mesh = object as THREE.SkinnedMesh;
+    if (!mesh.isSkinnedMesh) return;
+    skinnedMeshes += 1;
+    mesh.skeleton.bones.forEach((bone) => bones.add(bone));
+    const weights = weightDiagnostics(mesh.geometry.getAttribute('skinWeight'));
+    weightedVertices += weights.vertices;
+    invalidWeights += weights.invalid;
+  });
+
+  viewer.canvas.dataset.gltfTexturedMaterials = String(texturedMaterials);
+  viewer.canvas.dataset.gltfSkinnedMeshes = String(skinnedMeshes);
+  viewer.canvas.dataset.gltfBones = String(bones.size);
+  viewer.canvas.dataset.gltfWeightedVertices = String(weightedVertices);
+  viewer.canvas.dataset.gltfInvalidWeights = String(invalidWeights);
+  viewer.canvas.dataset.gltfMatrixNodes = String(
+    contract.nodes.filter((node) =>
+      Array.isArray(node.metadata?.gltfNodeMatrix)
+      && node.metadata.gltfNodeMatrix.length === 16,
+    ).length,
+  );
+  viewer.canvas.dataset.gltfAnimations = String(internal.loadedGltfAnimations?.length ?? 0);
+
+  if (new URLSearchParams(location.search).get('gltfDiagnostics') !== '1') return;
+  if (internal.gltfDiagnosticFrame != null) cancelAnimationFrame(internal.gltfDiagnosticFrame);
+  const updatePose = () => {
+    const signature: number[] = [];
+    internal.modelRoot?.traverse((object) => {
+      if (!(object as THREE.Bone).isBone || signature.length >= 16) return;
+      signature.push(
+        Number(object.quaternion.x.toFixed(5)),
+        Number(object.quaternion.y.toFixed(5)),
+        Number(object.quaternion.z.toFixed(5)),
+        Number(object.quaternion.w.toFixed(5)),
+      );
+    });
+    viewer.canvas.dataset.gltfBonePose = signature.join(',');
+    if (viewer.canvas.isConnected) {
+      internal.gltfDiagnosticFrame = requestAnimationFrame(updatePose);
+    }
+  };
+  updatePose();
+}
+
 function ensureMaterialObserver(viewer: KyxosViewer, contract: KyxosSceneContract): void {
   const internal = internals(viewer);
   internal.gltfMaterialObserver?.disconnect();
@@ -186,6 +277,7 @@ function ensureMaterialObserver(viewer: KyxosViewer, contract: KyxosSceneContrac
     if (viewer.canvas.dataset.authoringMaterials !== 'proxy') return;
     queueMicrotask(() => {
       restoreNativeMaterials(viewer, contract);
+      publishFidelityDiagnostics(viewer, contract);
       internal.editorNeedsRender = true;
     });
   });
@@ -213,6 +305,7 @@ export function installGltfAuthoringFidelityExtension(
     const restoredNodes = restoreNativeHierarchy(this, scene);
     const restoredMaterials = restoreNativeMaterials(this, scene);
     ensureMaterialObserver(this, scene);
+    publishFidelityDiagnostics(this, scene);
     const internal = internals(this);
     internal.editorNeedsRender = true;
     this.canvas.dataset.gltfNativeNodes = String(restoredNodes);
@@ -224,6 +317,10 @@ export function installGltfAuthoringFidelityExtension(
     const internal = internals(this);
     internal.gltfMaterialObserver?.disconnect();
     internal.gltfMaterialObserver = undefined;
+    if (internal.gltfDiagnosticFrame != null) {
+      cancelAnimationFrame(internal.gltfDiagnosticFrame);
+      internal.gltfDiagnosticFrame = undefined;
+    }
     originalDispose.call(this);
   };
 
