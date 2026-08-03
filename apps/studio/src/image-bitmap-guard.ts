@@ -23,14 +23,6 @@ type DiagnosticPrototype = {
   [diagnosticGuardInstalled]?: boolean;
 };
 
-function hasActiveImportTransaction(): boolean {
-  return Boolean(
-    document.querySelector(
-      '.import-task:not(.complete):not(.failed):not(.cancelled)',
-    ),
-  );
-}
-
 function isSkippedThumbnailSource(source: unknown): boolean {
   return source instanceof Blob && source.type === skippedThumbnailType;
 }
@@ -71,17 +63,13 @@ const originalCreateImageBitmap = globalThis.createImageBitmap?.bind(globalThis)
 
 if (!guardGlobal[installed] && originalCreateImageBitmap) {
   const guardedCreateImageBitmap = ((...args: unknown[]): Promise<ImageBitmap> => {
+    // Only the explicit thumbnail sentinel is skipped. GLTFLoader also calls
+    // createImageBitmap while an import task is active; rejecting all active
+    // imports silently removed embedded base-color, normal and PBR textures.
     if (isSkippedThumbnailSource(args[0])) {
       document.documentElement.dataset.imageBitmapGuard = 'skipped-thumbnail-blob';
       return Promise.reject(
         new DOMException('Thumbnail decoding was intentionally skipped.', 'AbortError'),
-      );
-    }
-
-    if (hasActiveImportTransaction()) {
-      document.documentElement.dataset.imageBitmapGuard = 'skipped-active-import';
-      return Promise.reject(
-        new DOMException('Thumbnail decoding skipped during asset import.', 'AbortError'),
       );
     }
 
@@ -97,6 +85,7 @@ if (!guardGlobal[installed] && originalCreateImageBitmap) {
       const timeoutId = window.setTimeout(() => {
         if (settled) return;
         settled = true;
+        document.documentElement.dataset.imageBitmapGuard = 'decode-timeout';
         reject(new DOMException('Image bitmap decoding timed out.', 'TimeoutError'));
       }, IMAGE_BITMAP_TIMEOUT_MS);
 
@@ -108,12 +97,14 @@ if (!guardGlobal[installed] && originalCreateImageBitmap) {
           }
           settled = true;
           window.clearTimeout(timeoutId);
+          document.documentElement.dataset.imageBitmapGuard = 'decoded';
           resolve(bitmap);
         },
         (error) => {
           if (settled) return;
           settled = true;
           window.clearTimeout(timeoutId);
+          document.documentElement.dataset.imageBitmapGuard = 'decode-error';
           reject(error);
         },
       );
