@@ -62,7 +62,10 @@ function setProductTheme(theme: KyxosTheme): void {
     shell.classList.toggle('kx-theme-graphite', theme === 'graphite');
   }
   document.querySelectorAll<HTMLElement>('[data-kx-theme-choice]').forEach((button) => {
-    button.setAttribute('aria-pressed', String(button.dataset.kxThemeChoice === theme));
+    const pressed = String(button.dataset.kxThemeChoice === theme);
+    if (button.getAttribute('aria-pressed') !== pressed) {
+      button.setAttribute('aria-pressed', pressed);
+    }
   });
   syncStandaloneThemeToggle();
 }
@@ -480,8 +483,12 @@ function syncStandaloneThemeToggle(): void {
     document.body.append(button);
   }
   const light = currentTheme() === 'graphite';
-  button.textContent = light ? 'Dark theme' : 'Light theme';
-  button.setAttribute('aria-label', light ? 'Use dark green and black theme' : 'Use light red and white theme');
+  const text = light ? 'Dark theme' : 'Light theme';
+  const label = light
+    ? 'Use dark green and black theme'
+    : 'Use light red and white theme';
+  if (button.textContent !== text) button.textContent = text;
+  if (button.getAttribute('aria-label') !== label) button.setAttribute('aria-label', label);
 }
 
 function mount(): void {
@@ -502,7 +509,15 @@ function scheduleMount(): void {
 }
 
 applyKyxosTheme(readStoredTheme());
-const observer = new MutationObserver(scheduleMount);
+const observer = new MutationObserver((mutations) => {
+  const structuralChange = mutations.some((mutation) => {
+    const target = mutation.target instanceof Element
+      ? mutation.target
+      : mutation.target.parentElement;
+    return !target?.closest('#kx-studio-product-theme');
+  });
+  if (structuralChange) scheduleMount();
+});
 observer.observe(document.documentElement, { childList: true, subtree: true });
 window.addEventListener('kyxos:theme-change', scheduleMount);
 scheduleMount();
