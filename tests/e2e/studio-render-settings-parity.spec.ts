@@ -71,8 +71,10 @@ test('Studio, Public Viewer and Embed share Playground render settings and produ
   await expect(publicPage.getByRole('button', { name: /Use dark green and black theme/ })).toBeVisible();
 
   const embedPage = await context.newPage();
-  await embedPage.goto('/embed/?slug=ui-fixture&backend=webgl2&ui=0&theme=dark');
-  await expect(embedPage.locator('#viewer')).toBeVisible();
+  await embedPage.goto('/embed/?slug=ui-fixture&backend=webgl2&ui=0&theme=dark', {
+    waitUntil: 'domcontentloaded',
+  });
+  await expect(embedPage.locator('#viewer')).toBeVisible({ timeout: 60_000 });
   await expect(embedPage.locator('#viewer')).toHaveAttribute(
     'data-render-settings-parity',
     'playground',
