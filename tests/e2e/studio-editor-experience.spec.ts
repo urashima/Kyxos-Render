@@ -56,19 +56,20 @@ test('Studio Tools exposes search, persisted settings, notifications, help and i
 test('Studio command palette runs the Auditor and persists its per-scene report', async ({ page }) => {
   await openEmptyProject(page);
 
-  await page.keyboard.press('Control+K');
-  const palette = page.getByRole('dialog', { name: 'Command palette' });
-  await expect(palette).toBeVisible();
-  const audit = palette.getByRole('button', { name: /Audit Active Scene/ }).first();
+  await page.getByRole('button', { name: 'Tools' }).click();
+  const dialog = page.locator('.advanced-tools-dialog');
+  await expect(dialog).toBeVisible();
+  const search = dialog.getByLabel('Global Studio search');
+  await search.fill('Audit Active Scene');
+  const audit = dialog.getByRole('button', { name: /Audit Active Scene/ }).first();
   await expect(audit).toBeVisible();
   await audit.click();
-  await expect(palette).not.toBeVisible();
+  await expect(dialog).not.toBeVisible();
 
   await expect.poll(async () => page.evaluate(() => localStorage.getItem('kyxos.studio.userdata.v1')))
     .toContain('auditor.lastReport');
 
   await page.getByRole('button', { name: 'Tools' }).click();
-  const dialog = page.locator('.advanced-tools-dialog');
   await expect(dialog).toBeVisible();
   await dialog.getByRole('button', { name: /Notifications/ }).click();
   await expect(dialog.getByText(/Scene audit (completed|passed)/)).toBeVisible();
