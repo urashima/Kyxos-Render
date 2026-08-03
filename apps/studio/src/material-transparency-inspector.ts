@@ -62,8 +62,8 @@ function clamp01(value: unknown, fallback: number): number {
   return Number.isFinite(number) ? Math.max(0, Math.min(1, number)) : fallback;
 }
 
-function surfaceFields(context: InspectorContext): InspectorFieldSchema[] {
-  const fields: InspectorFieldSchema[] = [
+function surfaceFields(_context: InspectorContext): InspectorFieldSchema[] {
+  return [
     {
       id: 'material.surface.opacity',
       label: 'Opacity',
@@ -91,13 +91,7 @@ function surfaceFields(context: InspectorContext): InspectorFieldSchema[] {
       resolvePaths: materialPaths('alphaMode'),
       restoreValue: restoreMaterialValue,
     },
-  ];
-
-  const hasMask = selectedMaterialIds(context).some(
-    (id) => context.scene.materials[id]?.alphaMode === 'mask',
-  );
-  if (hasMask) {
-    fields.push({
+    {
       id: 'material.surface.alphaCutoff',
       label: 'Alpha Cutoff',
       type: 'number',
@@ -105,23 +99,21 @@ function surfaceFields(context: InspectorContext): InspectorFieldSchema[] {
       maximum: 1,
       step: 0.01,
       defaultValue: 0.5,
-      tooltip: 'Pixels below this alpha threshold are discarded in Cutout mode.',
+      tooltip: 'Pixels below this threshold are discarded when Alpha Mode is Cutout. Other modes preserve the value without using it.',
       resolvePaths: materialPaths('alphaCutoff'),
       restoreValue: restoreMaterialValue,
       normalize: (value) => clamp01(value, 0.5),
-    });
-  }
-
-  fields.push({
-    id: 'material.surface.doubleSided',
-    label: 'Double Sided',
-    type: 'boolean',
-    defaultValue: false,
-    tooltip: 'Render both front and back faces. Transparent double-sided surfaces keep the correct two-pass path.',
-    resolvePaths: materialPaths('doubleSided'),
-    restoreValue: restoreMaterialValue,
-  });
-  return fields;
+    },
+    {
+      id: 'material.surface.doubleSided',
+      label: 'Double Sided',
+      type: 'boolean',
+      defaultValue: false,
+      tooltip: 'Render both front and back faces. Transparent double-sided surfaces keep the correct two-pass path.',
+      resolvePaths: materialPaths('doubleSided'),
+      restoreValue: restoreMaterialValue,
+    },
+  ];
 }
 
 const prototype = InspectorSchemaRegistry.prototype as unknown as InspectorRegistryPrototype;
