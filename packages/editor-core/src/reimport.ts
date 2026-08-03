@@ -46,12 +46,40 @@ function preserveLight(previous: SceneLight, imported: SceneLight): SceneLight {
   };
 }
 
+function sameValue(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function hasOwn(value: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+/**
+ * Detect overrides against the complete imported baseline rather than a fixed
+ * field list. This automatically includes newly supported glTF extensions,
+ * texture sampler/UV edits and deliberate property removals.
+ */
+export function completeMaterialOverridePaths(previous: SceneMaterial): string[] {
+  const baseline = previous.metadata?.original;
+  if (!baseline || typeof baseline !== 'object' || Array.isArray(baseline)) {
+    return materialOverridePaths(previous);
+  }
+
+  const current = previous as unknown as Record<string, unknown>;
+  const original = baseline as Record<string, unknown>;
+  return [...new Set([...Object.keys(current), ...Object.keys(original)])]
+    .filter((key) => key !== 'id' && key !== 'metadata')
+    .filter((key) => !sameValue(current[key], original[key]));
+}
+
 function copyMaterialOverrides(previous: SceneMaterial, imported: SceneMaterial): void {
   const importedOriginal = structuredClone(imported.metadata?.original ?? imported);
-  for (const key of materialOverridePaths(previous)) {
-    (imported as unknown as Record<string, unknown>)[key] = structuredClone(
-      (previous as unknown as Record<string, unknown>)[key],
-    );
+  const source = previous as unknown as Record<string, unknown>;
+  const target = imported as unknown as Record<string, unknown>;
+
+  for (const key of completeMaterialOverridePaths(previous)) {
+    if (hasOwn(source, key)) target[key] = structuredClone(source[key]);
+    else delete target[key];
   }
   imported.metadata = {
     ...(imported.metadata ?? {}),
