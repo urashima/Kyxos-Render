@@ -30,6 +30,7 @@ interface NativeGltfInternals {
   gltfSceneLoadActive?: boolean;
   gltfNativeSnapshots?: NativeGltfObjectSnapshot[];
   gltfNativeMaterialSnapshots?: NativeGltfMaterialSnapshot[];
+  gltfNativeTextures?: Map<number, THREE.Texture>;
   resetTemporal?(reason?: string): void;
 }
 
@@ -55,6 +56,16 @@ function setMaterialIndex(material: THREE.Material | undefined, index: unknown):
   }
 }
 
+function setTextureIndex(
+  texture: THREE.Texture | null | undefined,
+  index: unknown,
+  registry: Map<number, THREE.Texture>,
+): void {
+  if (!texture?.isTexture || typeof index !== 'number' || !Number.isInteger(index)) return;
+  texture.userData.gltfTextureIndex = index;
+  registry.set(index, texture);
+}
+
 function annotateMeshMaterials(
   object: THREE.Object3D,
   meshIndex: number | null,
@@ -75,28 +86,68 @@ function annotateMeshMaterials(
   materials.forEach((material) => setMaterialIndex(material, sourcePrimitive?.material));
 }
 
-function annotateAssociations(gltf: any): void {
+function annotateMaterialTextures(
+  material: THREE.Material,
+  materialIndex: number | null,
+  json: any,
+  registry: Map<number, THREE.Texture>,
+): void {
+  if (materialIndex == null) return;
+  const source = json?.materials?.[materialIndex] ?? {};
+  const pbr = source.pbrMetallicRoughness ?? {};
+  const extensions = source.extensions ?? {};
+  const clearcoat = extensions.KHR_materials_clearcoat ?? {};
+  const transmission = extensions.KHR_materials_transmission ?? {};
+  const volume = extensions.KHR_materials_volume ?? {};
+  const sheen = extensions.KHR_materials_sheen ?? {};
+  const specular = extensions.KHR_materials_specular ?? {};
+  const candidate = material as THREE.Material & Record<string, any>;
+
+  setTextureIndex(candidate.map, pbr.baseColorTexture?.index, registry);
+  setTextureIndex(candidate.metalnessMap, pbr.metallicRoughnessTexture?.index, registry);
+  setTextureIndex(candidate.roughnessMap, pbr.metallicRoughnessTexture?.index, registry);
+  setTextureIndex(candidate.normalMap, source.normalTexture?.index, registry);
+  setTextureIndex(candidate.emissiveMap, source.emissiveTexture?.index, registry);
+  setTextureIndex(candidate.aoMap, source.occlusionTexture?.index, registry);
+  setTextureIndex(candidate.clearcoatMap, clearcoat.clearcoatTexture?.index, registry);
+  setTextureIndex(candidate.clearcoatRoughnessMap, clearcoat.clearcoatRoughnessTexture?.index, registry);
+  setTextureIndex(candidate.clearcoatNormalMap, clearcoat.clearcoatNormalTexture?.index, registry);
+  setTextureIndex(candidate.transmissionMap, transmission.transmissionTexture?.index, registry);
+  setTextureIndex(candidate.thicknessMap, volume.thicknessTexture?.index, registry);
+  setTextureIndex(candidate.sheenColorMap, sheen.sheenColorTexture?.index, registry);
+  setTextureIndex(candidate.sheenRoughnessMap, sheen.sheenRoughnessTexture?.index, registry);
+  setTextureIndex(candidate.specularIntensityMap, specular.specularTexture?.index, registry);
+  setTextureIndex(candidate.specularColorMap, specular.specularColorTexture?.index, registry);
+}
+
+function annotateAssociations(gltf: any): Map<number, THREE.Texture> {
+  const registry = new Map<number, THREE.Texture>();
   const associations = gltf?.parser?.associations as Map<object, unknown> | undefined;
   const json = gltf?.parser?.json;
-  if (!associations) return;
-  for (const [resource, association] of associations) {
-    if (resource instanceof THREE.Object3D) {
+  if (associations) {
+    for (const [resource, association] of associations) {
       const object = resource as THREE.Object3D;
-      const nodeIndex = associationIndex(association, 'nodes');
-      const meshIndex = associationIndex(association, 'meshes');
-      const primitiveIndex = associationIndex(association, 'primitives');
-      if (nodeIndex != null) object.userData.gltfNodeIndex = nodeIndex;
-      if (meshIndex != null) object.userData.gltfMeshIndex = meshIndex;
-      if (primitiveIndex != null) object.userData.gltfPrimitiveIndex = primitiveIndex;
-      annotateMeshMaterials(object, meshIndex, primitiveIndex, json);
-    } else if (resource instanceof THREE.Material) {
       const material = resource as THREE.Material;
-      setMaterialIndex(material, associationIndex(association, 'materials'));
+      const texture = resource as THREE.Texture;
+      if (object.isObject3D) {
+        const nodeIndex = associationIndex(association, 'nodes');
+        const meshIndex = associationIndex(association, 'meshes');
+        const primitiveIndex = associationIndex(association, 'primitives');
+        if (nodeIndex != null) object.userData.gltfNodeIndex = nodeIndex;
+        if (meshIndex != null) object.userData.gltfMeshIndex = meshIndex;
+        if (primitiveIndex != null) object.userData.gltfPrimitiveIndex = primitiveIndex;
+        annotateMeshMaterials(object, meshIndex, primitiveIndex, json);
+      } else if (material.isMaterial) {
+        setMaterialIndex(material, associationIndex(association, 'materials'));
+      } else if (texture.isTexture) {
+        setTextureIndex(texture, associationIndex(association, 'textures'), registry);
+      }
     }
   }
 
-  // Some Three.js revisions associate only the generated Object3D, not the
-  // Material object. Re-run over the scene after all object metadata exists.
+  // Some Three.js revisions associate only generated Object3D instances. Use
+  // the source primitive/material JSON as a deterministic fallback for both the
+  // material index and every texture slot.
   gltf.scene?.traverse((object: THREE.Object3D) => {
     const meshIndex = typeof object.userData.gltfMeshIndex === 'number'
       ? object.userData.gltfMeshIndex
@@ -105,7 +156,17 @@ function annotateAssociations(gltf: any): void {
       ? object.userData.gltfPrimitiveIndex
       : null;
     annotateMeshMaterials(object, meshIndex, primitiveIndex, json);
+    const mesh = object as THREE.Mesh;
+    if (!mesh.isMesh || !mesh.material) return;
+    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    for (const entry of materials) {
+      const index = typeof entry.userData.gltfMaterialIndex === 'number'
+        ? entry.userData.gltfMaterialIndex
+        : null;
+      annotateMaterialTextures(entry, index, json, registry);
+    }
   });
+  return registry;
 }
 
 function nearestParentNodeIndex(object: THREE.Object3D | null): number | null {
@@ -180,7 +241,7 @@ if (!prototype.__kyxosNativeGltfLoadInstalled) {
     const internal = internals(this);
     const loader = createConfiguredGltfLoader(internal.renderer, options);
     const gltf = await loader.loadAsync(url);
-    annotateAssociations(gltf);
+    const nativeTextures = annotateAssociations(gltf);
     internal.loadedGltfAnimations = gltf.animations.map((clip: THREE.AnimationClip) => clip.clone());
 
     const modelRoot = internal.modelRoot;
@@ -201,6 +262,7 @@ if (!prototype.__kyxosNativeGltfLoadInstalled) {
     modelRoot.updateMatrixWorld(true);
     internal.gltfNativeSnapshots = captureNativeSnapshots(model);
     internal.gltfNativeMaterialSnapshots = captureNativeMaterials(model);
+    internal.gltfNativeTextures = nativeTextures;
     this.canvas.dataset.gltfTransformMode = internal.gltfSceneLoadActive
       ? 'native-scene'
       : 'normalized-playground';
