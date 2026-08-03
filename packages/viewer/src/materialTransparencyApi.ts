@@ -130,7 +130,10 @@ if (!prototype.__kyxosMaterialTransparencyInstalled) {
     this.canvas.dataset.materialOpacity = String(
       clamp01(material.opacity, clamp01(material.baseColor?.w, 1)),
     );
+    this.canvas.dataset.materialRuntimeOpacity = String(binding.material.opacity);
+    this.canvas.dataset.materialTransparent = String(binding.material.transparent);
     this.canvas.dataset.materialDepthWrite = String(binding.material.depthWrite);
+    this.canvas.dataset.materialAlphaTest = String(binding.material.alphaTest);
     this.resetTemporal('material-alpha-surface');
   };
 
