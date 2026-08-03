@@ -1,0 +1,118 @@
+name: Project Chat Acceptance
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'packages/api-client/**'
+      - 'services/backend/migrations/0004_project_chat.sql'
+      - 'tests/unit/project-chat.spec.ts'
+      - 'tests/integration/project-chat-rls.spec.ts'
+      - '.github/workflows/project-chat.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: project-chat-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contract:
+    name: Chat client and RLS contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install workspace
+        run: pnpm install --no-frozen-lockfile
+      - name: Typecheck API client
+        run: pnpm --filter @kyxos/api-client typecheck
+      - name: Run local chat and static RLS acceptance
+        run: >-
+          pnpm exec vitest run
+          tests/unit/project-chat.spec.ts
+          tests/integration/project-chat-rls.spec.ts
+          --reporter=verbose
+
+  live-two-user:
+    name: Live two-user project chat RLS
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install workspace
+        run: pnpm install --no-frozen-lockfile
+      - name: Detect production acceptance credentials
+        id: credentials
+        env:
+          KYXOS_SUPABASE_URL: ${{ secrets.KYXOS_SUPABASE_URL }}
+          KYXOS_SUPABASE_ANON_KEY: ${{ secrets.KYXOS_SUPABASE_ANON_KEY }}
+          KYXOS_RLS_OWNER_EMAIL: ${{ secrets.KYXOS_RLS_OWNER_EMAIL }}
+          KYXOS_RLS_OWNER_PASSWORD: ${{ secrets.KYXOS_RLS_OWNER_PASSWORD }}
+          KYXOS_RLS_SECOND_EMAIL: ${{ secrets.KYXOS_RLS_SECOND_EMAIL }}
+          KYXOS_RLS_SECOND_PASSWORD: ${{ secrets.KYXOS_RLS_SECOND_PASSWORD }}
+        shell: bash
+        run: |
+          required=(
+            KYXOS_SUPABASE_URL
+            KYXOS_SUPABASE_ANON_KEY
+            KYXOS_RLS_OWNER_EMAIL
+            KYXOS_RLS_OWNER_PASSWORD
+            KYXOS_RLS_SECOND_EMAIL
+            KYXOS_RLS_SECOND_PASSWORD
+          )
+          missing=()
+          for name in "${required[@]}"; do
+            if [[ -z "${!name}" ]]; then missing+=("$name"); fi
+          done
+          if (( ${#missing[@]} )); then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "missing=${missing[*]}" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Run production chat authorization matrix
+        if: steps.credentials.outputs.configured == 'true'
+        env:
+          KYXOS_SUPABASE_URL: ${{ secrets.KYXOS_SUPABASE_URL }}
+          KYXOS_SUPABASE_ANON_KEY: ${{ secrets.KYXOS_SUPABASE_ANON_KEY }}
+          KYXOS_RLS_OWNER_EMAIL: ${{ secrets.KYXOS_RLS_OWNER_EMAIL }}
+          KYXOS_RLS_OWNER_PASSWORD: ${{ secrets.KYXOS_RLS_OWNER_PASSWORD }}
+          KYXOS_RLS_SECOND_EMAIL: ${{ secrets.KYXOS_RLS_SECOND_EMAIL }}
+          KYXOS_RLS_SECOND_PASSWORD: ${{ secrets.KYXOS_RLS_SECOND_PASSWORD }}
+        run: pnpm exec vitest run tests/integration/project-chat-rls.spec.ts --reporter=verbose
+      - name: Record missing production credentials
+        if: steps.credentials.outputs.configured != 'true'
+        env:
+          MISSING: ${{ steps.credentials.outputs.missing }}
+        shell: bash
+        run: |
+          {
+            echo '## Live project chat RLS acceptance not executed'
+            echo
+            echo 'Static migration and local client acceptance passed.'
+            echo
+            echo "Missing: \`$MISSING\`"
+            echo
+            echo 'Configure the six KYXOS RLS secrets, deploy migration 0004, then run this workflow manually.'
+          } >> "$GITHUB_STEP_SUMMARY"
