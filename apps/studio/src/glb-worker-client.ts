@@ -26,6 +26,13 @@ export interface ParseGlbInWorkerOptions {
   timeoutMs?: number;
   fallbackDelayMs?: number;
   workerFactory?: () => Worker;
+  /**
+   * The Worker only extracts GLB JSON metadata; it does not decode geometry or
+   * textures. Keep it opt-in so the core import transaction never waits for a
+   * Worker message before building the Scene Contract. Tests may opt in with a
+   * workerFactory to verify the Worker protocol independently.
+   */
+  preferWorker?: boolean;
 }
 
 interface GlbWorkerGlobal {
@@ -67,9 +74,6 @@ export async function parseGlbInWorker<T = unknown>(
   } = options;
   if (signal?.aborted) throw abortError(signal);
 
-  // Keep the original bytes available for the deterministic fallback. A
-  // separate copy is transferred to the Worker so postMessage cannot detach
-  // the only ArrayBuffer owned by the import transaction.
   const buffer = await file.arrayBuffer();
   if (signal?.aborted) throw abortError(signal);
 
@@ -83,6 +87,29 @@ export async function parseGlbInWorker<T = unknown>(
     return rememberReport(createGlbImportReport(buffer, file.name) as T);
   };
 
+  // Metadata extraction is deterministic and cheap compared with GLTFLoader's
+  // real geometry / texture decode. Resolve it synchronously on the core import
+  // path so an animation frame, GPU compile, or stalled Worker cannot strand
+  // the whole transaction in “Parsing GLB”.
+  const preferWorker = options.preferWorker ?? Boolean(options.workerFactory);
+  if (!preferWorker) {
+    try {
+      const result = parseLocally('Core import uses the deterministic GLB metadata parser.');
+      emitLifecycle({ stage: 'complete', fileName: file.name });
+      return result;
+    } catch (error) {
+      emitLifecycle({
+        stage: signal?.aborted ? 'cancelled' : 'failed',
+        fileName: file.name,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+  }
+
+  // Explicit diagnostic mode keeps a local byte copy because transferring the
+  // Worker buffer detaches it. If the Worker fails, the same parser still
+  // produces the report without changing import semantics.
   let worker: Worker;
   try {
     worker = options.workerFactory?.() ?? new Worker(
@@ -90,7 +117,9 @@ export async function parseGlbInWorker<T = unknown>(
       { type: 'module' },
     );
   } catch (error) {
-    return parseLocally(error);
+    const result = parseLocally(error);
+    emitLifecycle({ stage: 'complete', fileName: file.name });
+    return result;
   }
   emitLifecycle({ stage: 'created', fileName: file.name });
 
