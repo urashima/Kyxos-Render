@@ -5,6 +5,7 @@ interface GlbNode {
   camera?: number;
   skin?: number;
   weights?: number[];
+  matrix?: number[];
   translation?: number[];
   rotation?: number[];
   scale?: number[];
@@ -101,6 +102,12 @@ export interface GlbImportReport {
   warnings: string[];
 }
 
+interface DecomposedTransform {
+  translation: number[];
+  rotation: number[];
+  scale: number[];
+}
+
 function parseGlbJson(buffer: ArrayBuffer): GlbJson {
   if (buffer.byteLength < 20) throw new Error('File is too small to be a GLB container.');
   const view = new DataView(buffer);
@@ -130,6 +137,90 @@ function parseGlbJson(buffer: ArrayBuffer): GlbJson {
     offset += length;
   }
   throw new Error('GLB JSON chunk is missing.');
+}
+
+function normalizeQuaternion(value: number[]): number[] {
+  const length = Math.hypot(value[0], value[1], value[2], value[3]);
+  if (length <= Number.EPSILON) return [0, 0, 0, 1];
+  return value.map((component) => component / length);
+}
+
+function quaternionFromRotationMatrix(matrix: number[]): number[] {
+  const m11 = matrix[0];
+  const m12 = matrix[4];
+  const m13 = matrix[8];
+  const m21 = matrix[1];
+  const m22 = matrix[5];
+  const m23 = matrix[9];
+  const m31 = matrix[2];
+  const m32 = matrix[6];
+  const m33 = matrix[10];
+  const trace = m11 + m22 + m33;
+  let x = 0;
+  let y = 0;
+  let z = 0;
+  let w = 1;
+
+  if (trace > 0) {
+    const s = 0.5 / Math.sqrt(trace + 1);
+    w = 0.25 / s;
+    x = (m32 - m23) * s;
+    y = (m13 - m31) * s;
+    z = (m21 - m12) * s;
+  } else if (m11 > m22 && m11 > m33) {
+    const s = 2 * Math.sqrt(Math.max(0, 1 + m11 - m22 - m33));
+    w = (m32 - m23) / s;
+    x = 0.25 * s;
+    y = (m12 + m21) / s;
+    z = (m13 + m31) / s;
+  } else if (m22 > m33) {
+    const s = 2 * Math.sqrt(Math.max(0, 1 + m22 - m11 - m33));
+    w = (m13 - m31) / s;
+    x = (m12 + m21) / s;
+    y = 0.25 * s;
+    z = (m23 + m32) / s;
+  } else {
+    const s = 2 * Math.sqrt(Math.max(0, 1 + m33 - m11 - m22));
+    w = (m21 - m12) / s;
+    x = (m13 + m31) / s;
+    y = (m23 + m32) / s;
+    z = 0.25 * s;
+  }
+  return normalizeQuaternion([x, y, z, w]);
+}
+
+function decomposeNodeMatrix(value: number[]): DecomposedTransform {
+  if (value.length !== 16 || value.some((component) => !Number.isFinite(component))) {
+    throw new Error('glTF node matrix must contain 16 finite components.');
+  }
+  const matrix = [...value];
+  let scaleX = Math.hypot(matrix[0], matrix[1], matrix[2]);
+  const scaleY = Math.hypot(matrix[4], matrix[5], matrix[6]);
+  const scaleZ = Math.hypot(matrix[8], matrix[9], matrix[10]);
+  const determinant =
+    matrix[0] * (matrix[5] * matrix[10] - matrix[6] * matrix[9])
+    - matrix[4] * (matrix[1] * matrix[10] - matrix[2] * matrix[9])
+    + matrix[8] * (matrix[1] * matrix[6] - matrix[2] * matrix[5]);
+  if (determinant < 0) scaleX = -scaleX;
+
+  const safeX = Math.abs(scaleX) > Number.EPSILON ? scaleX : 1;
+  const safeY = Math.abs(scaleY) > Number.EPSILON ? scaleY : 1;
+  const safeZ = Math.abs(scaleZ) > Number.EPSILON ? scaleZ : 1;
+  matrix[0] /= safeX;
+  matrix[1] /= safeX;
+  matrix[2] /= safeX;
+  matrix[4] /= safeY;
+  matrix[5] /= safeY;
+  matrix[6] /= safeY;
+  matrix[8] /= safeZ;
+  matrix[9] /= safeZ;
+  matrix[10] /= safeZ;
+
+  return {
+    translation: [value[12], value[13], value[14]],
+    rotation: quaternionFromRotationMatrix(matrix),
+    scale: [scaleX, scaleY, scaleZ],
+  };
 }
 
 function animationDuration(animation: GlbAnimation, accessors: GlbAccessor[]): number {
@@ -164,21 +255,31 @@ export function createGlbImportReport(
     node.children?.forEach((child) => parents.set(child, parent)),
   );
 
-  const nodes = (gltf.nodes ?? []).map((node, index) => ({
-    index,
-    name: node.name || `Node ${index + 1}`,
-    parent: parents.get(index) ?? null,
-    children: node.children ?? [],
-    mesh: node.mesh,
-    camera: node.camera,
-    skin: node.skin,
-    weights: node.weights ?? [],
-    translation: node.translation ?? [0, 0, 0],
-    rotation: node.rotation ?? [0, 0, 0, 1],
-    scale: node.scale ?? [1, 1, 1],
-    extensions: node.extensions ?? {},
-    extras: node.extras ?? {},
-  }));
+  const nodes = (gltf.nodes ?? []).map((node, index) => {
+    const decomposed = node.matrix?.length === 16
+      ? decomposeNodeMatrix(node.matrix)
+      : {
+          translation: node.translation ?? [0, 0, 0],
+          rotation: normalizeQuaternion(node.rotation ?? [0, 0, 0, 1]),
+          scale: node.scale ?? [1, 1, 1],
+        };
+    return {
+      index,
+      name: node.name || `Node ${index + 1}`,
+      parent: parents.get(index) ?? null,
+      children: node.children ?? [],
+      mesh: node.mesh,
+      camera: node.camera,
+      skin: node.skin,
+      weights: node.weights ?? [],
+      matrix: node.matrix,
+      translation: decomposed.translation,
+      rotation: decomposed.rotation,
+      scale: decomposed.scale,
+      extensions: node.extensions ?? {},
+      extras: node.extras ?? {},
+    };
+  });
 
   const materials = (gltf.materials ?? []).map((material, index) => ({
     index,
