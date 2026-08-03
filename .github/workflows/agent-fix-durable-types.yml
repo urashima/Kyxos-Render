@@ -1,0 +1,42 @@
+name: Agent fix durable types
+
+on:
+  push:
+    branches: [agent/fix-save-publish-public-loading-v2]
+    paths: ['.github/workflows/agent-fix-durable-types.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/fix-save-publish-public-loading-v2
+          fetch-depth: 0
+      - name: Apply explicit function signature
+        shell: python
+        run: |
+          from pathlib import Path
+          path = Path('packages/api-client/src/durable.ts')
+          source = path.read_text()
+          old = """      const value = Reflect.get(target, property, receiver);\n      if (typeof value !== 'function') return value;\n      return (...args: unknown[]) => ready.then(() => value(...args));\n"""
+          new = """      const value = Reflect.get(target, property, receiver);\n      if (typeof value !== 'function') return value;\n      const method = value as (...args: unknown[]) => unknown;\n      return (...args: unknown[]) => ready.then(() => method(...args));\n"""
+          if old not in source:
+              if new in source:
+                  raise SystemExit(0)
+              raise SystemExit('durable proxy marker not found')
+          path.write_text(source.replace(old, new, 1))
+      - name: Commit type fix
+        shell: bash
+        run: |
+          if git diff --quiet; then exit 0; fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add packages/api-client/src/durable.ts
+          git commit -m 'fix(api-client): type durable namespace proxy'
+          git push origin HEAD:agent/fix-save-publish-public-loading-v2
