@@ -17,12 +17,19 @@ export interface NativeGltfObjectSnapshot {
   matrixAutoUpdate: boolean;
 }
 
+export interface NativeGltfMaterialSnapshot {
+  mesh: THREE.Mesh;
+  ownerNodeIndex: number | null;
+  materials: THREE.Material[];
+}
+
 interface NativeGltfInternals {
   renderer?: object;
   modelRoot?: THREE.Group;
   loadedGltfAnimations?: THREE.AnimationClip[];
   gltfSceneLoadActive?: boolean;
   gltfNativeSnapshots?: NativeGltfObjectSnapshot[];
+  gltfNativeMaterialSnapshots?: NativeGltfMaterialSnapshot[];
   resetTemporal?(reason?: string): void;
 }
 
@@ -90,6 +97,20 @@ function captureNativeSnapshots(root: THREE.Object3D): NativeGltfObjectSnapshot[
   return snapshots;
 }
 
+function captureNativeMaterials(root: THREE.Object3D): NativeGltfMaterialSnapshot[] {
+  const snapshots: NativeGltfMaterialSnapshot[] = [];
+  root.traverse((object) => {
+    const mesh = object as THREE.Mesh;
+    if (!mesh.isMesh || !mesh.material) return;
+    snapshots.push({
+      mesh,
+      ownerNodeIndex: nearestParentNodeIndex(mesh),
+      materials: Array.isArray(mesh.material) ? [...mesh.material] : [mesh.material],
+    });
+  });
+  return snapshots;
+}
+
 function normalizeForPlayground(model: THREE.Object3D): void {
   const box = new THREE.Box3().setFromObject(model);
   const size = box.getSize(new THREE.Vector3());
@@ -138,6 +159,7 @@ if (!prototype.__kyxosNativeGltfLoadInstalled) {
     modelRoot.add(model);
     modelRoot.updateMatrixWorld(true);
     internal.gltfNativeSnapshots = captureNativeSnapshots(model);
+    internal.gltfNativeMaterialSnapshots = captureNativeMaterials(model);
     this.canvas.dataset.gltfTransformMode = internal.gltfSceneLoadActive
       ? 'native-scene'
       : 'normalized-playground';
