@@ -11,7 +11,9 @@ on:
       - 'packages/viewer/**'
       - 'packages/viewer-adapter/**'
       - 'tests/e2e/studio-viewport-helpers.spec.ts'
+      - 'tests/e2e/studio-asset-virtualization.spec.ts'
       - 'tests/unit/gltf-authoring-parity.spec.ts'
+      - 'tests/unit/studio-glb-report.spec.ts'
       - '.github/workflows/studio-glb-import-smoke.yml'
 
 permissions:
@@ -38,10 +40,11 @@ jobs:
           node-version: 22
       - name: Install workspace
         run: pnpm install --no-frozen-lockfile
-      - name: Verify glTF authoring unit coverage
+      - name: Verify glTF authoring and virtualization unit coverage
         run: >-
           pnpm exec vitest run
           tests/unit/studio-import-lifecycle.spec.ts
+          tests/unit/studio-glb-report.spec.ts
           tests/unit/gltf-bundler.spec.ts
           tests/unit/gltf-authoring-parity.spec.ts
 
@@ -51,13 +54,20 @@ jobs:
       matrix:
         include:
           - id: basic
+            spec: tests/e2e/studio-viewport-helpers.spec.ts
             grep: Studio viewport helpers survive GLB scene replacement
           - id: authoring
+            spec: tests/e2e/studio-viewport-helpers.spec.ts
             grep: Studio imports, edits and reimports complete glTF authoring content
           - id: draco-external
+            spec: tests/e2e/studio-viewport-helpers.spec.ts
             grep: Studio bundles external glTF resources and decodes Draco
           - id: meshopt-ktx2
+            spec: tests/e2e/studio-viewport-helpers.spec.ts
             grep: Studio decodes Meshopt geometry with KTX2 Basis textures
+          - id: assets-500
+            spec: tests/e2e/studio-asset-virtualization.spec.ts
+            grep: Studio virtualizes a 500 asset workspace in Grid and List views
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -80,7 +90,7 @@ jobs:
           CI: true
         run: >-
           pnpm exec playwright test
-          tests/e2e/studio-viewport-helpers.spec.ts
+          ${{ matrix.spec }}
           --project=chromium
           --workers=1
           --retries=0
