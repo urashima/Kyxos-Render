@@ -206,7 +206,8 @@ function gateNamespace<T extends object>(namespace: T, ready: Promise<void>): T 
     get(target, property, receiver) {
       const value = Reflect.get(target, property, receiver);
       if (typeof value !== 'function') return value;
-      return (...args: unknown[]) => ready.then(() => value(...args));
+      const method = value as (...args: unknown[]) => unknown;
+      return (...args: unknown[]) => ready.then(() => method(...args));
     },
   });
 }
