@@ -1,6 +1,5 @@
 import './styles.css';
 import {
-  createApiClient,
   hashBlob,
   type AssetManifest,
   type BranchRecord,
@@ -12,6 +11,7 @@ import {
   type ProjectMemberRecord,
   type ReleaseRecord,
 } from '@kyxos/api-client';
+import { createDurableApiClient } from '@kyxos/api-client/durable';
 import {
   AssetWorkspaceService,
   AutosaveController,
@@ -71,7 +71,7 @@ import {
 import { parseGlbInWorker } from './glb-worker-client';
 
 const app = document.querySelector<HTMLElement>('#app')!;
-const client = createApiClient({
+const client = createDurableApiClient({
   url: import.meta.env.VITE_SUPABASE_URL,
   anonKey: import.meta.env.VITE_SUPABASE_ANON_KEY,
   functionsUrl: import.meta.env.VITE_KYXOS_FUNCTIONS_URL,
@@ -308,6 +308,22 @@ async function openProject(project: ProjectSummary): Promise<void> {
     offlineStore,
     draft?.revision ?? 0,
   );
+
+
+  async function flushDraftOrThrow(reason: string): Promise<number> {
+    await autosave.flush();
+    if (autosave.state !== 'Saved') {
+      throw new Error(`Draft save failed before ${reason}: ${autosave.state}.`);
+    }
+    const persistedRevision = await client.drafts.getRevision(project.id);
+    if (persistedRevision !== autosave.revision) {
+      throw new Error(
+        `Draft revision mismatch before ${reason}: local ${autosave.revision}, persisted ${persistedRevision}.`,
+      );
+    }
+    globalThis.document.documentElement.dataset.durableDraftRevision = String(persistedRevision);
+    return persistedRevision;
+  }
 
   let previewMode = false;
   let activeAnimationId = initial.animations.find((entry) => entry.autoplay)?.id ?? initial.animations[0]?.id;
@@ -2471,6 +2487,21 @@ async function importAsset(
         throwIfImportAborted(signal);
       },
     },
+    {
+      id: 'persist-import',
+      stage: 'building',
+      progress: 0.98,
+      async run(_current, signal) {
+        throwIfImportAborted(signal);
+        const revision = await flushDraftOrThrow('import completion');
+        await flushWorkspace();
+        if (workspaceDirty) {
+          throw new Error('Workspace save failed during import completion.');
+        }
+        globalThis.document.documentElement.dataset.importDurable = 'true';
+        globalThis.document.documentElement.dataset.importDurableRevision = String(revision);
+      },
+    },
   ]);
 
   const ticket = state.ticket!;
@@ -2513,18 +2544,6 @@ async function importAsset(
     );
   }
 
-  scheduleImportPostprocess({
-    label: `autosave:${file.name}`,
-    run: () => autosave.flush(),
-    onWarning(label, error) {
-      diagnosticConsole.log(
-        'warn',
-        `Optional import post-processing failed: ${label}`,
-        error,
-        'assets',
-      );
-    },
-  });
 }
 
   async function publish(): Promise<void> {
@@ -2532,19 +2551,41 @@ async function importAsset(
       showNotice('Your project role cannot publish releases.', true);
       return;
     }
+    setBusy(publishButton, true);
+    globalThis.document.documentElement.dataset.publishState = 'saving';
+    delete globalThis.document.documentElement.dataset.publishError;
     try {
-      showNotice('Saving and publishing…');
-      await autosave.flush();
-      const thumbnail = await adapter.captureThumbnail();
+      showNotice('Saving the latest scene…');
+      const revision = await flushDraftOrThrow('publish');
+      await flushWorkspace();
+      if (workspaceDirty) throw new Error('Workspace save did not complete.');
+
+      globalThis.document.documentElement.dataset.publishState = 'capturing-thumbnail';
+      let thumbnail: Blob | undefined;
+      try {
+        thumbnail = await adapter.captureThumbnail();
+      } catch (error) {
+        diagnosticConsole.log('warn', 'Publish thumbnail capture fell back.', error, 'publish');
+      }
+
+      globalThis.document.documentElement.dataset.publishState = 'publishing';
+      showNotice('Creating immutable published version…');
       const release = await client.releases.publish(
         project.id,
         document.value,
-        autosave.revision,
+        revision,
         thumbnail,
       );
+      globalThis.document.documentElement.dataset.publishState = 'published';
+      globalThis.document.documentElement.dataset.publishedReleaseId = release.id;
+      globalThis.document.documentElement.dataset.publishedVersion = String(release.versionNumber);
       showPublishedNotice(release);
     } catch (error) {
+      globalThis.document.documentElement.dataset.publishState = 'error';
+      globalThis.document.documentElement.dataset.publishError = errorMessage(error);
       showNotice(errorMessage(error), true);
+    } finally {
+      setBusy(publishButton, false);
     }
   }
 
