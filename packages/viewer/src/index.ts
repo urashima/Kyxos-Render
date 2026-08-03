@@ -7,6 +7,7 @@ import './environmentApi';
 import './editorTransformControls';
 import './editorViewportHelpers';
 import './editorViewportNavigation';
+import './editorRenderModes';
 
 import { KyxosViewer } from './KyxosViewer';
 import { installEditorSceneModeExtension } from './editorSceneMode';
@@ -57,6 +58,7 @@ export type {
   EditorCameraBookmarkState,
   EditorViewPreset,
 } from './editorViewportNavigation';
+export type { EditorRenderMode } from './editorRenderModes';
 export type {
   BackendName,
   BackendPreference,
