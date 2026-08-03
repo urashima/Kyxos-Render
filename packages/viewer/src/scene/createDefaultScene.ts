@@ -22,6 +22,15 @@ export interface DefaultSceneBundle {
   animate: (elapsed: number, delta: number) => void;
 }
 
+function markDefaultAdornment<T extends { name: string; userData: Record<string, unknown> }>(
+  object: T,
+  name: string,
+): T {
+  object.name = name;
+  object.userData.kyxosDefaultSceneAdornment = true;
+  return object;
+}
+
 export function createDefaultScene(): DefaultSceneBundle {
   const scene = new Scene();
   scene.name = 'Kyxos.Scene';
@@ -79,16 +88,25 @@ export function createDefaultScene(): DefaultSceneBundle {
     clearcoat: 0.6,
     clearcoatRoughness: 0.28,
   });
-  const floor = new Mesh(new PlaneGeometry(18, 18, 1, 1), floorMaterial);
+  const floor = markDefaultAdornment(
+    new Mesh(new PlaneGeometry(18, 18, 1, 1), floorMaterial),
+    'Kyxos.DefaultFloor',
+  );
   floor.rotation.x = -Math.PI / 2;
   floor.position.y = 0;
   floor.receiveShadow = true;
   scene.add(floor);
 
-  const hemi = new HemisphereLight(0xdbeafe, 0x111827, 1.35);
+  const hemi = markDefaultAdornment(
+    new HemisphereLight(0xdbeafe, 0x111827, 1.35),
+    'Kyxos.DefaultHemisphereLight',
+  );
   scene.add(hemi);
 
-  const key = new DirectionalLight(0xfff2df, 5.5);
+  const key = markDefaultAdornment(
+    new DirectionalLight(0xfff2df, 5.5),
+    'Kyxos.DefaultKeyLight',
+  );
   key.position.set(4, 7, 5);
   key.castShadow = true;
   key.shadow.mapSize.set(2048, 2048);
@@ -96,7 +114,10 @@ export function createDefaultScene(): DefaultSceneBundle {
   key.shadow.camera.far = 30;
   scene.add(key);
 
-  const rim = new DirectionalLight(0x93c5fd, 3.2);
+  const rim = markDefaultAdornment(
+    new DirectionalLight(0x93c5fd, 3.2),
+    'Kyxos.DefaultRimLight',
+  );
   rim.position.set(-5, 3, -4);
   scene.add(rim);
 
