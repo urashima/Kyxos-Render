@@ -21,6 +21,7 @@ on:
       - 'tests/e2e/studio-gltf-fidelity.spec.ts'
       - 'tests/e2e/studio-material-fidelity.spec.ts'
       - 'tests/e2e/studio-render-settings-parity.spec.ts'
+      - 'tests/unit/editor-auditor.spec.ts'
       - 'tests/unit/gltf-authoring-parity.spec.ts'
       - 'tests/unit/gltf-material-complete.spec.ts'
       - 'tests/unit/render-settings-parity.spec.ts'
@@ -51,9 +52,12 @@ jobs:
           node-version: 22
       - name: Install workspace
         run: pnpm install --no-frozen-lockfile
-      - name: Verify glTF authoring and render parity unit coverage
+      - name: Typecheck Editor Core and Studio
+        run: pnpm --filter @kyxos/editor-core typecheck && pnpm --filter @kyxos/studio typecheck
+      - name: Verify glTF authoring, Auditor and render parity unit coverage
         run: >-
           pnpm exec vitest run
+          tests/unit/editor-auditor.spec.ts
           tests/unit/studio-import-lifecycle.spec.ts
           tests/unit/studio-glb-report.spec.ts
           tests/unit/gltf-bundler.spec.ts
