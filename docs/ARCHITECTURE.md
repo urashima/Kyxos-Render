@@ -2,32 +2,44 @@
 
 ## Products
 
-```text
-Kyxos Studio
-  ├─ @kyxos/editor-core
-  ├─ @kyxos/studio-shell → PCUI + Observer
-  ├─ @kyxos/viewer-adapter
-  └─ Scene Contract
-          ↓
-     @kyxos/viewer
-
-Kyxos Public Viewer
-  ├─ @kyxos/api-client
-  ├─ Scene Contract + Migrations
-  └─ @kyxos/viewer
+```mermaid
+flowchart TD
+  Studio["Kyxos Studio"] --> Core["Editor Core"]
+  Studio --> Shell["Studio Shell / PCUI"]
+  Studio --> Adapter["Viewer Adapter"]
+  Adapter --> Contract["Scene Contract"]
+  Public["Public Viewer"] --> Contract
+  Embed["Embed"] --> Contract
+  Playground["Playground"] --> Viewer["KyxosViewer"]
+  Contract --> Viewer
 ```
 
 `@kyxos/viewer` is the only rendering runtime. It may use Three.js WebGPURenderer, TSL, RenderPipeline and official effect nodes, but it cannot import Studio, backend, authentication, PCUI or publishing code.
 
 Studio cannot import Three.js. Every viewport change crosses `KyxosViewportAdapter`; every data change crosses `CommandBus → SceneDocument → JSON Patch → History → Autosave → Viewer Adapter`.
 
-Public Viewer is read-only and cannot import Editor Core, Studio Shell, PCUI, Observer, upload or draft APIs. `scripts/verify-boundaries.mjs` enforces these rules and `scripts/build-pages.mjs` scans its production bundle.
+Public Viewer is read-only and cannot import Editor Core, Studio Shell, PCUI, Observer, upload or draft APIs. Playground, Studio, Public Viewer and Embed are separate application entry graphs and cannot import one another. `scripts/verify-boundaries.mjs` enforces these rules and `scripts/build-pages.mjs` scans each production bundle.
 
 ## Persistence
 
-The production reference backend is Supabase Auth, PostgreSQL, private Storage and Edge Functions. RLS protects drafts and owner assets. `published_versions` and `published_assets` reject UPDATE and DELETE through triggers. Public resolution returns only an immutable snapshot, its published asset manifest and the configured Embed origins.
+The production reference backend is Supabase Auth, PostgreSQL, private Storage, private Realtime channels and Edge Functions. Project-scoped Owner, Editor and Viewer roles are enforced twice: Studio disables disallowed actions, while PostgreSQL RLS remains authoritative for projects, drafts, workspaces, scenes, templates, source files, presence, operations, branches, checkpoints and conflicts. Private `project:<uuid>` Realtime topics authorize Broadcast writes for Owner/Editor and Presence for every member. `published_versions` and `published_assets` reject UPDATE and DELETE through triggers. Public resolution returns only an immutable snapshot, its published asset manifest and the configured Embed origins.
 
-When Supabase environment variables are absent, GitHub Pages uses the owner-only local provider: project metadata and releases are stored in localStorage, binary assets in IndexedDB. This provider is an acceptance environment, not a replacement for production RLS.
+When Supabase environment variables are absent, GitHub Pages uses a local provider: project metadata, roles, workspaces, operations, branches, checkpoints and releases are stored in localStorage, while binary assets remain in IndexedDB. BroadcastChannel provides same-origin local collaboration. This provider is an acceptance environment, not a replacement for production RLS or private Supabase Realtime authorization.
+
+## Editor state flow
+
+Hierarchy, Inspector, Assets, templates, the animation graph, Studio API, plugins and MCP all write through the same command boundary:
+
+```mermaid
+flowchart LR
+  UI["Editor surface"] --> Command["CommandBus"]
+  Extension["Studio API / Plugin / MCP"] --> Command
+  Command --> Document["SceneDocument"]
+  Document --> History["History"]
+  Document --> Autosave["Draft + Workspace"]
+  Document --> Realtime["Realtime operation"]
+  Document --> Adapter["Viewer Adapter"]
+```
 
 ## Upgrade boundaries
 

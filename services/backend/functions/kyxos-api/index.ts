@@ -72,6 +72,14 @@ function safeName(name: string): string {
     .slice(0, 180) || 'asset';
 }
 
+function safeSourcePath(path: string): string {
+  const normalized = path.trim().replace(/\\/g, '/').replace(/^\.\//, '');
+  if (!normalized || normalized.startsWith('/') || normalized.split('/').includes('..')) {
+    throw new Error('Source path must be project-relative.');
+  }
+  return normalized.slice(0, 320);
+}
+
 function validHash(hash: string): boolean {
   return /^[a-f0-9]{64}$/.test(hash);
 }
@@ -157,6 +165,64 @@ function normalizeRelease(row: any, slug: string, currentVersionId?: string) {
     createdAt: row.created_at,
     isCurrent: currentVersionId ? currentVersionId === row.id : true,
   };
+}
+
+function normalizeMember(row: any, email?: string) {
+  return {
+    projectId: row.project_id,
+    userId: row.user_id,
+    email,
+    role: row.role,
+    createdAt: row.created_at,
+  };
+}
+
+function normalizeBranch(row: any) {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    name: row.name,
+    headCheckpointId: row.head_checkpoint_id,
+    baseCheckpointId: row.base_checkpoint_id,
+    createdBy: row.created_by,
+    createdAt: row.created_at,
+  };
+}
+
+function normalizeCheckpoint(row: any) {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    branchId: row.branch_id,
+    parentId: row.parent_id,
+    label: row.label,
+    snapshot: row.scene_snapshot,
+    createdBy: row.created_by,
+    createdAt: row.created_at,
+  };
+}
+
+function normalizeSourceFile(row: any) {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    path: row.path,
+    language: row.language,
+    content: row.content,
+    revision: row.revision,
+    updatedBy: row.updated_by,
+    updatedAt: row.updated_at,
+  };
+}
+
+async function digestJson(value: unknown): Promise<string> {
+  const bytes = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(JSON.stringify(value)),
+  );
+  return [...new Uint8Array(bytes)]
+    .map((entry) => entry.toString(16).padStart(2, '0'))
+    .join('');
 }
 
 async function signedUpload(
@@ -346,6 +412,327 @@ Deno.serve(async (request) => {
         const { error } = await userClient.from('projects').delete().eq('id', id);
         if (error) throw error;
         return json(request, { ok: true });
+      }
+    }
+
+    const memberMatch = path.match(/^projects\/([0-9a-f-]+)\/members(?:\/([0-9a-f-]+))?$/i);
+    if (memberMatch) {
+      const projectId = memberMatch[1];
+      const memberId = memberMatch[2];
+      if (!memberId && request.method === 'GET') {
+        const { data, error } = await userClient
+          .from('project_members')
+          .select('*')
+          .eq('project_id', projectId)
+          .order('created_at');
+        if (error) throw error;
+        const members = await Promise.all((data ?? []).map(async (row) => {
+          const account = await admin.auth.admin.getUserById(row.user_id);
+          return normalizeMember(row, account.data.user?.email);
+        }));
+        return json(request, members);
+      }
+      if (!memberId && request.method === 'POST') {
+        const body = await request.json();
+        const email = String(body.email ?? '').trim().toLowerCase();
+        if (!email.includes('@') || !['editor', 'viewer'].includes(body.role)) {
+          return json(request, { error: 'invalid member invitation' }, 400);
+        }
+        const { data, error } = await userClient.rpc('add_project_member_by_email', {
+          target_project: projectId,
+          member_email: email,
+          member_role: body.role,
+        });
+        if (error) throw error;
+        return json(request, normalizeMember(data, email), 201);
+      }
+      if (memberId && request.method === 'PATCH') {
+        const body = await request.json();
+        if (!['editor', 'viewer'].includes(body.role)) {
+          return json(request, { error: 'invalid member role' }, 400);
+        }
+        const { data, error } = await userClient.rpc('set_project_member_role', {
+          target_project: projectId,
+          target_user: memberId,
+          member_role: body.role,
+        });
+        if (error) throw error;
+        const account = await admin.auth.admin.getUserById(data.user_id);
+        return json(request, normalizeMember(data, account.data.user?.email));
+      }
+      if (memberId && request.method === 'DELETE') {
+        const { error } = await userClient
+          .from('project_members')
+          .delete()
+          .eq('project_id', projectId)
+          .eq('user_id', memberId)
+          .neq('role', 'owner');
+        if (error) throw error;
+        return json(request, { ok: true });
+      }
+    }
+
+    const workspaceMatch = path.match(/^workspaces\/([0-9a-f-]+)$/i);
+    if (workspaceMatch) {
+      const projectId = workspaceMatch[1];
+      if (request.method === 'GET') {
+        const { data, error } = await userClient
+          .from('project_workspaces')
+          .select('*')
+          .eq('project_id', projectId)
+          .maybeSingle();
+        if (error) throw error;
+        return json(request, data ? {
+          projectId,
+          workspace: data.workspace_json,
+          revision: data.revision,
+          updatedAt: data.updated_at,
+        } : null);
+      }
+      if (request.method === 'PUT') {
+        const body = await request.json();
+        if (body.workspace?.version !== 1) return json(request, { error: 'unsupported workspace version' }, 400);
+        const { data, error } = await userClient.rpc('save_project_workspace', {
+          target_project: projectId,
+          expected_revision: body.expectedRevision,
+          workspace: body.workspace,
+        });
+        if (error) throw error;
+        return json(request, { revision: data });
+      }
+    }
+
+    const sourceFilesMatch = path.match(/^source-files\/([0-9a-f-]+)$/i);
+    if (sourceFilesMatch) {
+      const projectId = sourceFilesMatch[1];
+      if (request.method === 'GET') {
+        const { data, error } = await userClient
+          .from('project_source_files')
+          .select('*')
+          .eq('project_id', projectId)
+          .order('path');
+        if (error) throw error;
+        return json(request, (data ?? []).map(normalizeSourceFile));
+      }
+      if (request.method === 'PUT') {
+        const body = await request.json();
+        const sourcePath = safeSourcePath(String(body.path ?? ''));
+        const language = String(body.language ?? 'plaintext').slice(0, 40);
+        const content = String(body.content ?? '');
+        if (new TextEncoder().encode(content).byteLength > 2 * 1024 * 1024) {
+          return json(request, { error: 'source file exceeds 2 MB' }, 413);
+        }
+        const expectedRevision = Number(body.expectedRevision ?? 0);
+        const currentResult = await userClient
+          .from('project_source_files')
+          .select('*')
+          .eq('project_id', projectId)
+          .eq('path', sourcePath)
+          .maybeSingle();
+        if (currentResult.error) throw currentResult.error;
+        const current = currentResult.data;
+        if ((current?.revision ?? 0) !== expectedRevision) {
+          return json(request, { error: 'source file revision conflict', current: current ? normalizeSourceFile(current) : null }, 409);
+        }
+        if (current) {
+          const { data, error } = await userClient
+            .from('project_source_files')
+            .update({
+              language,
+              content,
+              revision: current.revision + 1,
+              updated_by: user.id,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', current.id)
+            .eq('revision', expectedRevision)
+            .select()
+            .single();
+          if (error) throw error;
+          return json(request, normalizeSourceFile(data));
+        }
+        const { data, error } = await userClient
+          .from('project_source_files')
+          .insert({
+            project_id: projectId,
+            path: sourcePath,
+            language,
+            content,
+            revision: 1,
+            updated_by: user.id,
+          })
+          .select()
+          .single();
+        if (error) throw error;
+        return json(request, normalizeSourceFile(data), 201);
+      }
+      if (request.method === 'DELETE') {
+        const sourcePath = safeSourcePath(url.searchParams.get('path') ?? '');
+        const { error } = await userClient
+          .from('project_source_files')
+          .delete()
+          .eq('project_id', projectId)
+          .eq('path', sourcePath);
+        if (error) throw error;
+        return json(request, { ok: true });
+      }
+    }
+
+    const collaborationMatch = path.match(/^collaboration\/([0-9a-f-]+)(?:\/(operations|presence))?$/i);
+    if (collaborationMatch) {
+      const projectId = collaborationMatch[1];
+      const action = collaborationMatch[2];
+      if (!action && request.method === 'GET') {
+        const sceneId = url.searchParams.get('sceneId');
+        const cursor = url.searchParams.get('cursor');
+        if (!sceneId) return json(request, { error: 'sceneId is required' }, 400);
+        let operationQuery = userClient
+          .from('realtime_operations')
+          .select('*')
+          .eq('project_id', projectId)
+          .eq('scene_id', sceneId)
+          .order('created_at')
+          .limit(500);
+        if (cursor) operationQuery = operationQuery.gt('created_at', cursor);
+        const operationResult = await operationQuery;
+        if (operationResult.error) throw operationResult.error;
+        const presenceResult = await userClient
+          .from('project_presence')
+          .select('*')
+          .eq('project_id', projectId)
+          .gte('updated_at', new Date(Date.now() - 45_000).toISOString());
+        if (presenceResult.error) throw presenceResult.error;
+        const operations = (operationResult.data ?? []).map((row) => ({
+          id: row.id,
+          projectId: row.project_id,
+          sceneId: row.scene_id,
+          clientId: row.client_id,
+          userId: row.user_id,
+          sequence: row.sequence,
+          baseRevision: row.base_revision,
+          patch: row.patch_json,
+          createdAt: row.created_at,
+        }));
+        const nextCursor = operations.at(-1)?.createdAt ?? cursor ?? new Date().toISOString();
+        return json(request, {
+          operations,
+          presence: (presenceResult.data ?? []).map((row) => ({
+            ...row.state_json,
+            projectId: row.project_id,
+            userId: row.user_id,
+            clientId: row.client_id,
+            sceneId: row.scene_id,
+            updatedAt: new Date(row.updated_at).getTime(),
+          })),
+          cursor: nextCursor,
+        });
+      }
+      if (action === 'operations' && request.method === 'POST') {
+        const body = await request.json();
+        const { data, error } = await userClient.rpc('append_realtime_operation', {
+          target_project: projectId,
+          target_scene: body.sceneId,
+          operation_id: body.id,
+          operation_client: body.clientId,
+          operation_sequence: body.sequence,
+          operation_base_revision: body.baseRevision,
+          operation_patch: body.patch,
+        });
+        if (error) throw error;
+        return json(request, { id: data.id }, 201);
+      }
+      if (action === 'presence' && request.method === 'POST') {
+        const body = await request.json();
+        const state = {
+          displayName: String(body.displayName ?? '').slice(0, 80),
+          color: String(body.color ?? '#ffffff').slice(0, 20),
+          selection: Array.isArray(body.selection) ? body.selection.slice(0, 100) : [],
+          camera: body.camera && typeof body.camera === 'object' ? body.camera : undefined,
+        };
+        const { error } = await userClient.from('project_presence').upsert({
+          project_id: projectId,
+          user_id: user.id,
+          client_id: body.clientId,
+          scene_id: body.sceneId,
+          state_json: state,
+          updated_at: new Date().toISOString(),
+        });
+        if (error) throw error;
+        return json(request, { ok: true });
+      }
+    }
+
+    const versionMatch = path.match(/^versions\/([0-9a-f-]+)\/(branches|checkpoints)$/i);
+    if (versionMatch) {
+      const projectId = versionMatch[1];
+      const kind = versionMatch[2];
+      if (kind === 'branches' && request.method === 'GET') {
+        const { data, error } = await userClient
+          .from('version_branches')
+          .select('*')
+          .eq('project_id', projectId)
+          .order('created_at');
+        if (error) throw error;
+        return json(request, (data ?? []).map(normalizeBranch));
+      }
+      if (kind === 'branches' && request.method === 'POST') {
+        const body = await request.json();
+        const { data, error } = await userClient
+          .from('version_branches')
+          .insert({
+            project_id: projectId,
+            name: safeName(String(body.name ?? 'Branch')).slice(0, 80),
+            head_checkpoint_id: body.baseCheckpointId ?? null,
+            base_checkpoint_id: body.baseCheckpointId ?? null,
+            created_by: user.id,
+          })
+          .select()
+          .single();
+        if (error) throw error;
+        return json(request, normalizeBranch(data), 201);
+      }
+      if (kind === 'checkpoints' && request.method === 'GET') {
+        let query = userClient
+          .from('scene_checkpoints')
+          .select('*')
+          .eq('project_id', projectId)
+          .order('created_at', { ascending: false });
+        const branchId = url.searchParams.get('branchId');
+        if (branchId) query = query.eq('branch_id', branchId);
+        const { data, error } = await query;
+        if (error) throw error;
+        return json(request, (data ?? []).map(normalizeCheckpoint));
+      }
+      if (kind === 'checkpoints' && request.method === 'POST') {
+        const body = await request.json();
+        assertSafeContract(body.snapshot);
+        const branchResult = await userClient
+          .from('version_branches')
+          .select('*')
+          .eq('project_id', projectId)
+          .eq('id', body.branchId)
+          .single();
+        if (branchResult.error) throw branchResult.error;
+        const insertResult = await userClient
+          .from('scene_checkpoints')
+          .insert({
+            project_id: projectId,
+            branch_id: body.branchId,
+            parent_id: branchResult.data.head_checkpoint_id,
+            label: safeName(String(body.label ?? 'Checkpoint')).slice(0, 160),
+            scene_snapshot: body.snapshot,
+            scene_digest: await digestJson(body.snapshot),
+            created_by: user.id,
+          })
+          .select()
+          .single();
+        if (insertResult.error) throw insertResult.error;
+        const updateResult = await userClient
+          .from('version_branches')
+          .update({ head_checkpoint_id: insertResult.data.id })
+          .eq('id', body.branchId);
+        if (updateResult.error) throw updateResult.error;
+        return json(request, normalizeCheckpoint(insertResult.data), 201);
       }
     }
 

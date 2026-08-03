@@ -3,7 +3,7 @@
 Kyxos is a protocol-separated 3D publishing stack built around one rendering runtime:
 
 - **KyxosViewer** — Three.js WebGPU/TSL/RenderPipeline runtime with WebGL 2 fallback.
-- **Kyxos Studio** — owner projects, GLB/HDR/texture import, scene editing, autosave and immutable publishing.
+- **Kyxos Studio** — multi-user scene/template authoring, full glTF import, schema inspection, state graphs, versioning, source editing, autosave and immutable publishing.
 - **Kyxos Public Viewer** — anonymous read-only releases and controlled Embed playback.
 
 ```text
@@ -12,6 +12,8 @@ Kyxos Public Viewer → Scene Contract            → KyxosViewer
 ```
 
 Viewer never imports Studio, authentication, persistence or PlayCanvas UI. Studio never imports Three.js. Public Viewer never imports Editor Core, PCUI, Observer or upload/draft APIs. Automated boundary and production-bundle checks enforce these rules.
+
+Playground, Studio, Public Viewer and Embed are independent applications. Their source and production bundles do not import one another; reusable behavior lives only in protocol-level packages such as Scene Contract and KyxosViewer.
 
 ## Rendering stack
 

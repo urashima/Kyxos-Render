@@ -1,0 +1,54 @@
+.viewport-helper-menu {
+  position: relative;
+  align-self: center;
+}
+
+.viewport-helper-menu > summary {
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 10px;
+  border: 1px solid var(--kyxos-border, rgba(255, 255, 255, 0.12));
+  border-radius: 6px;
+  background: var(--kyxos-control-bg, rgba(255, 255, 255, 0.05));
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.viewport-helper-menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.viewport-helper-menu[open] > summary {
+  border-color: var(--kyxos-accent, #6f8fff);
+}
+
+.viewport-helper-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 80;
+  min-width: 190px;
+  display: grid;
+  gap: 7px;
+  padding: 10px;
+  border: 1px solid var(--kyxos-border, rgba(255, 255, 255, 0.14));
+  border-radius: 8px;
+  background: rgba(15, 19, 27, 0.97);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.4);
+}
+
+.viewport-helper-option {
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  align-items: center;
+  gap: 8px;
+  min-height: 25px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.viewport-helper-option input {
+  margin: 0;
+}

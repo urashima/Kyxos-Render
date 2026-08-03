@@ -1,0 +1,125 @@
+name: Studio GLB Import Smoke
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'apps/studio/**'
+      - 'packages/editor-core/**'
+      - 'packages/scene-contract/**'
+      - 'packages/test-fixtures/**'
+      - 'packages/viewer/**'
+      - 'packages/viewer-adapter/**'
+      - 'tests/e2e/studio-viewport-helpers.spec.ts'
+      - 'tests/e2e/studio-asset-virtualization.spec.ts'
+      - 'tests/e2e/studio-camera-bookmarks.spec.ts'
+      - 'tests/e2e/studio-render-modes.spec.ts'
+      - 'tests/e2e/studio-gltf-fidelity.spec.ts'
+      - 'tests/e2e/studio-material-fidelity.spec.ts'
+      - 'tests/unit/gltf-authoring-parity.spec.ts'
+      - 'tests/unit/gltf-material-complete.spec.ts'
+      - 'tests/unit/studio-glb-report.spec.ts'
+      - '.github/workflows/studio-glb-import-smoke.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: studio-glb-import-smoke-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  gltf-unit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - name: Checkout pull request
+        uses: actions/checkout@v4
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install workspace
+        run: pnpm install --no-frozen-lockfile
+      - name: Verify glTF authoring and virtualization unit coverage
+        run: >-
+          pnpm exec vitest run
+          tests/unit/studio-import-lifecycle.spec.ts
+          tests/unit/studio-glb-report.spec.ts
+          tests/unit/gltf-bundler.spec.ts
+          tests/unit/gltf-authoring-parity.spec.ts
+          tests/unit/gltf-material-complete.spec.ts
+
+  glb-browser:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: basic
+            spec: tests/e2e/studio-viewport-helpers.spec.ts
+            grep: Studio viewport helpers survive GLB scene replacement
+          - id: authoring
+            spec: tests/e2e/studio-viewport-helpers.spec.ts
+            grep: Studio imports, edits and reimports complete glTF authoring content
+          - id: gltf-fidelity
+            spec: tests/e2e/studio-gltf-fidelity.spec.ts
+            grep: Studio preserves glTF matrices, embedded PBR textures, skin weights and bone animation
+          - id: material-complete
+            spec: tests/e2e/studio-material-fidelity.spec.ts
+            grep: Studio imports, edits and preserves complete glTF material parameters
+          - id: draco-external
+            spec: tests/e2e/studio-viewport-helpers.spec.ts
+            grep: Studio bundles external glTF resources and decodes Draco
+          - id: meshopt-ktx2
+            spec: tests/e2e/studio-viewport-helpers.spec.ts
+            grep: Studio decodes Meshopt geometry with KTX2 Basis textures
+          - id: assets-500
+            spec: tests/e2e/studio-asset-virtualization.spec.ts
+            grep: Studio virtualizes a 500 asset workspace in Grid and List views
+          - id: camera-bookmarks
+            spec: tests/e2e/studio-camera-bookmarks.spec.ts
+            grep: Studio saves, recalls, renames and deletes editor camera bookmarks
+          - id: render-modes
+            spec: tests/e2e/studio-render-modes.spec.ts
+            grep: Studio switches and persists complete viewport render modes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout pull request
+        uses: actions/checkout@v4
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install workspace
+        run: pnpm install --no-frozen-lockfile
+      - name: Install Chromium
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Run ${{ matrix.id }} browser acceptance
+        env:
+          CI: true
+        run: >-
+          pnpm exec playwright test
+          ${{ matrix.spec }}
+          --project=chromium
+          --workers=1
+          --retries=0
+          --timeout=90000
+          --grep '${{ matrix.grep }}'
+      - name: Upload ${{ matrix.id }} diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: studio-glb-${{ matrix.id }}
+          if-no-files-found: ignore
+          path: |
+            test-results
+            playwright-report

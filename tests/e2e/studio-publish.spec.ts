@@ -31,7 +31,7 @@ test('Kyxos Studio edits, previews and publishes immutable animated releases', a
   await expect(page.locator('.kx-empty-scene')).toBeVisible();
   await expect(page.locator('.hierarchy-row')).toHaveCount(0);
 
-  await page.locator('input[type=file]').setInputFiles({
+  await page.locator('#asset-import-input').setInputFiles({
     name: 'fixture-animated-triangle.glb',
     mimeType: 'model/gltf-binary',
     buffer: Buffer.from(createAnimatedTriangleGlb()),

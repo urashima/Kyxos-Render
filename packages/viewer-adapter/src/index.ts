@@ -366,7 +366,20 @@ export class BrowserKyxosViewportAdapter
   async captureThumbnail(): Promise<Blob> {
     await this.operationQueue;
     if (!this.viewer) throw new Error('Viewport adapter is not mounted.');
-    return this.viewer.capture({ mimeType: 'image/png', scale: 1 });
+    let timeoutId = 0;
+    try {
+      return await Promise.race([
+        this.viewer.capture({ mimeType: 'image/png', scale: 1 }),
+        new Promise<never>((_resolve, reject) => {
+          timeoutId = window.setTimeout(
+            () => reject(new Error('Viewport thumbnail capture timed out.')),
+            10_000,
+          );
+        }),
+      ]);
+    } finally {
+      window.clearTimeout(timeoutId);
+    }
   }
 
   dispose(): void {

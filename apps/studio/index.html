@@ -5,16 +5,31 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; img-src 'self' blob: data: https:; media-src 'self' blob: https:; connect-src 'self' blob: https:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; worker-src 'self' blob:; frame-ancestors 'self'; base-uri 'self'; object-src 'none'"
+      content="default-src 'self'; img-src 'self' blob: data: https:; media-src 'self' blob: https:; connect-src 'self' blob: https:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval'; worker-src 'self' blob:; frame-ancestors 'self'; base-uri 'self'; object-src 'none'"
     />
     <title>Kyxos Studio</title>
     <link rel="stylesheet" href="/src/studio-enhancements.css" />
   </head>
   <body>
     <div id="app"></div>
+    <script type="module" src="/src/image-bitmap-guard.ts"></script>
+    <script type="module" src="/src/blob-read-cache.ts"></script>
+    <script type="module" src="/src/editor-experience-bootstrap.ts"></script>
+    <script type="module" src="/src/imported-hierarchy-expansion.ts"></script>
+    <script type="module" src="/src/hierarchy-virtualization.ts"></script>
+    <script type="module" src="/src/asset-workspace-virtualization.ts"></script>
+    <script type="module" src="/src/viewport-navigation.ts"></script>
+    <script type="module" src="/src/viewport-render-modes.ts"></script>
+    <script type="module" src="/src/transform-pivot-ui.ts"></script>
+    <script type="module" src="/src/viewport-helper-ui.ts"></script>
     <script type="module" src="/src/panel-interactions.ts"></script>
     <script type="module" src="/src/asset-drop.ts"></script>
+    <script type="module" src="/src/gltf-material-report-support.ts"></script>
     <script type="module" src="/src/glb-import-parity.ts"></script>
+    <script type="module" src="/src/gltf-material-complete.ts"></script>
+    <script type="module" src="/src/gltf-fidelity-normalization.ts"></script>
+    <script type="module" src="/src/material-inspector-complete.ts"></script>
+    <script type="module" src="/src/material-inspector-persistence.ts"></script>
     <script type="module" src="/src/transform-controls-parity.ts"></script>
     <script type="module" src="/src/material-selection.ts"></script>
     <script type="module" src="/src/main.ts"></script>

@@ -14,7 +14,7 @@ test('Studio selects, displays and edits every runtime material slot', async ({
   await page.getByRole('button', { name: 'New project' }).click();
   await expect(page.locator('#studio-canvas')).toHaveAttribute('data-empty-scene', '');
 
-  await page.locator('input[type=file]').setInputFiles({
+  await page.locator('#asset-import-input').setInputFiles({
     name: 'two-material.glb',
     mimeType: 'model/gltf-binary',
     buffer: Buffer.from(createMultiMaterialGlb()),

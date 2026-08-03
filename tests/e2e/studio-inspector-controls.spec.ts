@@ -13,7 +13,7 @@ test('Studio Inspector controls remain live, focused and persistent', async ({ p
   await page.getByRole('button', { name: 'New project' }).click();
   await expect(page.locator('#studio-canvas')).toBeVisible({ timeout: 60_000 });
 
-  await page.locator('input[type=file]').setInputFiles({
+  await page.locator('#asset-import-input').setInputFiles({
     name: 'inspector-animated-triangle.glb',
     mimeType: 'model/gltf-binary',
     buffer: Buffer.from(createAnimatedTriangleGlb()),
@@ -28,16 +28,16 @@ test('Studio Inspector controls remain live, focused and persistent', async ({ p
   await expect(material).toHaveAttribute('open', '');
 
   const roughness = material
-    .locator('.field-row')
-    .filter({ hasText: 'roughness' })
-    .locator('input[type=range]');
+    .locator('.schema-field')
+    .filter({ hasText: 'Roughness' })
+    .locator('input[type=number]');
   await expect(roughness).toBeVisible();
   const before = Number(await roughness.inputValue());
   await roughness.evaluate((control) => {
     control.setAttribute('data-live-control', 'roughness');
   });
   await roughness.focus();
-  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('ArrowUp');
 
   await expect(material).toHaveAttribute('open', '');
   await expect(roughness).toBeFocused();
@@ -66,8 +66,8 @@ test('Studio Inspector controls remain live, focused and persistent', async ({ p
     .locator('details.inspector-section')
     .filter({ has: page.locator('summary', { hasText: 'Material' }) });
   const restoredRoughness = restoredMaterial
-    .locator('.field-row')
-    .filter({ hasText: 'roughness' })
-    .locator('input[type=range]');
+    .locator('.schema-field')
+    .filter({ hasText: 'Roughness' })
+    .locator('input[type=number]');
   await expect(restoredRoughness).toHaveValue(savedRoughness);
 });

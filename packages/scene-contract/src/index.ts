@@ -5,7 +5,15 @@ export type BackendPreference = 'auto' | 'webgpu' | 'webgl2';
 export type QualityPreset = 'low' | 'medium' | 'high' | 'cinematic' | 'ultra' | 'capture';
 export type AlphaMode = 'opaque' | 'mask' | 'blend';
 export type ColorSpace = 'srgb' | 'linear' | 'none';
-export type AssetKind = 'model' | 'texture' | 'environment' | 'thumbnail' | 'other';
+export type AssetKind =
+  | 'model'
+  | 'texture'
+  | 'environment'
+  | 'thumbnail'
+  | 'animation'
+  | 'material'
+  | 'script'
+  | 'other';
 export type SceneEffectName =
   | 'traa'
   | 'ssao'
@@ -70,9 +78,14 @@ export interface TextureRef {
   assetId: string;
   texCoord?: number;
   colorSpace?: ColorSpace;
+  channel?: 'r' | 'g' | 'b' | 'a' | 'rgb' | 'rgba';
   offset?: Vec2;
   scale?: Vec2;
   rotation?: number;
+  wrapS?: 'repeat' | 'clamp' | 'mirror';
+  wrapT?: 'repeat' | 'clamp' | 'mirror';
+  minFilter?: string;
+  magFilter?: string;
 }
 
 export interface SceneMaterial {
@@ -94,7 +107,36 @@ export interface SceneMaterial {
   alphaMode: AlphaMode;
   alphaCutoff?: number;
   doubleSided: boolean;
+  clearcoat?: number;
+  clearcoatRoughness?: number;
+  clearcoatTexture?: TextureRef;
+  clearcoatRoughnessTexture?: TextureRef;
+  transmission?: number;
+  transmissionTexture?: TextureRef;
+  thickness?: number;
+  thicknessTexture?: TextureRef;
+  attenuationColor?: Vec3;
+  attenuationDistance?: number;
+  ior?: number;
+  sheenColor?: Vec3;
+  sheenRoughness?: number;
+  specularIntensity?: number;
+  specularColor?: Vec3;
   metadata?: Record<string, unknown>;
+}
+
+export interface SceneSkinBinding {
+  skinIndex: number;
+  joints: string[];
+  skeletonNodeId?: string;
+  inverseBindMatricesAccessor?: number;
+}
+
+export interface SceneTemplateInstance {
+  templateId: string;
+  instanceId: string;
+  sourceNodeId: string;
+  overrides: string[];
 }
 
 export interface SceneNode {
@@ -111,6 +153,11 @@ export interface SceneNode {
   cameraId?: string;
   lightId?: string;
   animationIds?: string[];
+  skin?: SceneSkinBinding;
+  morphWeights?: number[];
+  morphTargetNames?: string[];
+  materialVariantBindings?: Record<string, string[]>;
+  template?: SceneTemplateInstance;
   metadata?: Record<string, unknown>;
 }
 
@@ -122,6 +169,8 @@ export interface SceneAnimation {
   loop: boolean;
   speed: number;
   autoplay?: boolean;
+  trimStart?: number;
+  trimEnd?: number;
 }
 
 export interface SceneEnvironment {
@@ -142,6 +191,8 @@ export interface SceneCamera {
   fov: number;
   near: number;
   far: number;
+  projection?: 'perspective' | 'orthographic';
+  orthographicSize?: number;
   orbit?: { minDistance?: number; maxDistance?: number; minPolarAngle?: number; maxPolarAngle?: number };
   autoRotate?: boolean;
 }
@@ -154,7 +205,93 @@ export interface SceneLight {
   intensity: number;
   transform: Transform;
   castShadow: boolean;
+  range?: number;
+  decay?: number;
+  innerConeAngle?: number;
+  outerConeAngle?: number;
   shadow?: Record<string, number | boolean>;
+}
+
+export interface SceneMaterialVariant {
+  id: string;
+  name: string;
+}
+
+export type AnimationParameterType = 'boolean' | 'float' | 'integer' | 'trigger';
+export interface AnimationGraphParameter {
+  id: string;
+  name: string;
+  type: AnimationParameterType;
+  defaultValue: boolean | number;
+}
+
+export interface AnimationGraphCondition {
+  parameterId: string;
+  operator:
+    | 'equals'
+    | 'notEquals'
+    | 'greater'
+    | 'greaterOrEqual'
+    | 'less'
+    | 'lessOrEqual'
+    | 'set';
+  value?: boolean | number;
+}
+
+export interface AnimationBlendTreeChild {
+  clipId?: string;
+  blendTree?: AnimationBlendTree;
+  threshold?: number;
+  position?: Vec2;
+  speed?: number;
+}
+
+export interface AnimationBlendTree {
+  type: '1d' | '2d-directional' | '2d-cartesian';
+  parameterX: string;
+  parameterY?: string;
+  children: AnimationBlendTreeChild[];
+}
+
+export interface AnimationGraphState {
+  id: string;
+  name: string;
+  clipId?: string;
+  blendTree?: AnimationBlendTree;
+  speed: number;
+  loop: boolean;
+  position: Vec2;
+}
+
+export interface AnimationGraphTransition {
+  id: string;
+  fromStateId: string | '*';
+  toStateId: string;
+  duration: number;
+  exitTime?: number;
+  conditions: AnimationGraphCondition[];
+}
+
+export interface AnimationStateGraph {
+  id: string;
+  name: string;
+  initialStateId: string;
+  states: AnimationGraphState[];
+  transitions: AnimationGraphTransition[];
+  parameters: AnimationGraphParameter[];
+}
+
+export interface SceneAssetFolder {
+  id: string;
+  name: string;
+  parentId: string | null;
+}
+
+export interface SceneEditorState {
+  assetFolders?: SceneAssetFolder[];
+  activeAssetFolderId?: string | null;
+  deletedAssetIds?: string[];
+  inspectorSections?: Record<string, boolean>;
 }
 
 export interface SceneEffectSettings {
@@ -183,6 +320,10 @@ export interface KyxosSceneContract {
   environment: SceneEnvironment;
   cameras: SceneCamera[];
   lights?: SceneLight[];
+  materialVariants?: SceneMaterialVariant[];
+  activeMaterialVariantId?: string;
+  animationStateGraph?: AnimationStateGraph;
+  editorState?: SceneEditorState;
   activeCameraId: string;
   renderSettings: SceneRenderSettings;
 }
@@ -204,7 +345,7 @@ export interface ViewerCapabilityDescription {
   effects: Record<string, { available: boolean; parameters?: Record<string, unknown>; reason?: string }>;
   textureFormats: string[];
   maxTextureSize: number;
-  animation: { clips: boolean; seek: boolean; speed: boolean };
+  animation: { clips: boolean; seek: boolean; speed: boolean; stateGraph: boolean; blendTrees: boolean };
   picking: { available: boolean; multiSelect: boolean };
 }
 
@@ -271,9 +412,64 @@ function validateTextureRef(
   if (value.colorSpace != null && !['srgb', 'linear', 'none'].includes(String(value.colorSpace))) {
     issue(issues, `${path}/colorSpace`, 'enum', 'Unsupported texture color space.');
   }
+  if (
+    value.channel != null &&
+    !['r', 'g', 'b', 'a', 'rgb', 'rgba'].includes(String(value.channel))
+  ) {
+    issue(issues, `${path}/channel`, 'enum', 'Unsupported texture channel mapping.');
+  }
+  for (const key of ['wrapS', 'wrapT']) {
+    if (
+      value[key] != null &&
+      !['repeat', 'clamp', 'mirror'].includes(String(value[key]))
+    ) {
+      issue(issues, `${path}/${key}`, 'enum', 'Unsupported texture wrapping mode.');
+    }
+  }
+  if (
+    value.minFilter != null &&
+    !['nearest', 'linear', 'nearestMipNearest', 'linearMipNearest', 'nearestMipLinear', 'linearMipLinear'].includes(String(value.minFilter))
+  ) {
+    issue(issues, `${path}/minFilter`, 'enum', 'Unsupported texture minification filter.');
+  }
+  if (value.magFilter != null && !['nearest', 'linear'].includes(String(value.magFilter))) {
+    issue(issues, `${path}/magFilter`, 'enum', 'Unsupported texture magnification filter.');
+  }
   if (value.offset != null && !validVec2(value.offset)) issue(issues, `${path}/offset`, 'vector', 'Texture offset must contain finite x/y values.');
   if (value.scale != null && !validVec2(value.scale)) issue(issues, `${path}/scale`, 'vector', 'Texture scale must contain finite x/y values.');
   if (value.rotation != null && !finite(value.rotation)) issue(issues, `${path}/rotation`, 'number', 'Texture rotation must be finite.');
+}
+
+function validateAnimationBlendTree(
+  value: unknown,
+  path: string,
+  parameterIds: ReadonlySet<string>,
+  animationIds: ReadonlySet<string>,
+  issues: ContractValidationIssue[],
+  depth = 0,
+): void {
+  if (depth > 16 || !isRecord(value) || !['1d', '2d-directional', '2d-cartesian'].includes(String(value.type)) || !Array.isArray(value.children)) {
+    issue(issues, path, 'type', 'Animation blend tree is invalid.');
+    return;
+  }
+  if (!parameterIds.has(String(value.parameterX))) issue(issues, `${path}/parameterX`, 'reference', 'Blend parameterX is missing.');
+  if (value.type !== '1d' && !parameterIds.has(String(value.parameterY))) issue(issues, `${path}/parameterY`, 'reference', '2D blend trees require parameterY.');
+  value.children.forEach((child, index) => {
+    const childPath = `${path}/children/${index}`;
+    if (!isRecord(child)) {
+      issue(issues, childPath, 'type', 'Blend child must be an object.');
+      return;
+    }
+    if (child.speed != null && !finite(child.speed)) issue(issues, `${childPath}/speed`, 'number', 'Blend child speed must be finite.');
+    if (value.type === '1d' && child.threshold != null && !finite(child.threshold)) issue(issues, `${childPath}/threshold`, 'number', 'Blend threshold must be finite.');
+    if (value.type !== '1d' && !validVec2(child.position)) issue(issues, `${childPath}/position`, 'vector', '2D blend child position is required.');
+    if (child.blendTree != null) {
+      if (child.clipId != null) issue(issues, childPath, 'exclusive', 'A blend child cannot contain both clipId and blendTree.');
+      validateAnimationBlendTree(child.blendTree, `${childPath}/blendTree`, parameterIds, animationIds, issues, depth + 1);
+    } else if (typeof child.clipId !== 'string' || !animationIds.has(child.clipId)) {
+      issue(issues, `${childPath}/clipId`, 'reference', 'Blend child clipId must reference an animation.');
+    }
+  });
 }
 
 export function validateSceneContract(value: unknown): ContractValidationResult {
@@ -320,7 +516,7 @@ export function validateSceneContract(value: unknown): ContractValidationResult 
       if (asset.uri !== `asset://${String(asset.contentHash ?? '')}`) {
         issue(issues, `${path}/uri`, 'asset-uri', 'Asset URI must exactly match asset://<content-hash>.');
       }
-      if (!['model', 'texture', 'environment', 'thumbnail', 'other'].includes(String(asset.kind))) {
+      if (!['model', 'texture', 'environment', 'thumbnail', 'animation', 'material', 'script', 'other'].includes(String(asset.kind))) {
         issue(issues, `${path}/kind`, 'enum', 'Unsupported asset kind.');
       }
       if (typeof asset.mimeType !== 'string' || !asset.mimeType.includes('/')) issue(issues, `${path}/mimeType`, 'mime', 'mimeType is required.');
@@ -350,13 +546,40 @@ export function validateSceneContract(value: unknown): ContractValidationResult 
       if (!['opaque', 'mask', 'blend'].includes(String(material.alphaMode))) issue(issues, `${path}/alphaMode`, 'enum', 'Unsupported alpha mode.');
       if (material.alphaCutoff != null && !inRange(material.alphaCutoff, 0, 1)) issue(issues, `${path}/alphaCutoff`, 'range', 'alphaCutoff must be between 0 and 1.');
       if (typeof material.doubleSided !== 'boolean') issue(issues, `${path}/doubleSided`, 'type', 'doubleSided must be boolean.');
-      for (const key of ['baseColorTexture', 'metalnessTexture', 'roughnessTexture', 'normalTexture', 'emissiveTexture', 'aoTexture']) {
+      for (const key of [
+        'baseColorTexture',
+        'metalnessTexture',
+        'roughnessTexture',
+        'normalTexture',
+        'emissiveTexture',
+        'aoTexture',
+        'clearcoatTexture',
+        'clearcoatRoughnessTexture',
+        'transmissionTexture',
+        'thicknessTexture',
+      ]) {
         validateTextureRef(material[key], `${path}/${key}`, assets, issues);
+      }
+      for (const key of [
+        'clearcoat',
+        'clearcoatRoughness',
+        'transmission',
+        'sheenRoughness',
+        'specularIntensity',
+      ]) {
+        if (material[key] != null && !inRange(material[key], 0, 1)) {
+          issue(issues, `${path}/${key}`, 'range', `${key} must be between 0 and 1.`);
+        }
+      }
+      if (material.ior != null && !inRange(material.ior, 1, 2.333)) {
+        issue(issues, `${path}/ior`, 'range', 'ior must be between 1 and 2.333.');
+      }
+      if (material.thickness != null && (!finite(material.thickness) || material.thickness < 0)) {
+        issue(issues, `${path}/thickness`, 'range', 'thickness must be non-negative.');
       }
     }
   }
 
-  const cameras = Array.isArray(value.cameras) ? value.cameras : [];
   const cameraIds = new Set<string>();
   if (!Array.isArray(value.cameras) || value.cameras.length === 0) {
     issue(issues, '/cameras', 'required', 'At least one camera is required.');
@@ -372,6 +595,8 @@ export function validateSceneContract(value: unknown): ContractValidationResult 
       if (!validTransform(camera.transform)) issue(issues, `${path}/transform`, 'transform', 'Camera transform is invalid.');
       if (!validVec3(camera.target)) issue(issues, `${path}/target`, 'vector', 'Camera target is invalid.');
       if (!inRange(camera.fov, 1, 179)) issue(issues, `${path}/fov`, 'range', 'Camera FOV must be between 1 and 179 degrees.');
+      if (camera.projection != null && !['perspective', 'orthographic'].includes(String(camera.projection))) issue(issues, `${path}/projection`, 'enum', 'Unsupported camera projection.');
+      if (camera.orthographicSize != null && (!finite(camera.orthographicSize) || Number(camera.orthographicSize) <= 0)) issue(issues, `${path}/orthographicSize`, 'range', 'Orthographic size must be positive.');
       if (!finite(camera.near) || Number(camera.near) <= 0) issue(issues, `${path}/near`, 'range', 'Camera near must be positive.');
       if (!finite(camera.far) || Number(camera.far) <= Number(camera.near)) issue(issues, `${path}/far`, 'range', 'Camera far must be greater than near.');
     });
@@ -399,10 +624,13 @@ export function validateSceneContract(value: unknown): ContractValidationResult 
       if (!finite(light.intensity) || Number(light.intensity) < 0) issue(issues, `${path}/intensity`, 'range', 'Light intensity must be non-negative.');
       if (!validTransform(light.transform)) issue(issues, `${path}/transform`, 'transform', 'Light transform is invalid.');
       if (typeof light.castShadow !== 'boolean') issue(issues, `${path}/castShadow`, 'type', 'castShadow must be boolean.');
+      if (light.range != null && (!finite(light.range) || Number(light.range) < 0)) issue(issues, `${path}/range`, 'range', 'Light range must be non-negative.');
+      if (light.decay != null && (!finite(light.decay) || Number(light.decay) < 0)) issue(issues, `${path}/decay`, 'range', 'Light decay must be non-negative.');
+      if (light.innerConeAngle != null && !inRange(light.innerConeAngle, 0, Math.PI / 2)) issue(issues, `${path}/innerConeAngle`, 'range', 'Inner cone angle is invalid.');
+      if (light.outerConeAngle != null && !inRange(light.outerConeAngle, 0, Math.PI / 2)) issue(issues, `${path}/outerConeAngle`, 'range', 'Outer cone angle is invalid.');
     });
   }
 
-  const animations = Array.isArray(value.animations) ? value.animations : [];
   const animationIds = new Set<string>();
   if (!Array.isArray(value.animations)) {
     issue(issues, '/animations', 'type', 'animations must be an array.');
@@ -419,6 +647,8 @@ export function validateSceneContract(value: unknown): ContractValidationResult 
       if (!finite(animation.duration) || Number(animation.duration) < 0) issue(issues, `${path}/duration`, 'range', 'duration must be non-negative.');
       if (!finite(animation.speed) || Number(animation.speed) < 0) issue(issues, `${path}/speed`, 'range', 'speed must be non-negative.');
       if (typeof animation.loop !== 'boolean') issue(issues, `${path}/loop`, 'type', 'loop must be boolean.');
+      if (animation.trimStart != null && (!finite(animation.trimStart) || Number(animation.trimStart) < 0)) issue(issues, `${path}/trimStart`, 'range', 'trimStart must be non-negative.');
+      if (animation.trimEnd != null && (!finite(animation.trimEnd) || Number(animation.trimEnd) > Number(animation.duration))) issue(issues, `${path}/trimEnd`, 'range', 'trimEnd must not exceed duration.');
     });
   }
 
@@ -459,6 +689,17 @@ export function validateSceneContract(value: unknown): ContractValidationResult 
           if (typeof animationId !== 'string' || !animationIds.has(animationId)) issue(issues, `${path}/animationIds/${animationIndex}`, 'reference', 'animationId must reference an existing animation.');
         });
       }
+      if (node.morphWeights != null && (!Array.isArray(node.morphWeights) || node.morphWeights.some((entry) => !finite(entry)))) {
+        issue(issues, `${path}/morphWeights`, 'number-array', 'Morph weights must contain finite numbers.');
+      }
+      if (node.morphTargetNames != null && (!Array.isArray(node.morphTargetNames) || node.morphTargetNames.some((entry) => typeof entry !== 'string'))) {
+        issue(issues, `${path}/morphTargetNames`, 'type', 'Morph target names must be strings.');
+      }
+      if (node.skin != null) {
+        if (!isRecord(node.skin) || !Number.isInteger(node.skin.skinIndex) || !Array.isArray(node.skin.joints)) {
+          issue(issues, `${path}/skin`, 'type', 'Skin binding requires skinIndex and joints.');
+        }
+      }
     }
 
     for (let index = 0; index < nodes.length; index += 1) {
@@ -488,6 +729,92 @@ export function validateSceneContract(value: unknown): ContractValidationResult 
         const parent = nodes.find((candidate) => isRecord(candidate) && candidate.id === parentId) as Record<string, unknown> | undefined;
         parentId = parent && typeof parent.parentId === 'string' ? parent.parentId : null;
       }
+    }
+  }
+
+  const variants = value.materialVariants == null ? [] : value.materialVariants;
+  const variantIds = new Set<string>();
+  if (!Array.isArray(variants)) {
+    issue(issues, '/materialVariants', 'type', 'materialVariants must be an array.');
+  } else {
+    variants.forEach((variant, index) => {
+      if (!isRecord(variant) || typeof variant.id !== 'string' || typeof variant.name !== 'string') {
+        issue(issues, `/materialVariants/${index}`, 'type', 'Material variants require id and name.');
+      } else if (variantIds.has(variant.id)) {
+        issue(issues, `/materialVariants/${index}/id`, 'duplicate', 'Material variant ids must be unique.');
+      } else {
+        variantIds.add(variant.id);
+      }
+    });
+  }
+  if (value.activeMaterialVariantId != null && !variantIds.has(String(value.activeMaterialVariantId))) {
+    issue(issues, '/activeMaterialVariantId', 'reference', 'Active material variant must reference a variant.');
+  }
+  for (let index = 0; index < nodes.length; index += 1) {
+    const node = nodes[index];
+    if (!isRecord(node) || !isRecord(node.materialVariantBindings)) continue;
+    for (const [variantId, slots] of Object.entries(node.materialVariantBindings)) {
+      if (!variantIds.has(variantId)) issue(issues, `/nodes/${index}/materialVariantBindings/${variantId}`, 'reference', 'Unknown material variant.');
+      if (!Array.isArray(slots) || slots.some((materialId) => typeof materialId !== 'string' || !materials[materialId])) issue(issues, `/nodes/${index}/materialVariantBindings/${variantId}`, 'reference', 'Variant slots must reference existing materials.');
+    }
+  }
+
+  if (value.animationStateGraph != null) {
+    const graph = value.animationStateGraph;
+    if (!isRecord(graph) || !Array.isArray(graph.states) || !Array.isArray(graph.transitions) || !Array.isArray(graph.parameters)) {
+      issue(issues, '/animationStateGraph', 'type', 'Animation state graph is malformed.');
+    } else {
+      const stateIds = new Set<string>();
+      const parameterIds = new Set<string>();
+      const parameterTypes = new Map<string, string>();
+      graph.parameters.forEach((parameter, index) => {
+        const path = `/animationStateGraph/parameters/${index}`;
+        if (!isRecord(parameter) || typeof parameter.id !== 'string' || !parameter.id || typeof parameter.name !== 'string' || !parameter.name.trim() || !['boolean', 'float', 'integer', 'trigger'].includes(String(parameter.type))) {
+          issue(issues, path, 'type', 'Animation parameter is invalid.');
+        } else if (parameterIds.has(parameter.id)) {
+          issue(issues, `${path}/id`, 'duplicate', 'Animation parameter IDs must be unique.');
+        } else {
+          parameterIds.add(parameter.id);
+          parameterTypes.set(parameter.id, String(parameter.type));
+          const booleanType = parameter.type === 'boolean' || parameter.type === 'trigger';
+          if ((booleanType && typeof parameter.defaultValue !== 'boolean') || (!booleanType && !finite(parameter.defaultValue))) {
+            issue(issues, `${path}/defaultValue`, 'type', 'Animation parameter default does not match its type.');
+          }
+        }
+      });
+      graph.states.forEach((graphState, index) => {
+        const path = `/animationStateGraph/states/${index}`;
+        if (!isRecord(graphState) || typeof graphState.id !== 'string' || !graphState.id || typeof graphState.name !== 'string' || !graphState.name.trim() || !validVec2(graphState.position) || !finite(graphState.speed) || graphState.speed < 0 || typeof graphState.loop !== 'boolean') issue(issues, path, 'type', 'Animation state is invalid.');
+        else {
+          if (stateIds.has(graphState.id)) issue(issues, `${path}/id`, 'duplicate', 'Animation state IDs must be unique.');
+          else stateIds.add(graphState.id);
+          if (graphState.clipId != null && graphState.blendTree != null) issue(issues, path, 'exclusive', 'A state cannot contain both clipId and blendTree.');
+          if (graphState.clipId != null && !animationIds.has(String(graphState.clipId))) issue(issues, `${path}/clipId`, 'reference', 'State clipId must reference an animation.');
+          if (graphState.blendTree != null) validateAnimationBlendTree(graphState.blendTree, `${path}/blendTree`, parameterIds, animationIds, issues);
+        }
+      });
+      if (!stateIds.has(String(graph.initialStateId))) issue(issues, '/animationStateGraph/initialStateId', 'reference', 'Initial state must reference a graph state.');
+      const transitionIds = new Set<string>();
+      graph.transitions.forEach((transition, index) => {
+        const path = `/animationStateGraph/transitions/${index}`;
+        if (!isRecord(transition) || typeof transition.id !== 'string' || !transition.id || (transition.fromStateId !== '*' && !stateIds.has(String(transition.fromStateId))) || !stateIds.has(String(transition.toStateId)) || !Array.isArray(transition.conditions) || !finite(transition.duration) || transition.duration < 0 || (transition.exitTime != null && (!finite(transition.exitTime) || transition.exitTime < 0))) {
+          issue(issues, `/animationStateGraph/transitions/${index}`, 'reference', 'Animation transition is invalid.');
+          return;
+        }
+        if (transitionIds.has(transition.id)) issue(issues, `${path}/id`, 'duplicate', 'Animation transition IDs must be unique.');
+        else transitionIds.add(transition.id);
+        if (transition.fromStateId === transition.toStateId) issue(issues, path, 'cycle', 'A transition cannot target its source state.');
+        transition.conditions.forEach((condition, conditionIndex) => {
+          const conditionPath = `${path}/conditions/${conditionIndex}`;
+          if (!isRecord(condition) || !parameterIds.has(String(condition.parameterId)) || !['equals', 'notEquals', 'greater', 'greaterOrEqual', 'less', 'lessOrEqual', 'set'].includes(String(condition.operator))) {
+            issue(issues, conditionPath, 'reference', 'Animation transition condition is invalid.');
+            return;
+          }
+          const parameterType = parameterTypes.get(String(condition.parameterId));
+          if (condition.operator === 'set' && parameterType !== 'boolean' && parameterType !== 'trigger') issue(issues, `${conditionPath}/operator`, 'type', 'Set conditions require a boolean or trigger parameter.');
+          if (condition.operator !== 'set' && condition.value === undefined) issue(issues, `${conditionPath}/value`, 'required', 'This condition requires a comparison value.');
+        });
+      });
     }
   }
 
@@ -571,6 +898,13 @@ export function createEmptySceneContract(name = 'Untitled Scene'): KyxosSceneCon
         far: 1000,
       },
     ],
+    materialVariants: [],
+    editorState: {
+      assetFolders: [],
+      activeAssetFolderId: null,
+      deletedAssetIds: [],
+      inspectorSections: {},
+    },
     activeCameraId: cameraId,
     renderSettings: {
       backend: 'auto',

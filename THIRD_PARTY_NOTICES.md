@@ -24,6 +24,6 @@ Kyxos Studio uses selected open-source editor libraries and interaction patterns
 ## @playcanvas/pcui-graph
 
 - License: MIT
-- Usage: dependency is license-verified and reserved for future graph surfaces; V1 does not ship a material graph or animation state-machine editor.
+- Usage: animation state-graph canvas, node/edge interaction, selection, pan, zoom and context-menu events. Kyxos owns the graph contract, validation and runtime evaluator.
 
 Full license text is preserved in `licenses/playcanvas-editor-MIT.txt`. Source provenance is recorded in `third-party/playcanvas-editor-source.json`.

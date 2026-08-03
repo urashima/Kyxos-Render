@@ -23,7 +23,6 @@ import {
 } from 'three/tsl';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
 import { EXRLoader } from 'three/addons/loaders/EXRLoader.js';
 import { ao } from 'three/addons/tsl/display/GTAONode.js';
@@ -52,6 +51,7 @@ import {
 } from './effects/customNodes';
 import { createQualityPreset, mergeEffectSettings } from './presets';
 import { createDefaultScene } from './scene/createDefaultScene';
+import { createConfiguredGltfLoader, disposeConfiguredGltfLoader } from './gltfLoader';
 import type {
   BackendName,
   CaptureOptions,
@@ -90,7 +90,7 @@ export class KyxosViewer extends EventTarget {
   private renderer!: THREE.WebGPURenderer;
   private renderPipeline: any = null;
   private scene!: THREE.Scene;
-  private camera!: THREE.PerspectiveCamera;
+  private camera!: THREE.PerspectiveCamera | THREE.OrthographicCamera;
   private controls!: OrbitControls;
   private modelRoot!: THREE.Group;
   private animateScene: (elapsed: number, delta: number) => void = () => undefined;
@@ -114,6 +114,7 @@ export class KyxosViewer extends EventTarget {
   private rebuildQueued = false;
   private pipelineGeneration = 0;
   private webgpuRecoveryActive = false;
+  private webgpuVisibilityRetryCount = 0;
   private lastFrameTime = performance.now();
   private elapsed = 0;
   private fpsAccumulator = 0;
@@ -212,11 +213,24 @@ export class KyxosViewer extends EventTarget {
     const rect = this.canvas.getBoundingClientRect();
     const width = Math.max(1, Math.floor(rect.width || this.canvas.width || 960));
     const height = Math.max(1, Math.floor(rect.height || this.canvas.height || 540));
-    this.camera.aspect = width / height;
-    this.camera.updateProjectionMatrix();
+    this.updateCameraProjection(width, height);
     this.renderer?.setSize(width, height, false);
     this.metrics.width = width;
     this.metrics.height = height;
+  }
+
+  private updateCameraProjection(width: number, height: number) {
+    const aspect = width / Math.max(1, height);
+    if (this.camera instanceof THREE.PerspectiveCamera) {
+      this.camera.aspect = aspect;
+    } else {
+      const size = Number(this.camera.userData.kyxosOrthographicSize ?? 1);
+      this.camera.left = -size * aspect;
+      this.camera.right = size * aspect;
+      this.camera.top = size;
+      this.camera.bottom = -size;
+    }
+    this.camera.updateProjectionMatrix();
   }
 
   private renderFrame(time: number) {
@@ -268,6 +282,9 @@ export class KyxosViewer extends EventTarget {
 
   private buildPipeline(reason: string) {
     if (this.disposed) return;
+    if (!reason.startsWith('webgpu-visibility-retry:')) {
+      this.webgpuVisibilityRetryCount = 0;
+    }
     const generation = ++this.pipelineGeneration;
     this.disposePipeline();
     this.debugNodes.clear();
@@ -461,18 +478,22 @@ export class KyxosViewer extends EventTarget {
           const settings = this.effects.ssr;
           const temporalEnabled = this.effects.temporalReprojection.enabled;
           const temporalDenoiseEnabled = temporalEnabled && this.effects.temporalDenoise.enabled;
+          const stochasticEnvironment = this.getStochasticSsrEnvironment();
+          const stochasticEnabled = temporalEnabled && stochasticEnvironment !== null;
           // SSR internally samples its color input, so keep the original Scene Pass texture here.
           // Temporal reprojection/denoise are designed for the stochastic GGX path. The
           // deterministic mirror/blur path is already stable and makes both controls appear
-          // ineffective, so only switch to stochastic SSR when the temporal chain is active.
+          // ineffective, so prefer stochastic SSR when the temporal chain is active. The
+          // pinned Three.js SSRNode requires an equirectangular texture with CPU-side pixels
+          // for every stochastic environment miss; PMREM targets cannot initialize that
+          // sampler and otherwise compile a null sampleEnvironmentBRDF call.
           const ssrNode = ssr(beauty, depth, sceneNormal, {
             camera: this.camera,
-            stochastic: temporalEnabled,
+            stochastic: stochasticEnabled,
             diffuseNode: diffuseMetal,
             metalnessNode: metalRough.r,
             roughnessNode: metalRough.g,
-            // PMREM scene.environment is not an equirectangular SSR sampling source.
-            // Keep screen-space reflections enabled without compiling the null MIS path.
+            environmentNode: stochasticEnvironment,
             envImportanceSampling: false,
             binaryRefine: true,
           });
@@ -630,6 +651,10 @@ export class KyxosViewer extends EventTarget {
 
     if (this.effects.fxaa.enabled) {
       try {
+        // Three.js' official FXAANode explicitly consumes display-referred sRGB
+        // input. `source` was converted with renderOutput() above, so wrapping it
+        // a second time double tone-maps the frame and can produce black WebGPU
+        // output on SwiftShader.
         source = fxaa(source);
       } catch (error) {
         this.effectFailure('fxaa', error);
@@ -709,6 +734,11 @@ export class KyxosViewer extends EventTarget {
             }
           }
           if (visible <= verificationCanvas.width * verificationCanvas.height * 0.02) {
+            if (this.webgpuVisibilityRetryCount < 1) {
+              this.webgpuVisibilityRetryCount += 1;
+              this.queuePipelineRebuild(`webgpu-visibility-retry:${reason}`);
+              return;
+            }
             this.activateWebGPURecovery(`black-output:${reason}`);
           }
         } catch (error) {
@@ -826,15 +856,16 @@ export class KyxosViewer extends EventTarget {
     return [...this.warnings.values()];
   }
 
-  async loadModel(url: string) {
+  async loadModel(url: string, options: { ktx2?: boolean } = {}) {
     if (url.startsWith('procedural:')) {
       this.replaceWithProceduralModel(url.slice('procedural:'.length));
       this.resetTemporal('model-switch');
       return;
     }
 
-    const loader = new GLTFLoader();
+    const loader = createConfiguredGltfLoader(this.renderer, options);
     const gltf = await loader.loadAsync(url);
+    (this as unknown as Record<string, unknown>).loadedGltfAnimations = gltf.animations.map((clip) => clip.clone());
     disposeObject3D(this.modelRoot);
     this.modelRoot.clear();
 
@@ -897,6 +928,13 @@ export class KyxosViewer extends EventTarget {
   }
 
   private async setStudioEnvironment(resetHistory: boolean) {
+    const currentTarget = this.environmentResource as { texture?: THREE.Texture } | null;
+    if (currentTarget?.texture && this.scene.environment === currentTarget.texture) {
+      this.scene.environmentIntensity = 0.75;
+      this.updateBackground();
+      if (resetHistory) this.resetTemporal('environment-switch');
+      return;
+    }
     disposeUnknown(this.environmentResource);
     const room = new RoomEnvironment();
     const pmrem = new THREE.PMREMGenerator(this.renderer);
@@ -908,6 +946,13 @@ export class KyxosViewer extends EventTarget {
     this.scene.environmentIntensity = 0.75;
     this.updateBackground();
     if (resetHistory) this.resetTemporal('environment-switch');
+  }
+
+  private getStochasticSsrEnvironment(): THREE.Texture | null {
+    const resource = this.environmentResource as
+      | (THREE.Texture & { image?: { data?: ArrayBufferView } })
+      | null;
+    return resource?.isTexture === true && resource.image?.data ? resource : null;
   }
 
   private updateBackground() {
@@ -969,8 +1014,7 @@ export class KyxosViewer extends EventTarget {
 
     if (scale !== 1) {
       this.renderer.setSize(Math.round(width * scale), Math.round(height * scale), false);
-      this.camera.aspect = width / height;
-      this.camera.updateProjectionMatrix();
+      this.updateCameraProjection(width, height);
       this.buildPipeline('capture-resize');
     }
 
@@ -1003,8 +1047,7 @@ export class KyxosViewer extends EventTarget {
       const height = Math.max(240, before.height);
       for (let index = 0; index < iterations; index += 1) {
         this.renderer.setSize(width + (index % 2), height + (index % 3), false);
-        this.camera.aspect = width / height;
-        this.camera.updateProjectionMatrix();
+        this.updateCameraProjection(width, height);
       }
       this.renderer.setSize(width, height, false);
       this.buildPipeline('stress-resize');
@@ -1066,6 +1109,7 @@ export class KyxosViewer extends EventTarget {
     this.lutTexture.dispose();
     for (const texture of this.materialTextures) texture.dispose();
     this.materialTextures.clear();
+    disposeConfiguredGltfLoader(this.renderer);
     this.renderer?.dispose();
     this.dispatchEvent(new CustomEvent('disposed'));
   }
