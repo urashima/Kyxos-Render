@@ -342,21 +342,37 @@ function openAssetDb(): Promise<IDBDatabase> {
   });
 }
 
+interface StoredAssetBlobRecord {
+  bytes: ArrayBuffer;
+  type: string;
+}
+
+function decodeStoredAssetBlob(value: unknown): Blob | null {
+  if (value instanceof Blob) return value;
+  if (!value || typeof value !== 'object') return null;
+  const record = value as Partial<StoredAssetBlobRecord>;
+  if (!(record.bytes instanceof ArrayBuffer)) return null;
+  return new Blob([record.bytes], {
+    type: typeof record.type === 'string' && record.type
+      ? record.type
+      : 'application/octet-stream',
+  });
+}
+
 async function putBlob(hash: string, blob: Blob): Promise<void> {
+  const persistable: StoredAssetBlobRecord = {
+    bytes: await blob.arrayBuffer(),
+    type: blob.type || 'application/octet-stream',
+  };
   const db = await openAssetDb();
   try {
-    // WebKit/Safari can reject a File object during IndexedDB structured cloning
-    // even though a plain Blob containing the same bytes is accepted.
-    const persistable = new Blob([await blob.arrayBuffer()], {
-      type: blob.type || 'application/octet-stream',
-    });
     await new Promise<void>((resolve, reject) => {
       const transaction = db.transaction('blobs', 'readwrite');
       const request = transaction.objectStore('blobs').put(persistable, hash);
       const failure = () => reject(
         transaction.error
           ?? request.error
-          ?? new Error(`IndexedDB rejected asset Blob ${hash}.`),
+          ?? new Error(`IndexedDB rejected asset bytes ${hash}.`),
       );
       transaction.oncomplete = () => resolve();
       transaction.onerror = failure;
@@ -370,13 +386,16 @@ async function putBlob(hash: string, blob: Blob): Promise<void> {
 
 async function getBlob(hash: string): Promise<Blob | null> {
   const db = await openAssetDb();
-  const value = await new Promise<Blob | null>((resolve, reject) => {
-    const request = db.transaction('blobs').objectStore('blobs').get(hash);
-    request.onsuccess = () => resolve(request.result ?? null);
-    request.onerror = () => reject(request.error);
-  });
-  db.close();
-  return value;
+  try {
+    const value = await new Promise<unknown>((resolve, reject) => {
+      const request = db.transaction('blobs').objectStore('blobs').get(hash);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    return decodeStoredAssetBlob(value);
+  } finally {
+    db.close();
+  }
 }
 
 export class LocalKyxosApiClient implements KyxosApiClient {

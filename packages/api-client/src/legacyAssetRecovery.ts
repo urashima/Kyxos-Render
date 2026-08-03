@@ -31,13 +31,30 @@ function openAssetDb(): Promise<IDBDatabase> {
   });
 }
 
+interface StoredAssetBlobRecord {
+  bytes: ArrayBuffer;
+  type: string;
+}
+
+function decodeStoredAssetBlob(value: unknown): Blob | null {
+  if (value instanceof Blob) return value;
+  if (!value || typeof value !== 'object') return null;
+  const record = value as Partial<StoredAssetBlobRecord>;
+  if (!(record.bytes instanceof ArrayBuffer)) return null;
+  return new Blob([record.bytes], {
+    type: typeof record.type === 'string' && record.type
+      ? record.type
+      : 'application/octet-stream',
+  });
+}
+
 async function getBlob(key: string): Promise<Blob | null> {
   if (!key) return null;
   const db = await openAssetDb();
   try {
     return await new Promise<Blob | null>((resolve, reject) => {
       const request = db.transaction(ASSET_STORE_NAME).objectStore(ASSET_STORE_NAME).get(key);
-      request.onsuccess = () => resolve((request.result as Blob | undefined) ?? null);
+      request.onsuccess = () => resolve(decodeStoredAssetBlob(request.result));
       request.onerror = () => reject(request.error);
     });
   } finally {
@@ -46,14 +63,24 @@ async function getBlob(key: string): Promise<Blob | null> {
 }
 
 async function putBlob(key: string, blob: Blob): Promise<void> {
+  const persistable: StoredAssetBlobRecord = {
+    bytes: await blob.arrayBuffer(),
+    type: blob.type || 'application/octet-stream',
+  };
   const db = await openAssetDb();
   try {
     await new Promise<void>((resolve, reject) => {
       const transaction = db.transaction(ASSET_STORE_NAME, 'readwrite');
-      transaction.objectStore(ASSET_STORE_NAME).put(blob, key);
+      const request = transaction.objectStore(ASSET_STORE_NAME).put(persistable, key);
+      const failure = () => reject(
+        transaction.error
+          ?? request.error
+          ?? new Error(`IndexedDB rejected recovered asset bytes ${key}.`),
+      );
       transaction.oncomplete = () => resolve();
-      transaction.onerror = () => reject(transaction.error);
-      transaction.onabort = () => reject(transaction.error);
+      transaction.onerror = failure;
+      transaction.onabort = failure;
+      request.onerror = failure;
     });
   } finally {
     db.close();
@@ -72,9 +99,8 @@ async function listBlobs(): Promise<Array<{ key: string; blob: Blob }>> {
           resolve(entries);
           return;
         }
-        if (cursor.value instanceof Blob) {
-          entries.push({ key: String(cursor.key), blob: cursor.value });
-        }
+        const blob = decodeStoredAssetBlob(cursor.value);
+        if (blob) entries.push({ key: String(cursor.key), blob });
         cursor.continue();
       };
       request.onerror = () => reject(request.error);

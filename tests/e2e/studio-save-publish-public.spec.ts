@@ -62,7 +62,10 @@ test('imported scene saves durably, publishes, opens and reloads from the public
     });
     const originalBlobExists = await new Promise<boolean>((resolve, reject) => {
       const request = db.transaction('blobs').objectStore('blobs').get(originalHash);
-      request.onsuccess = () => resolve(request.result instanceof Blob);
+      request.onsuccess = () => {
+        const value = request.result as any;
+        resolve(value instanceof Blob || value?.bytes instanceof ArrayBuffer);
+      };
       request.onerror = () => reject(request.error);
     });
     db.close();
@@ -115,7 +118,10 @@ test('imported scene saves durably, publishes, opens and reloads from the public
     });
     const exists = await new Promise<boolean>((resolve, reject) => {
       const request = db.transaction('blobs').objectStore('blobs').get(hash);
-      request.onsuccess = () => resolve(request.result instanceof Blob);
+      request.onsuccess = () => {
+        const value = request.result as any;
+        resolve(value instanceof Blob || value?.bytes instanceof ArrayBuffer);
+      };
       request.onerror = () => reject(request.error);
     });
     db.close();
@@ -220,7 +226,10 @@ test('publish re-persists an imported Blob from the live manifest when IndexedDB
     });
     const exists = await new Promise<boolean>((resolve, reject) => {
       const request = db.transaction('blobs').objectStore('blobs').get(hash);
-      request.onsuccess = () => resolve(request.result instanceof Blob);
+      request.onsuccess = () => {
+        const value = request.result as any;
+        resolve(value instanceof Blob || value?.bytes instanceof ArrayBuffer);
+      };
       request.onerror = () => reject(request.error);
     });
     db.close();
