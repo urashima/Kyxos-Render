@@ -13,7 +13,13 @@ test('Studio, Public Viewer and Embed share Playground render settings and produ
 
   page.once('dialog', (dialog) => dialog.accept('Render Settings Parity'));
   await page.getByRole('button', { name: 'New project' }).click();
-  await expect(page.locator('#studio-canvas')).toBeVisible({ timeout: 60_000 });
+  const canvas = page.locator('#studio-canvas');
+  await expect(canvas).toBeVisible({ timeout: 60_000 });
+  await expect(canvas).toHaveAttribute('data-authoring-render', 'pipeline');
+  await expect(canvas).toHaveAttribute('data-authoring-pipeline', 'playground');
+  await expect(canvas).toHaveAttribute('data-authoring-ready', 'true', {
+    timeout: 60_000,
+  });
 
   const section = page
     .locator('details.inspector-section')
@@ -39,6 +45,33 @@ test('Studio, Public Viewer and Embed share Playground render settings and produ
     has: page.locator(':scope > summary', { hasText: 'Bloom' }),
   });
   const bloomSwitch = bloom.getByRole('switch', { name: 'Bloom enabled' });
+  const readSwitchGeometry = () =>
+    bloomSwitch.evaluate((track) => {
+      const knob = track.querySelector<HTMLElement>('span');
+      if (!knob) throw new Error('Switch knob is missing.');
+      const trackRect = track.getBoundingClientRect();
+      const knobRect = knob.getBoundingClientRect();
+      return {
+        checked: track.getAttribute('aria-checked') === 'true',
+        trackWidth: trackRect.width,
+        trackHeight: trackRect.height,
+        knobWidth: knobRect.width,
+        knobHeight: knobRect.height,
+        knobOffsetX: knobRect.left - trackRect.left,
+        centerDeltaY:
+          knobRect.top + knobRect.height / 2 - (trackRect.top + trackRect.height / 2),
+      };
+    });
+
+  const initialGeometry = await readSwitchGeometry();
+  expect(initialGeometry.trackWidth).toBeCloseTo(40, 1);
+  expect(initialGeometry.trackHeight).toBeCloseTo(22, 1);
+  expect(initialGeometry.knobWidth).toBeCloseTo(16, 1);
+  expect(initialGeometry.knobHeight).toBeCloseTo(16, 1);
+  expect(Math.abs(initialGeometry.centerDeltaY)).toBeLessThan(0.75);
+  expect(initialGeometry.knobOffsetX).toBeCloseTo(initialGeometry.checked ? 21 : 3, 1);
+
+  const effectCountBefore = Number(await canvas.getAttribute('data-render-effect-count'));
   const wasEnabled = await bloomSwitch.getAttribute('aria-checked');
   await bloomSwitch.click();
   await expect
@@ -48,6 +81,20 @@ test('Studio, Public Viewer and Embed share Playground render settings and produ
       ),
     )
     .toBe(wasEnabled !== 'true');
+  await expect
+    .poll(async () => Number(await canvas.getAttribute('data-render-effect-count')))
+    .not.toBe(effectCountBefore);
+  await expect
+    .poll(async () => {
+      const geometry = await readSwitchGeometry();
+      const expected = geometry.checked ? 21 : 3;
+      return {
+        centered: Math.abs(geometry.centerDeltaY) < 0.75,
+        aligned: Math.abs(geometry.knobOffsetX - expected) < 0.75,
+      };
+    })
+    .toEqual({ centered: true, aligned: true });
+  await expect(canvas).toHaveAttribute('data-authoring-render', 'pipeline');
 
   await section.locator('button[data-kx-theme-choice="graphite"]').click();
   await expect(page.locator('html')).toHaveAttribute('data-kx-theme', 'graphite');
