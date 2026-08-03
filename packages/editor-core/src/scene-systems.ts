@@ -1,5 +1,6 @@
 import type {
   KyxosSceneContract,
+  SceneEditorState,
   SceneNode,
   ScenePatch,
   Vec3,
@@ -151,45 +152,29 @@ export interface SceneSystemsSummary {
 
 export interface SceneSystemsCommandHost {
   getScene(): KyxosSceneContract;
-  execute(
-    label: string,
-    patch: (scene: KyxosSceneContract) => ScenePatch,
-    mergeKey?: string,
-  ): void;
+  execute(label: string, patch: (scene: KyxosSceneContract) => ScenePatch, mergeKey?: string): void;
 }
 
 const ZERO: Vec3 = { x: 0, y: 0, z: 0 };
 const ONE: Vec3 = { x: 1, y: 1, z: 1 };
+const SORT_MODES: SceneLayerSortMode[] = ['none', 'manual', 'material-mesh', 'back-to-front', 'front-to-back'];
+const COLLIDER_TYPES: SceneColliderType[] = ['box', 'sphere', 'capsule', 'cylinder', 'mesh', 'compound'];
 
-function clone<T>(value: T): T {
-  return structuredClone(value);
-}
-
-function finite(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value);
-}
-
-function clamp(value: number, minimum: number, maximum: number): number {
-  return Math.max(minimum, Math.min(maximum, value));
-}
-
-function integer(value: unknown, fallback: number): number {
-  return finite(value) ? Math.round(value) : fallback;
-}
-
+function clone<T>(value: T): T { return structuredClone(value) }
+function finite(value: unknown): value is number { return typeof value === 'number' && Number.isFinite(value) }
+function clamp(value: number, minimum: number, maximum: number): number { return Math.max(minimum, Math.min(maximum, value)) }
+function integer(value: unknown, fallback: number): number { return finite(value) ? Math.round(value) : fallback }
 function normalizeName(value: string, fallback: string): string {
   return value.normalize('NFKC').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 120) || fallback;
 }
-
 function uniqueName(values: Iterable<string>, base: string): string {
-  const reserved = new Set([...values].map((value) => value.toLocaleLowerCase()));
-  if (!reserved.has(base.toLocaleLowerCase())) return base;
+  const names = new Set([...values].map((value) => value.toLocaleLowerCase()));
+  if (!names.has(base.toLocaleLowerCase())) return base;
   let suffix = 2;
-  while (reserved.has(`${base} ${suffix}`.toLocaleLowerCase())) suffix += 1;
+  while (names.has(`${base} ${suffix}`.toLocaleLowerCase())) suffix += 1;
   return `${base} ${suffix}`;
 }
-
-function normalizeVec3(value: Vec3 | undefined, fallback: Vec3): Vec3 {
+function vec3(value: Vec3 | undefined, fallback: Vec3): Vec3 {
   return {
     x: finite(value?.x) ? value.x : fallback.x,
     y: finite(value?.y) ? value.y : fallback.y,
@@ -199,35 +184,9 @@ function normalizeVec3(value: Vec3 | undefined, fallback: Vec3): Vec3 {
 
 export function createDefaultSceneLayers(): SceneLayerDefinition[] {
   return [
-    {
-      id: 'world',
-      name: 'World',
-      enabled: true,
-      visible: true,
-      order: 0,
-      opaqueSortMode: 'material-mesh',
-      transparentSortMode: 'back-to-front',
-    },
-    {
-      id: 'skybox',
-      name: 'Skybox',
-      enabled: true,
-      visible: true,
-      order: 10,
-      opaqueSortMode: 'none',
-      transparentSortMode: 'none',
-      clearDepth: false,
-    },
-    {
-      id: 'ui',
-      name: 'UI',
-      enabled: true,
-      visible: true,
-      order: 20,
-      opaqueSortMode: 'manual',
-      transparentSortMode: 'manual',
-      clearDepth: true,
-    },
+    { id: 'world', name: 'World', enabled: true, visible: true, order: 0, opaqueSortMode: 'material-mesh', transparentSortMode: 'back-to-front' },
+    { id: 'skybox', name: 'Skybox', enabled: true, visible: true, order: 10, opaqueSortMode: 'none', transparentSortMode: 'none', clearDepth: false },
+    { id: 'ui', name: 'UI', enabled: true, visible: true, order: 20, opaqueSortMode: 'manual', transparentSortMode: 'manual', clearDepth: true },
   ];
 }
 
@@ -248,13 +207,7 @@ export function createDefaultLightmapSettings(): SceneLightmapSettings {
 }
 
 export function createDefaultPhysicsSettings(): ScenePhysicsSettings {
-  return {
-    enabled: false,
-    gravity: { x: 0, y: -9.81, z: 0 },
-    fixedTimeStep: 1 / 60,
-    maxSubSteps: 4,
-    broadphase: 'dynamic-aabb-tree',
-  };
+  return { enabled: false, gravity: { x: 0, y: -9.81, z: 0 }, fixedTimeStep: 1 / 60, maxSubSteps: 4, broadphase: 'dynamic-aabb-tree' };
 }
 
 export function createDefaultCollider(type: SceneColliderType = 'box'): SceneColliderComponent {
@@ -263,9 +216,9 @@ export function createDefaultCollider(type: SceneColliderType = 'box'): SceneCol
     type,
     center: clone(ZERO),
     size: type === 'box' ? clone(ONE) : undefined,
-    radius: type === 'sphere' || type === 'capsule' || type === 'cylinder' ? 0.5 : undefined,
-    height: type === 'capsule' || type === 'cylinder' ? 1 : undefined,
-    axis: type === 'capsule' || type === 'cylinder' ? 'y' : undefined,
+    radius: ['sphere', 'capsule', 'cylinder'].includes(type) ? 0.5 : undefined,
+    height: ['capsule', 'cylinder'].includes(type) ? 1 : undefined,
+    axis: ['capsule', 'cylinder'].includes(type) ? 'y' : undefined,
     convex: type === 'mesh' ? true : undefined,
     trigger: false,
     friction: 0.5,
@@ -275,9 +228,7 @@ export function createDefaultCollider(type: SceneColliderType = 'box'): SceneCol
   };
 }
 
-export function createDefaultRigidbody(
-  type: SceneRigidbodyComponent['type'] = 'static',
-): SceneRigidbodyComponent {
+export function createDefaultRigidbody(type: SceneRigidbodyComponent['type'] = 'static'): SceneRigidbodyComponent {
   return {
     enabled: true,
     type,
@@ -293,13 +244,7 @@ export function createDefaultRigidbody(
 }
 
 export function createDefaultNodeLightmapSettings(): SceneLightmapNodeSettings {
-  return {
-    enabled: false,
-    static: true,
-    castShadows: true,
-    receiveLightmap: true,
-    scaleMultiplier: 1,
-  };
+  return { enabled: false, static: true, castShadows: true, receiveLightmap: true, scaleMultiplier: 1 };
 }
 
 export function ensureSceneSystems(scene: KyxosSceneContract): KyxosSceneContract {
@@ -309,87 +254,48 @@ export function ensureSceneSystems(scene: KyxosSceneContract): KyxosSceneContrac
   next.editorState.batchGroups ??= [];
   next.editorState.lightmapSettings ??= createDefaultLightmapSettings();
   next.editorState.physicsSettings ??= createDefaultPhysicsSettings();
-  const layerIds = new Set(next.editorState.layers.map((layer) => layer.id));
-  const fallbackLayer = next.editorState.layers[0]?.id ?? 'world';
+  const layers = new Set(next.editorState.layers.map((layer) => layer.id));
+  const fallback = next.editorState.layers[0]?.id ?? 'world';
   for (const node of next.nodes) {
-    const valid = (node.layerIds ?? []).filter((id) => layerIds.has(id));
-    node.layerIds = valid.length ? [...new Set(valid)] : [fallbackLayer];
+    const assigned = [...new Set((node.layerIds ?? []).filter((id) => layers.has(id)))];
+    node.layerIds = assigned.length ? assigned : [fallback];
     node.batchGroupId ??= null;
   }
   return next;
 }
 
-function validateLayer(layer: SceneLayerDefinition, path: string, issues: SceneSystemsIssue[]): void {
-  if (!Number.isInteger(layer.order)) {
-    issues.push({ code: 'layer.invalid-order', severity: 'error', message: 'Layer order must be an integer.', path: `${path}/order`, layerId: layer.id });
-  }
-  if (!['none', 'manual', 'material-mesh', 'back-to-front', 'front-to-back'].includes(layer.opaqueSortMode)) {
-    issues.push({ code: 'layer.invalid-order', severity: 'error', message: 'Opaque sort mode is invalid.', path: `${path}/opaqueSortMode`, layerId: layer.id });
-  }
-  if (!['none', 'manual', 'material-mesh', 'back-to-front', 'front-to-back'].includes(layer.transparentSortMode)) {
-    issues.push({ code: 'layer.invalid-order', severity: 'error', message: 'Transparent sort mode is invalid.', path: `${path}/transparentSortMode`, layerId: layer.id });
-  }
-}
+function issue(issues: SceneSystemsIssue[], value: SceneSystemsIssue): void { issues.push(value) }
 
-function validateCollider(
-  scene: KyxosSceneContract,
-  node: SceneNode,
-  index: number,
-  issues: SceneSystemsIssue[],
-): void {
-  const collider = node.collider;
-  if (!collider) return;
+function validateCollider(scene: KyxosSceneContract, node: SceneNode, index: number, issues: SceneSystemsIssue[]): void {
+  const value = node.collider;
+  if (!value) return;
   const path = `/nodes/${index}/collider`;
-  if (!['box', 'sphere', 'capsule', 'cylinder', 'mesh', 'compound'].includes(collider.type)) {
-    issues.push({ code: 'collider.invalid-settings', severity: 'error', message: 'Collider type is invalid.', path: `${path}/type`, nodeId: node.id });
-  }
-  if (!finite(collider.friction) || collider.friction < 0 || collider.friction > 1) {
-    issues.push({ code: 'collider.invalid-settings', severity: 'error', message: 'Collider friction must be between 0 and 1.', path: `${path}/friction`, nodeId: node.id });
-  }
-  if (!finite(collider.restitution) || collider.restitution < 0 || collider.restitution > 1) {
-    issues.push({ code: 'collider.invalid-settings', severity: 'error', message: 'Collider restitution must be between 0 and 1.', path: `${path}/restitution`, nodeId: node.id });
-  }
-  if (!Number.isInteger(collider.collisionGroup) || collider.collisionGroup < 0 || collider.collisionGroup > 0xffff) {
-    issues.push({ code: 'collider.invalid-settings', severity: 'error', message: 'Collision group must be a 16-bit mask.', path: `${path}/collisionGroup`, nodeId: node.id });
-  }
-  if (!Number.isInteger(collider.collisionMask) || collider.collisionMask < 0 || collider.collisionMask > 0xffff) {
-    issues.push({ code: 'collider.invalid-settings', severity: 'error', message: 'Collision mask must be a 16-bit mask.', path: `${path}/collisionMask`, nodeId: node.id });
-  }
-  if ((collider.type === 'sphere' || collider.type === 'capsule' || collider.type === 'cylinder') && (!finite(collider.radius) || collider.radius <= 0)) {
-    issues.push({ code: 'collider.invalid-settings', severity: 'error', message: 'Collider radius must be positive.', path: `${path}/radius`, nodeId: node.id });
-  }
-  if ((collider.type === 'capsule' || collider.type === 'cylinder') && (!finite(collider.height) || collider.height <= 0)) {
-    issues.push({ code: 'collider.invalid-settings', severity: 'error', message: 'Collider height must be positive.', path: `${path}/height`, nodeId: node.id });
-  }
-  if (collider.type === 'mesh') {
-    const asset = collider.meshAssetId ? scene.assets[collider.meshAssetId] : null;
-    if (!asset || asset.kind !== 'model') {
-      issues.push({ code: 'collider.asset-missing', severity: 'error', message: 'Mesh collider must reference an existing model asset.', path: `${path}/meshAssetId`, nodeId: node.id });
-    }
+  const invalid = (message: string, suffix: string) => issue(issues, { code: 'collider.invalid-settings', severity: 'error', message, path: `${path}/${suffix}`, nodeId: node.id });
+  if (!COLLIDER_TYPES.includes(value.type)) invalid('Collider type is invalid.', 'type');
+  if (!finite(value.friction) || value.friction < 0 || value.friction > 1) invalid('Collider friction must be between 0 and 1.', 'friction');
+  if (!finite(value.restitution) || value.restitution < 0 || value.restitution > 1) invalid('Collider restitution must be between 0 and 1.', 'restitution');
+  if (!Number.isInteger(value.collisionGroup) || value.collisionGroup < 0 || value.collisionGroup > 0xffff) invalid('Collision group must be a 16-bit mask.', 'collisionGroup');
+  if (!Number.isInteger(value.collisionMask) || value.collisionMask < 0 || value.collisionMask > 0xffff) invalid('Collision mask must be a 16-bit mask.', 'collisionMask');
+  if (['sphere', 'capsule', 'cylinder'].includes(value.type) && (!finite(value.radius) || value.radius <= 0)) invalid('Collider radius must be positive.', 'radius');
+  if (['capsule', 'cylinder'].includes(value.type) && (!finite(value.height) || value.height <= 0)) invalid('Collider height must be positive.', 'height');
+  if (value.type === 'box' && (!value.size || [value.size.x, value.size.y, value.size.z].some((entry) => !finite(entry) || entry <= 0))) invalid('Box collider size must be positive.', 'size');
+  if (value.type === 'mesh') {
+    const asset = value.meshAssetId ? scene.assets[value.meshAssetId] : undefined;
+    if (!asset || asset.kind !== 'model') issue(issues, { code: 'collider.asset-missing', severity: 'error', message: 'Mesh collider must reference an existing model asset.', path: `${path}/meshAssetId`, nodeId: node.id });
   }
 }
 
 function validateRigidbody(node: SceneNode, index: number, issues: SceneSystemsIssue[]): void {
-  const rigidbody = node.rigidbody;
-  if (!rigidbody) return;
+  const value = node.rigidbody;
+  if (!value) return;
   const path = `/nodes/${index}/rigidbody`;
-  if (!['static', 'dynamic', 'kinematic'].includes(rigidbody.type)) {
-    issues.push({ code: 'rigidbody.invalid-settings', severity: 'error', message: 'Rigidbody type is invalid.', path: `${path}/type`, nodeId: node.id });
-  }
-  if (!finite(rigidbody.mass) || rigidbody.mass < 0 || (rigidbody.type === 'dynamic' && rigidbody.mass <= 0)) {
-    issues.push({ code: 'rigidbody.invalid-settings', severity: 'error', message: 'Dynamic rigidbody mass must be positive.', path: `${path}/mass`, nodeId: node.id });
-  }
-  for (const [property, value] of [
-    ['linearDamping', rigidbody.linearDamping],
-    ['angularDamping', rigidbody.angularDamping],
-  ] as const) {
-    if (!finite(value) || value < 0 || value > 1) {
-      issues.push({ code: 'rigidbody.invalid-settings', severity: 'error', message: `${property} must be between 0 and 1.`, path: `${path}/${property}`, nodeId: node.id });
-    }
-  }
-  if (!node.collider && rigidbody.type !== 'static') {
-    issues.push({ code: 'rigidbody.collider-missing', severity: 'warning', message: 'Dynamic and kinematic rigidbodies should have a collider.', path, nodeId: node.id });
-  }
+  const invalid = (message: string, suffix: string) => issue(issues, { code: 'rigidbody.invalid-settings', severity: 'error', message, path: `${path}/${suffix}`, nodeId: node.id });
+  if (!['static', 'dynamic', 'kinematic'].includes(value.type)) invalid('Rigidbody type is invalid.', 'type');
+  if (!finite(value.mass) || value.mass < 0 || (value.type === 'dynamic' && value.mass <= 0)) invalid('Dynamic rigidbody mass must be positive.', 'mass');
+  if (!finite(value.linearDamping) || value.linearDamping < 0 || value.linearDamping > 1) invalid('Linear damping must be between 0 and 1.', 'linearDamping');
+  if (!finite(value.angularDamping) || value.angularDamping < 0 || value.angularDamping > 1) invalid('Angular damping must be between 0 and 1.', 'angularDamping');
+  if (!finite(value.gravityFactor)) invalid('Gravity factor must be finite.', 'gravityFactor');
+  if (!node.collider && value.type !== 'static') issue(issues, { code: 'rigidbody.collider-missing', severity: 'warning', message: 'Dynamic and kinematic rigidbodies should have a collider.', path, nodeId: node.id });
 }
 
 export function validateSceneSystems(scene: KyxosSceneContract): SceneSystemsIssue[] {
@@ -399,16 +305,14 @@ export function validateSceneSystems(scene: KyxosSceneContract): SceneSystemsIss
   const layerNames = new Set<string>();
   layers.forEach((layer, index) => {
     const path = `/editorState/layers/${index}`;
-    if (!layer.id || layerIds.has(layer.id)) {
-      issues.push({ code: 'layer.duplicate-id', severity: 'error', message: 'Layer IDs must be unique and non-empty.', path: `${path}/id`, layerId: layer.id });
-    }
+    if (!layer.id || layerIds.has(layer.id)) issue(issues, { code: 'layer.duplicate-id', severity: 'error', message: 'Layer IDs must be unique and non-empty.', path: `${path}/id`, layerId: layer.id });
     layerIds.add(layer.id);
     const name = layer.name.trim().toLocaleLowerCase();
-    if (!name || layerNames.has(name)) {
-      issues.push({ code: 'layer.duplicate-name', severity: 'error', message: 'Layer names must be unique and non-empty.', path: `${path}/name`, layerId: layer.id });
-    }
+    if (!name || layerNames.has(name)) issue(issues, { code: 'layer.duplicate-name', severity: 'error', message: 'Layer names must be unique and non-empty.', path: `${path}/name`, layerId: layer.id });
     layerNames.add(name);
-    validateLayer(layer, path, issues);
+    if (!Number.isInteger(layer.order) || !SORT_MODES.includes(layer.opaqueSortMode) || !SORT_MODES.includes(layer.transparentSortMode)) {
+      issue(issues, { code: 'layer.invalid-order', severity: 'error', message: 'Layer order or sort mode is invalid.', path, layerId: layer.id });
+    }
   });
 
   const groups = scene.editorState?.batchGroups ?? [];
@@ -416,70 +320,47 @@ export function validateSceneSystems(scene: KyxosSceneContract): SceneSystemsIss
   const groupNames = new Set<string>();
   groups.forEach((group, index) => {
     const path = `/editorState/batchGroups/${index}`;
-    if (!group.id || groupIds.has(group.id)) {
-      issues.push({ code: 'batch.duplicate-id', severity: 'error', message: 'Batch Group IDs must be unique and non-empty.', path: `${path}/id`, batchGroupId: group.id });
-    }
+    if (!group.id || groupIds.has(group.id)) issue(issues, { code: 'batch.duplicate-id', severity: 'error', message: 'Batch Group IDs must be unique and non-empty.', path: `${path}/id`, batchGroupId: group.id });
     groupIds.add(group.id);
     const name = group.name.trim().toLocaleLowerCase();
-    if (!name || groupNames.has(name)) {
-      issues.push({ code: 'batch.duplicate-name', severity: 'error', message: 'Batch Group names must be unique and non-empty.', path: `${path}/name`, batchGroupId: group.id });
-    }
+    if (!name || groupNames.has(name)) issue(issues, { code: 'batch.duplicate-name', severity: 'error', message: 'Batch Group names must be unique and non-empty.', path: `${path}/name`, batchGroupId: group.id });
     groupNames.add(name);
-    if (!finite(group.maxAabbSize) || group.maxAabbSize <= 0) {
-      issues.push({ code: 'batch.invalid-aabb', severity: 'error', message: 'Batch Group maximum AABB size must be positive.', path: `${path}/maxAabbSize`, batchGroupId: group.id });
-    }
-    for (const layerId of group.layerIds) {
-      if (!layerIds.has(layerId)) {
-        issues.push({ code: 'batch.layer-missing', severity: 'error', message: 'Batch Group references a layer that does not exist.', path: `${path}/layerIds`, batchGroupId: group.id, layerId });
-      }
-    }
+    if (!finite(group.maxAabbSize) || group.maxAabbSize <= 0) issue(issues, { code: 'batch.invalid-aabb', severity: 'error', message: 'Batch Group maximum AABB size must be positive.', path: `${path}/maxAabbSize`, batchGroupId: group.id });
+    for (const layerId of group.layerIds) if (!layerIds.has(layerId)) issue(issues, { code: 'batch.layer-missing', severity: 'error', message: 'Batch Group references a missing layer.', path: `${path}/layerIds`, batchGroupId: group.id, layerId });
   });
 
   scene.nodes.forEach((node, index) => {
-    for (const layerId of node.layerIds ?? []) {
-      if (!layerIds.has(layerId)) {
-        issues.push({ code: 'layer.reference-missing', severity: 'error', message: 'Node references a layer that does not exist.', path: `/nodes/${index}/layerIds`, nodeId: node.id, layerId });
-      }
-    }
-    if (node.batchGroupId && !groupIds.has(node.batchGroupId)) {
-      issues.push({ code: 'batch.reference-missing', severity: 'error', message: 'Node references a Batch Group that does not exist.', path: `/nodes/${index}/batchGroupId`, nodeId: node.id, batchGroupId: node.batchGroupId });
-    }
+    for (const layerId of node.layerIds ?? []) if (!layerIds.has(layerId)) issue(issues, { code: 'layer.reference-missing', severity: 'error', message: 'Node references a missing layer.', path: `/nodes/${index}/layerIds`, nodeId: node.id, layerId });
+    if (node.batchGroupId && !groupIds.has(node.batchGroupId)) issue(issues, { code: 'batch.reference-missing', severity: 'error', message: 'Node references a missing Batch Group.', path: `/nodes/${index}/batchGroupId`, nodeId: node.id, batchGroupId: node.batchGroupId });
     validateCollider(scene, node, index, issues);
     validateRigidbody(node, index, issues);
-    if (node.lightmap) {
-      if (!finite(node.lightmap.scaleMultiplier) || node.lightmap.scaleMultiplier <= 0 || node.lightmap.scaleMultiplier > 16) {
-        issues.push({ code: 'lightmap.invalid-settings', severity: 'error', message: 'Node lightmap scale multiplier must be between 0 and 16.', path: `/nodes/${index}/lightmap/scaleMultiplier`, nodeId: node.id });
-      }
-    }
+    if (node.lightmap && (!finite(node.lightmap.scaleMultiplier) || node.lightmap.scaleMultiplier <= 0 || node.lightmap.scaleMultiplier > 16)) issue(issues, { code: 'lightmap.invalid-settings', severity: 'error', message: 'Node lightmap scale must be between 0 and 16.', path: `/nodes/${index}/lightmap/scaleMultiplier`, nodeId: node.id });
   });
 
   const lightmap = scene.editorState?.lightmapSettings;
   if (lightmap) {
-    if (!finite(lightmap.resolutionMultiplier) || lightmap.resolutionMultiplier <= 0 || lightmap.resolutionMultiplier > 8) {
-      issues.push({ code: 'lightmap.invalid-settings', severity: 'error', message: 'Lightmap resolution multiplier must be between 0 and 8.', path: '/editorState/lightmapSettings/resolutionMultiplier' });
-    }
-    if (!Number.isInteger(lightmap.maxResolution) || lightmap.maxResolution < 64 || lightmap.maxResolution > 8192) {
-      issues.push({ code: 'lightmap.invalid-settings', severity: 'error', message: 'Lightmap maximum resolution must be between 64 and 8192.', path: '/editorState/lightmapSettings/maxResolution' });
-    }
-    if (!Number.isInteger(lightmap.padding) || lightmap.padding < 0 || lightmap.padding > 64) {
-      issues.push({ code: 'lightmap.invalid-settings', severity: 'error', message: 'Lightmap padding must be between 0 and 64.', path: '/editorState/lightmapSettings/padding' });
-    }
+    const valid = finite(lightmap.resolutionMultiplier) && lightmap.resolutionMultiplier > 0 && lightmap.resolutionMultiplier <= 8
+      && Number.isInteger(lightmap.maxResolution) && lightmap.maxResolution >= 64 && lightmap.maxResolution <= 8192
+      && Number.isInteger(lightmap.padding) && lightmap.padding >= 0 && lightmap.padding <= 64
+      && Number.isInteger(lightmap.samples) && lightmap.samples > 0
+      && Number.isInteger(lightmap.directSamples) && lightmap.directSamples > 0
+      && Number.isInteger(lightmap.indirectSamples) && lightmap.indirectSamples > 0
+      && finite(lightmap.ambientBakeSpherePart) && lightmap.ambientBakeSpherePart >= 0 && lightmap.ambientBakeSpherePart <= 1;
+    if (!valid) issue(issues, { code: 'lightmap.invalid-settings', severity: 'error', message: 'Scene lightmap settings are outside supported ranges.', path: '/editorState/lightmapSettings' });
   }
 
   const physics = scene.editorState?.physicsSettings;
   if (physics) {
-    if (!finite(physics.fixedTimeStep) || physics.fixedTimeStep <= 0 || physics.fixedTimeStep > 1) {
-      issues.push({ code: 'physics.invalid-settings', severity: 'error', message: 'Physics fixed time step must be between 0 and 1 second.', path: '/editorState/physicsSettings/fixedTimeStep' });
-    }
-    if (!Number.isInteger(physics.maxSubSteps) || physics.maxSubSteps < 1 || physics.maxSubSteps > 32) {
-      issues.push({ code: 'physics.invalid-settings', severity: 'error', message: 'Physics maximum substeps must be between 1 and 32.', path: '/editorState/physicsSettings/maxSubSteps' });
-    }
+    const valid = finite(physics.gravity.x) && finite(physics.gravity.y) && finite(physics.gravity.z)
+      && finite(physics.fixedTimeStep) && physics.fixedTimeStep > 0 && physics.fixedTimeStep <= 1
+      && Number.isInteger(physics.maxSubSteps) && physics.maxSubSteps >= 1 && physics.maxSubSteps <= 32
+      && ['dynamic-aabb-tree', 'axis-sweep', 'simple'].includes(physics.broadphase);
+    if (!valid) issue(issues, { code: 'physics.invalid-settings', severity: 'error', message: 'Scene physics settings are invalid.', path: '/editorState/physicsSettings' });
   }
   return issues;
 }
 
 export function summarizeSceneSystems(scene: KyxosSceneContract): SceneSystemsSummary {
-  const issues = validateSceneSystems(scene);
   return {
     layers: scene.editorState?.layers?.length ?? 0,
     batchGroups: scene.editorState?.batchGroups?.length ?? 0,
@@ -488,50 +369,32 @@ export function summarizeSceneSystems(scene: KyxosSceneContract): SceneSystemsSu
     colliders: scene.nodes.filter((node) => Boolean(node.collider)).length,
     rigidbodies: scene.nodes.filter((node) => Boolean(node.rigidbody)).length,
     lightmappedNodes: scene.nodes.filter((node) => node.lightmap?.enabled).length,
-    issues: issues.length,
+    issues: validateSceneSystems(scene).length,
   };
 }
 
 export class SceneSystemsService extends EventTarget {
-  constructor(
-    private readonly host: SceneSystemsCommandHost,
-    private readonly createId: () => string = () => crypto.randomUUID(),
-  ) {
-    super();
-  }
+  constructor(private readonly host: SceneSystemsCommandHost, private readonly createId: () => string = () => crypto.randomUUID()) { super() }
 
   ensure(): void {
     const scene = this.host.getScene();
     const next = ensureSceneSystems(scene);
-    if (JSON.stringify(scene.editorState) === JSON.stringify(next.editorState)
-      && JSON.stringify(scene.nodes) === JSON.stringify(next.nodes)) return;
+    if (JSON.stringify(scene.editorState) === JSON.stringify(next.editorState) && JSON.stringify(scene.nodes) === JSON.stringify(next.nodes)) return;
     this.host.execute('Initialize scene systems', () => [
-      {
-        op: scene.editorState ? 'replace' : 'add',
-        path: '/editorState',
-        value: next.editorState,
-      },
+      { op: scene.editorState ? 'replace' : 'add', path: '/editorState', value: next.editorState },
       { op: 'replace', path: '/nodes', value: next.nodes },
     ]);
-    this.emit('change', { type: 'ensure' });
+    this.emit('ensure');
   }
 
   addLayer(name = 'Layer'): string {
     const id = this.createId();
     this.host.execute('Add layer', (scene) => {
       const layers = clone(scene.editorState?.layers ?? createDefaultSceneLayers());
-      layers.push({
-        id,
-        name: uniqueName(layers.map((layer) => layer.name), normalizeName(name, 'Layer')),
-        enabled: true,
-        visible: true,
-        order: layers.length ? Math.max(...layers.map((layer) => layer.order)) + 10 : 0,
-        opaqueSortMode: 'material-mesh',
-        transparentSortMode: 'back-to-front',
-      });
+      layers.push({ id, name: uniqueName(layers.map((entry) => entry.name), normalizeName(name, 'Layer')), enabled: true, visible: true, order: layers.length ? Math.max(...layers.map((entry) => entry.order)) + 10 : 0, opaqueSortMode: 'material-mesh', transparentSortMode: 'back-to-front' });
       return this.editorStatePatch(scene, { layers });
     });
-    this.emit('change', { type: 'layer:add', id });
+    this.emit('layer:add', { id });
     return id;
   }
 
@@ -550,61 +413,51 @@ export class SceneSystemsService extends EventTarget {
       if (changes.metadata !== undefined) layer.metadata = changes.metadata ? clone(changes.metadata) : undefined;
       return this.editorStatePatch(scene, { layers });
     }, `layer:${id}`);
-    this.emit('change', { type: 'layer:update', id });
+    this.emit('layer:update', { id });
   }
 
   removeLayer(id: string, replacementId?: string): void {
     this.host.execute('Delete layer', (scene) => {
       const layers = clone(scene.editorState?.layers ?? createDefaultSceneLayers());
       if (layers.length <= 1) throw new Error('A scene must keep at least one layer.');
-      const replacement = replacementId && replacementId !== id
-        ? layers.find((layer) => layer.id === replacementId)?.id
-        : layers.find((layer) => layer.id !== id)?.id;
+      const replacement = replacementId && replacementId !== id && layers.some((entry) => entry.id === replacementId)
+        ? replacementId
+        : layers.find((entry) => entry.id !== id)?.id;
       if (!replacement) throw new Error('A replacement layer is required.');
-      const nodes = clone(scene.nodes).map((node) => ({
-        ...node,
-        layerIds: [...new Set((node.layerIds ?? []).map((layerId) => layerId === id ? replacement : layerId))],
-      }));
-      const batchGroups = clone(scene.editorState?.batchGroups ?? []).map((group) => ({
-        ...group,
-        layerIds: [...new Set(group.layerIds.map((layerId) => layerId === id ? replacement : layerId))],
-      }));
+      const nodes = clone(scene.nodes).map((node) => ({ ...node, layerIds: [...new Set((node.layerIds ?? []).map((layerId) => layerId === id ? replacement : layerId))] }));
+      const batchGroups = clone(scene.editorState?.batchGroups ?? []).map((group) => ({ ...group, layerIds: [...new Set(group.layerIds.map((layerId) => layerId === id ? replacement : layerId))] }));
       return [
-        ...this.editorStatePatch(scene, { layers: layers.filter((layer) => layer.id !== id), batchGroups }),
+        ...this.editorStatePatch(scene, { layers: layers.filter((entry) => entry.id !== id), batchGroups }),
         { op: 'replace', path: '/nodes', value: nodes },
       ];
     });
-    this.emit('change', { type: 'layer:remove', id });
+    this.emit('layer:remove', { id });
   }
 
   reorderLayers(ids: string[]): void {
     this.host.execute('Reorder layers', (scene) => {
       const layers = clone(scene.editorState?.layers ?? createDefaultSceneLayers());
-      const byId = new Map(layers.map((layer) => [layer.id, layer]));
-      if (ids.length !== layers.length || ids.some((id) => !byId.has(id)) || new Set(ids).size !== ids.length) {
-        throw new Error('Layer order must contain every layer exactly once.');
-      }
-      const ordered = ids.map((id, index) => ({ ...byId.get(id)!, order: index * 10 }));
-      return this.editorStatePatch(scene, { layers: ordered });
+      const byId = new Map(layers.map((entry) => [entry.id, entry]));
+      if (ids.length !== layers.length || new Set(ids).size !== ids.length || ids.some((id) => !byId.has(id))) throw new Error('Layer order must contain every layer exactly once.');
+      return this.editorStatePatch(scene, { layers: ids.map((id, index) => ({ ...byId.get(id)!, order: index * 10 })) });
     });
-    this.emit('change', { type: 'layer:reorder', ids: [...ids] });
+    this.emit('layer:reorder', { ids });
   }
 
   assignLayers(nodeIds: Iterable<string>, layerIds: Iterable<string>): void {
     const selected = new Set(nodeIds);
     const assigned = [...new Set(layerIds)];
     this.host.execute('Assign node layers', (scene) => {
-      const valid = new Set((scene.editorState?.layers ?? createDefaultSceneLayers()).map((layer) => layer.id));
+      const valid = new Set((scene.editorState?.layers ?? createDefaultSceneLayers()).map((entry) => entry.id));
       if (!assigned.length || assigned.some((id) => !valid.has(id))) throw new Error('Every assigned layer must exist.');
-      return scene.nodes.flatMap((node, index) => selected.has(node.id)
-        ? [{
-            op: node.layerIds == null ? 'add' as const : 'replace' as const,
-            path: `/nodes/${index}/layerIds`,
-            value: assigned,
-          }]
-        : []);
+      const patch: ScenePatch = [];
+      scene.nodes.forEach((node, index) => {
+        if (!selected.has(node.id)) return;
+        patch.push({ op: node.layerIds == null ? 'add' : 'replace', path: `/nodes/${index}/layerIds`, value: assigned });
+      });
+      return patch;
     });
-    this.emit('change', { type: 'node:layers', nodeIds: [...selected], layerIds: assigned });
+    this.emit('node:layers', { nodeIds: [...selected], layerIds: assigned });
   }
 
   addBatchGroup(name = 'Batch Group'): string {
@@ -612,19 +465,10 @@ export class SceneSystemsService extends EventTarget {
     this.host.execute('Add Batch Group', (scene) => {
       const groups = clone(scene.editorState?.batchGroups ?? []);
       const layers = scene.editorState?.layers ?? createDefaultSceneLayers();
-      groups.push({
-        id,
-        name: uniqueName(groups.map((group) => group.name), normalizeName(name, 'Batch Group')),
-        dynamic: false,
-        enabled: true,
-        maxAabbSize: 100,
-        layerIds: [layers[0]?.id ?? 'world'],
-        castShadow: true,
-        receiveShadow: true,
-      });
+      groups.push({ id, name: uniqueName(groups.map((entry) => entry.name), normalizeName(name, 'Batch Group')), dynamic: false, enabled: true, maxAabbSize: 100, layerIds: [layers[0]?.id ?? 'world'], castShadow: true, receiveShadow: true });
       return this.editorStatePatch(scene, { batchGroups: groups });
     });
-    this.emit('change', { type: 'batch:add', id });
+    this.emit('batch:add', { id });
     return id;
   }
 
@@ -643,125 +487,88 @@ export class SceneSystemsService extends EventTarget {
       if (changes.metadata !== undefined) group.metadata = changes.metadata ? clone(changes.metadata) : undefined;
       return this.editorStatePatch(scene, { batchGroups: groups });
     }, `batch:${id}`);
-    this.emit('change', { type: 'batch:update', id });
+    this.emit('batch:update', { id });
   }
 
   removeBatchGroup(id: string): void {
-    this.host.execute('Delete Batch Group', (scene) => [
-      ...this.editorStatePatch(scene, {
-        batchGroups: (scene.editorState?.batchGroups ?? []).filter((group) => group.id !== id),
-      }),
-      ...scene.nodes.flatMap((node, index) => node.batchGroupId === id
-        ? [{ op: 'replace' as const, path: `/nodes/${index}/batchGroupId`, value: null }]
-        : []),
-    ]);
-    this.emit('change', { type: 'batch:remove', id });
+    this.host.execute('Delete Batch Group', (scene) => {
+      const patch: ScenePatch = this.editorStatePatch(scene, { batchGroups: (scene.editorState?.batchGroups ?? []).filter((entry) => entry.id !== id) });
+      scene.nodes.forEach((node, index) => {
+        if (node.batchGroupId === id) patch.push({ op: 'replace', path: `/nodes/${index}/batchGroupId`, value: null });
+      });
+      return patch;
+    });
+    this.emit('batch:remove', { id });
   }
 
   assignBatchGroup(nodeIds: Iterable<string>, groupId: string | null): void {
     const selected = new Set(nodeIds);
     this.host.execute('Assign Batch Group', (scene) => {
-      if (groupId && !(scene.editorState?.batchGroups ?? []).some((group) => group.id === groupId)) {
-        throw new Error('Batch Group not found.');
-      }
-      return scene.nodes.flatMap((node, index) => selected.has(node.id)
-        ? [{
-            op: node.batchGroupId === undefined ? 'add' as const : 'replace' as const,
-            path: `/nodes/${index}/batchGroupId`,
-            value: groupId,
-          }]
-        : []);
+      if (groupId && !(scene.editorState?.batchGroups ?? []).some((entry) => entry.id === groupId)) throw new Error('Batch Group not found.');
+      const patch: ScenePatch = [];
+      scene.nodes.forEach((node, index) => {
+        if (!selected.has(node.id)) return;
+        patch.push({ op: node.batchGroupId === undefined ? 'add' : 'replace', path: `/nodes/${index}/batchGroupId`, value: groupId });
+      });
+      return patch;
     });
-    this.emit('change', { type: 'node:batch', nodeIds: [...selected], groupId });
+    this.emit('node:batch', { nodeIds: [...selected], groupId });
   }
 
-  setCollider(nodeIds: Iterable<string>, collider: SceneColliderComponent | null): void {
-    this.setNodeComponent('collider', nodeIds, collider, 'Set Collider');
+  setCollider(nodeIds: Iterable<string>, value: SceneColliderComponent | null): void { this.setNodeComponent('collider', nodeIds, value, 'Set Collider') }
+  setRigidbody(nodeIds: Iterable<string>, value: SceneRigidbodyComponent | null): void { this.setNodeComponent('rigidbody', nodeIds, value, 'Set Rigidbody') }
+  setNodeLightmap(nodeIds: Iterable<string>, value: SceneLightmapNodeSettings | null): void { this.setNodeComponent('lightmap', nodeIds, value, 'Set Node Lightmap') }
+
+  setLightmapSettings(changes: Partial<SceneLightmapSettings>): void {
+    this.host.execute('Edit Lightmap Settings', (scene) => this.editorStatePatch(scene, { lightmapSettings: { ...(scene.editorState?.lightmapSettings ?? createDefaultLightmapSettings()), ...clone(changes) } }), 'scene:lightmap-settings');
+    this.emit('lightmap:settings');
   }
 
-  setRigidbody(nodeIds: Iterable<string>, rigidbody: SceneRigidbodyComponent | null): void {
-    this.setNodeComponent('rigidbody', nodeIds, rigidbody, 'Set Rigidbody');
-  }
-
-  setNodeLightmap(nodeIds: Iterable<string>, lightmap: SceneLightmapNodeSettings | null): void {
-    this.setNodeComponent('lightmap', nodeIds, lightmap, 'Set Node Lightmap');
-  }
-
-  setLightmapSettings(settings: Partial<SceneLightmapSettings>): void {
-    this.host.execute('Edit Lightmap Settings', (scene) => {
-      const value = { ...(scene.editorState?.lightmapSettings ?? createDefaultLightmapSettings()), ...clone(settings) };
-      return this.editorStatePatch(scene, { lightmapSettings: value });
-    }, 'scene:lightmap-settings');
-    this.emit('change', { type: 'lightmap:settings' });
-  }
-
-  setPhysicsSettings(settings: Partial<ScenePhysicsSettings>): void {
+  setPhysicsSettings(changes: Partial<ScenePhysicsSettings>): void {
     this.host.execute('Edit Physics Settings', (scene) => {
-      const value = { ...(scene.editorState?.physicsSettings ?? createDefaultPhysicsSettings()), ...clone(settings) };
-      if (settings.gravity) value.gravity = normalizeVec3(settings.gravity, value.gravity);
+      const value = { ...(scene.editorState?.physicsSettings ?? createDefaultPhysicsSettings()), ...clone(changes) };
+      if (changes.gravity) value.gravity = vec3(changes.gravity, value.gravity);
       return this.editorStatePatch(scene, { physicsSettings: value });
     }, 'scene:physics-settings');
-    this.emit('change', { type: 'physics:settings' });
+    this.emit('physics:settings');
   }
 
-  private setNodeComponent<K extends 'collider' | 'rigidbody' | 'lightmap'>(
-    key: K,
-    nodeIds: Iterable<string>,
-    value: SceneNode[K] | null,
-    label: string,
-  ): void {
+  private setNodeComponent<K extends 'collider' | 'rigidbody' | 'lightmap'>(key: K, nodeIds: Iterable<string>, value: SceneNode[K] | null, label: string): void {
     const selected = new Set(nodeIds);
-    this.host.execute(label, (scene) => scene.nodes.flatMap((node, index) => {
-      if (!selected.has(node.id)) return [];
-      if (value == null) return node[key] == null ? [] : [{ op: 'remove' as const, path: `/nodes/${index}/${key}` }];
-      return [{
-        op: node[key] == null ? 'add' as const : 'replace' as const,
-        path: `/nodes/${index}/${key}`,
-        value: clone(value),
-      }];
-    }));
-    this.emit('change', { type: `node:${key}`, nodeIds: [...selected] });
+    this.host.execute(label, (scene) => {
+      const patch: ScenePatch = [];
+      scene.nodes.forEach((node, index) => {
+        if (!selected.has(node.id)) return;
+        if (value == null) {
+          if (node[key] != null) patch.push({ op: 'remove', path: `/nodes/${index}/${key}` });
+          return;
+        }
+        patch.push({ op: node[key] == null ? 'add' : 'replace', path: `/nodes/${index}/${key}`, value: clone(value) });
+      });
+      return patch;
+    });
+    this.emit(`node:${key}`, { nodeIds: [...selected] });
   }
 
-  private editorStatePatch(
-    scene: KyxosSceneContract,
-    changes: Partial<NonNullable<KyxosSceneContract['editorState']>>,
-  ): ScenePatch {
-    const value = { ...(scene.editorState ?? {}), ...clone(changes) };
-    return [{
-      op: scene.editorState ? 'replace' : 'add',
-      path: '/editorState',
-      value,
-    }];
+  private editorStatePatch(scene: KyxosSceneContract, changes: Partial<SceneEditorState>): ScenePatch {
+    return [{ op: scene.editorState ? 'replace' : 'add', path: '/editorState', value: { ...(scene.editorState ?? {}), ...clone(changes) } }];
   }
 
-  private emit(type: string, detail: unknown): void {
-    this.dispatchEvent(new CustomEvent(type, { detail: clone(detail) }));
+  private emit(type: string, detail: unknown = {}): void {
+    this.dispatchEvent(new CustomEvent('change', { detail: { type, ...clone(detail as Record<string, unknown>) } }));
   }
 }
 
-export function effectiveNodeLayers(
-  scene: KyxosSceneContract,
-  node: SceneNode,
-): SceneLayerDefinition[] {
+export function effectiveNodeLayers(scene: KyxosSceneContract, node: SceneNode): SceneLayerDefinition[] {
   const layers = scene.editorState?.layers ?? createDefaultSceneLayers();
-  const ids = node.layerIds?.length ? new Set(node.layerIds) : new Set([layers[0]?.id]);
-  return layers
-    .filter((layer) => ids.has(layer.id) && layer.enabled)
-    .sort((left, right) => left.order - right.order);
+  const ids = new Set(node.layerIds?.length ? node.layerIds : [layers[0]?.id]);
+  return layers.filter((layer) => ids.has(layer.id) && layer.enabled).sort((left, right) => left.order - right.order);
 }
 
-export function batchGroupMembers(
-  scene: KyxosSceneContract,
-  groupId: string,
-): SceneNode[] {
+export function batchGroupMembers(scene: KyxosSceneContract, groupId: string): SceneNode[] {
   return scene.nodes.filter((node) => node.batchGroupId === groupId).map(clone);
 }
 
-export function collisionPairsEnabled(
-  left: SceneColliderComponent,
-  right: SceneColliderComponent,
-): boolean {
-  return (left.collisionMask & right.collisionGroup) !== 0
-    && (right.collisionMask & left.collisionGroup) !== 0;
+export function collisionPairsEnabled(left: SceneColliderComponent, right: SceneColliderComponent): boolean {
+  return (left.collisionMask & right.collisionGroup) !== 0 && (right.collisionMask & left.collisionGroup) !== 0;
 }
