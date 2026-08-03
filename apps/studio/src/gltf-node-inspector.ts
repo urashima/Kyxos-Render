@@ -140,24 +140,84 @@ function output(value: string): HTMLOutputElement {
   return element;
 }
 
-function renderMorphTargets(options: GltfNodeInspectorOptions): void {
-  const rows = morphTargetRows(options.nodes);
-  if (!rows.length) return;
+function createMorphSlider(
+  options: GltfNodeInspectorOptions,
+  row: MorphTargetRow,
+  number?: HTMLInputElement,
+): HTMLInputElement {
+  const slider = document.createElement('input');
+  slider.type = 'range';
+  slider.min = '-1';
+  slider.max = '1';
+  slider.step = '0.001';
+  slider.value = String(row.value);
+  slider.disabled = !options.canEdit;
+  slider.setAttribute('aria-label', `${row.label} morph weight`);
+
+  slider.addEventListener('input', () => {
+    const value = Number(slider.value);
+    if (!Number.isFinite(value)) return;
+    if (number) number.value = String(value);
+    options.applyPatch(
+      `Morph target: ${row.label}`,
+      morphWeightPatch(options.scene, row.supportedNodeIds, row.index, value),
+      `morph:${row.supportedNodeIds.join(',')}:${row.index}`,
+    );
+  });
+  return slider;
+}
+
+function resetMorphButton(options: GltfNodeInspectorOptions): HTMLButtonElement {
+  const reset = document.createElement('button');
+  reset.type = 'button';
+  reset.className = 'secondary mini gltf-node-section gltf-morph-reset';
+  reset.textContent = 'Reset imported weights';
+  reset.disabled = !options.canEdit;
+  reset.addEventListener('click', () => options.applyPatch(
+    'Reset morph targets',
+    resetMorphWeightsPatch(options.scene, options.nodes.map((node) => node.id)),
+  ));
+  return reset;
+}
+
+function enhanceSchemaMorphTargets(
+  options: GltfNodeInspectorOptions,
+  rows: MorphTargetRow[],
+): boolean {
+  const root = options.container.querySelector<HTMLElement>(
+    '[data-schema-section="morph-targets"]',
+  );
+  if (!root) return false;
+
+  root.dataset.morphTargetCount = String(rows.length);
+  const fields = Array.from(root.querySelectorAll<HTMLElement>('.schema-field'));
+  for (const row of rows) {
+    const schemaField = fields.find(
+      (candidate) => candidate.querySelector('.schema-field-label')?.textContent?.trim() === row.label,
+    );
+    const value = schemaField?.querySelector<HTMLElement>('.schema-field-value');
+    const number = value?.querySelector<HTMLInputElement>('input[type="number"]');
+    if (!value || !number) continue;
+
+    const slider = createMorphSlider(options, row, number);
+    slider.className = 'gltf-node-section gltf-morph-slider';
+    value.prepend(slider);
+  }
+
+  root.append(resetMorphButton(options));
+  return true;
+}
+
+function renderStandaloneMorphTargets(
+  options: GltfNodeInspectorOptions,
+  rows: MorphTargetRow[],
+): void {
   const root = section('Morph Targets');
   root.dataset.morphTargetCount = String(rows.length);
 
   for (const row of rows) {
     const controls = document.createElement('div');
     controls.className = 'morph-target-controls';
-    const slider = document.createElement('input');
-    slider.type = 'range';
-    slider.min = '-1';
-    slider.max = '1';
-    slider.step = '0.001';
-    slider.value = String(row.value);
-    slider.disabled = !options.canEdit;
-    slider.setAttribute('aria-label', `${row.label} morph weight`);
-
     const number = document.createElement('input');
     number.type = 'number';
     number.step = '0.001';
@@ -166,33 +226,33 @@ function renderMorphTargets(options: GltfNodeInspectorOptions): void {
     number.disabled = !options.canEdit;
     number.setAttribute('aria-label', `${row.label} morph value`);
 
-    const commit = (value: number) => {
+    const slider = createMorphSlider(options, row, number);
+    number.addEventListener('input', () => {
+      const value = Number(number.value);
       if (!Number.isFinite(value)) return;
       slider.value = String(Math.max(-1, Math.min(1, value)));
-      number.value = String(value);
       options.applyPatch(
         `Morph target: ${row.label}`,
         morphWeightPatch(options.scene, row.supportedNodeIds, row.index, value),
         `morph:${row.supportedNodeIds.join(',')}:${row.index}`,
       );
-    };
-    slider.addEventListener('input', () => commit(Number(slider.value)));
-    number.addEventListener('input', () => commit(Number(number.value)));
+    });
     controls.append(slider, number);
     root.append(field(row.label, controls));
   }
 
-  const reset = document.createElement('button');
-  reset.type = 'button';
-  reset.className = 'secondary mini';
-  reset.textContent = 'Reset imported weights';
-  reset.disabled = !options.canEdit;
-  reset.addEventListener('click', () => options.applyPatch(
-    'Reset morph targets',
-    resetMorphWeightsPatch(options.scene, options.nodes.map((node) => node.id)),
-  ));
+  const reset = resetMorphButton(options);
+  reset.classList.remove('gltf-node-section');
   root.append(reset);
   options.container.append(root);
+}
+
+function renderMorphTargets(options: GltfNodeInspectorOptions): void {
+  const rows = morphTargetRows(options.nodes);
+  if (!rows.length) return;
+  if (!enhanceSchemaMorphTargets(options, rows)) {
+    renderStandaloneMorphTargets(options, rows);
+  }
 }
 
 function renderSkin(options: GltfNodeInspectorOptions): void {
