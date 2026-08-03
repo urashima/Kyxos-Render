@@ -35,22 +35,44 @@ test('imported scene saves durably, publishes, opens and reloads from the public
   );
   await expect(page.locator('.save-state')).toHaveText('Saved', { timeout: 60_000 });
 
-  // Reproduce the mobile failure where a concurrent Draft/Workspace save
-  // overwrote the just-completed GLB asset metadata. The binary Blob remains
-  // in IndexedDB, so Publish must repair the lightweight asset index from
-  // the Scene Contract instead of requiring a reimport.
-  const simulatedLostAsset = await page.evaluate(() => {
+  // Reproduce the real legacy/mobile failure: the Scene Contract contains a
+  // truncated hash padded with zeros while the Blob remains stored under the
+  // original SHA-256 key and the lightweight asset index is missing.
+  const simulatedLostAsset = await page.evaluate(async () => {
     const api = (globalThis as any).kyxosStudio?.api;
     const scene = api.getScene();
-    const asset = Object.values(scene.assets)[0] as any;
+    const [assetKey, asset] = Object.entries(scene.assets)[0] as [string, any];
+    const originalHash = asset?.contentHash as string;
+    if (!asset || !originalHash) throw new Error('Imported asset is unavailable.');
+
+    const paddedCandidate = `${originalHash.slice(0, 56)}00000000`;
+    const legacyHash = paddedCandidate === originalHash
+      ? `${originalHash.slice(0, 56)}ffffffff`
+      : paddedCandidate;
+    const pointer = assetKey.replace(/~/g, '~0').replace(/\//g, '~1');
+    api.applyPatch('Simulate legacy padded asset hash', [
+      { op: 'replace', path: `/assets/${pointer}/contentHash`, value: legacyHash },
+      { op: 'replace', path: `/assets/${pointer}/uri`, value: `asset://${legacyHash}` },
+    ]);
+
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('kyxos-assets', 1);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const originalBlobExists = await new Promise<boolean>((resolve, reject) => {
+      const request = db.transaction('blobs').objectStore('blobs').get(originalHash);
+      request.onsuccess = () => resolve(request.result instanceof Blob);
+      request.onerror = () => reject(request.error);
+    });
+    db.close();
+    if (!originalBlobExists) throw new Error('Original content-addressed Blob is missing.');
+
     const raw = localStorage.getItem('kyxos-studio-local-v1') ?? '{}';
     const state = JSON.parse(raw);
-    if (!asset || !state.assets?.[asset.id]) {
-      throw new Error('Imported asset metadata was not durably registered.');
-    }
-    delete state.assets[asset.id];
+    delete state.assets?.[assetKey];
     localStorage.setItem('kyxos-studio-local-v1', JSON.stringify(state));
-    return { id: asset.id, hash: asset.contentHash };
+    return { id: assetKey, hash: legacyHash, originalHash };
   });
 
   // This payload exceeds the practical localStorage allowance once duplicated
@@ -80,7 +102,26 @@ test('imported scene saves durably, publishes, opens and reloads from the public
     id: simulatedLostAsset.id,
     hash: simulatedLostAsset.hash,
     completed: true,
+    metadata: {
+      actualContentHash: simulatedLostAsset.originalHash,
+    },
   });
+
+  const aliasExists = await page.evaluate(async ({ hash }) => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('kyxos-assets', 1);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const exists = await new Promise<boolean>((resolve, reject) => {
+      const request = db.transaction('blobs').objectStore('blobs').get(hash);
+      request.onsuccess = () => resolve(request.result instanceof Blob);
+      request.onerror = () => reject(request.error);
+    });
+    db.close();
+    return exists;
+  }, simulatedLostAsset);
+  expect(aliasExists).toBe(true);
 
   const localIndex = await page.evaluate(() => {
     const raw = localStorage.getItem('kyxos-studio-local-v1') ?? '';
