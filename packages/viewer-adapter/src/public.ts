@@ -1,5 +1,8 @@
 export * from './index';
-export type { EditorViewportCommand } from './editorViewportCommandBridge';
+export type {
+  EditorCameraBookmarkResponse,
+  EditorViewportCommand,
+} from './editorViewportCommandBridge';
 export type { TransformPivot } from './transformPivot';
 export type { ViewportHelperSettings } from './viewportHelpers';
 import './boxSelection';
