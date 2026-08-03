@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   GizmoDragSession,
   GizmoTransformService,
-  assertVerticalConsistency as _unused,
   boxWireframeLines,
   buildAudioRangeGizmo,
   buildCameraGizmo,
