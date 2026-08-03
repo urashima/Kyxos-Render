@@ -1,0 +1,37 @@
+name: Agent patch save publish loading
+
+on:
+  push:
+    branches: [agent/fix-save-publish-public-loading-v2]
+    paths:
+      - 'scripts/patch-save-publish-public-loading.mjs'
+      - '.github/workflows/agent-patch-save-publish-loading.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repair branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/fix-save-publish-public-loading-v2
+          fetch-depth: 0
+      - name: Patch Studio source
+        run: node scripts/patch-save-publish-public-loading.mjs
+      - name: Commit generated source update
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo 'Studio source is already patched.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add apps/studio/src/main.ts
+          git commit -m 'fix(studio): make import save and publish transactional'
+          git push origin HEAD:agent/fix-save-publish-public-loading-v2
