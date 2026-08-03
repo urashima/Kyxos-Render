@@ -13,6 +13,7 @@ import './editorRenderModes';
 import { KyxosViewer } from './KyxosViewer';
 import { installEditorSceneModeExtension } from './editorSceneMode';
 import { installGltfAuthoringFidelityExtension } from './gltfAuthoringFidelity';
+import { installGltfTextureDiagnostics } from './gltfTextureDiagnostics';
 import { installScreenSpaceSSSExtension } from './materials/screenSpaceSSS';
 import { installScreenSpaceSSSDebugExtension } from './materials/screenSpaceSSSDebug';
 import { installViewerMetricsBroadcast } from './metricsBroadcast';
@@ -33,6 +34,7 @@ installNonBlockingVisibilityRecovery(KyxosViewer);
 // so authored scenes keep their exact hierarchy, skin bind space and materials.
 installEditorSceneModeExtension(KyxosViewer);
 installGltfAuthoringFidelityExtension(KyxosViewer);
+installGltfTextureDiagnostics(KyxosViewer);
 
 // Install the procedural study before the SSS load wrapper so loading the study
 // still restores and reapplies material masks through the normal Viewer API.
