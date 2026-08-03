@@ -126,7 +126,7 @@ describe('Scene systems command service', () => {
     const layerId = service.addLayer('Gameplay');
     expect(layerId).toBe('custom-layer');
     service.assignLayers(['root', 'child'], [layerId]);
-    expect(state.getScene().nodes.every((node) => node.layerIds).every(Boolean)).toBe(true);
+    expect(state.getScene().nodes.every((node) => Boolean(node.layerIds?.length))).toBe(true);
     expect(state.getScene().nodes.map((node) => node.layerIds)).toEqual([[layerId], [layerId]]);
 
     service.updateLayer(layerId, { name: 'Actors', visible: false, order: 5 });
