@@ -1,0 +1,294 @@
+name: Apply PR32 Live Blob Recovery
+
+on:
+  push:
+    branches: [agent/fix-save-publish-public-loading-v2]
+    paths:
+      - '.github/workflows/pr32-recover-live-import-blob.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/fix-save-publish-public-loading-v2
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply live manifest Blob recovery
+        run: |
+          python <<'PY'
+          from pathlib import Path
+
+          api = Path('packages/api-client/src/index.ts')
+          text = api.read_text()
+          old = """    getManifest(assetIds: string[]): Promise<AssetManifest>;
+              getBlobUrl(hash: string): Promise<string | null>;
+            };
+          """
+          new = """    getManifest(assetIds: string[]): Promise<AssetManifest>;
+              getBlobUrl(hash: string): Promise<string | null>;
+              restoreBlob?(hash: string, blob: Blob): Promise<void>;
+            };
+          """
+          if old not in text:
+              raise SystemExit('API asset interface marker not found')
+          text = text.replace(old, new, 1)
+
+          old = """    getBlobUrl: async (hash: string): Promise<string | null> => {
+                const blob = await getBlob(hash);
+                return blob ? URL.createObjectURL(blob) : null;
+              },
+            };
+          """
+          new = """    getBlobUrl: async (hash: string): Promise<string | null> => {
+                const blob = await getBlob(hash);
+                return blob ? URL.createObjectURL(blob) : null;
+              },
+              restoreBlob: async (hash: string, blob: Blob): Promise<void> => {
+                if (!hash || !blob.size) throw new Error('Recovered asset Blob is empty.');
+                await putBlob(hash, blob);
+                const persisted = await getBlob(hash);
+                if (!persisted || persisted.size !== blob.size) {
+                  throw new Error('Recovered asset Blob could not be verified after persistence.');
+                }
+              },
+            };
+          """
+          if old not in text:
+              raise SystemExit('Local assets getBlobUrl marker not found')
+          text = text.replace(old, new, 1)
+          api.write_text(text)
+
+          durable = Path('packages/api-client/src/durable.ts')
+          text = durable.read_text()
+          old = """    getBlobUrl: async (hash) => {
+                await ready;
+                return exclusive(() => originalAssets.getBlobUrl(hash));
+              },
+            };
+          """
+          new = """    getBlobUrl: async (hash) => {
+                await ready;
+                return exclusive(() => originalAssets.getBlobUrl(hash));
+              },
+              restoreBlob: async (hash, blob) => {
+                await ready;
+                if (!originalAssets.restoreBlob) {
+                  throw new Error('This asset provider cannot restore local Blobs.');
+                }
+                await exclusive(() => originalAssets.restoreBlob!(hash, blob));
+              },
+            };
+          """
+          if old not in text:
+              raise SystemExit('Durable assets getBlobUrl marker not found')
+          text = text.replace(old, new, 1)
+          durable.write_text(text)
+
+          studio = Path('apps/studio/src/main.ts')
+          text = studio.read_text()
+          marker = """  async function flushDraftOrThrow(reason: string): Promise<number> {
+              await autosave.flush();
+              if (autosave.state !== 'Saved') {
+                throw new Error(`Draft save failed before ${reason}: ${autosave.state}.`);
+              }
+              const persistedRevision = await client.drafts.getRevision(project.id);
+              if (persistedRevision !== autosave.revision) {
+                throw new Error(
+                  `Draft revision mismatch before ${reason}: local ${autosave.revision}, persisted ${persistedRevision}.`,
+                );
+              }
+              globalThis.document.documentElement.dataset.durableDraftRevision = String(persistedRevision);
+              return persistedRevision;
+            }
+          """
+          replacement = marker + """
+
+            async function restoreVisibleAssetBlobs(reason: string): Promise<void> {
+              if (!client.assets.restoreBlob) return;
+              for (const asset of Object.values(document.value.assets)) {
+                const persistedUrl = await client.assets.getBlobUrl(asset.contentHash);
+                if (persistedUrl) {
+                  URL.revokeObjectURL(persistedUrl);
+                  continue;
+                }
+
+                const liveUrl = manifest.assets[asset.uri]
+                  ?? manifest.assets[`asset://${asset.contentHash}`];
+                if (!liveUrl) continue;
+
+                let blob: Blob;
+                try {
+                  const response = await fetch(liveUrl);
+                  if (!response.ok) {
+                    throw new Error(`Live asset response failed (${response.status}).`);
+                  }
+                  blob = await response.blob();
+                } catch (error) {
+                  throw new Error(
+                    `Visible asset ${asset.name ?? asset.id} could not be recovered before ${reason}: ${errorMessage(error)}`,
+                  );
+                }
+                if (asset.byteSize && blob.size !== asset.byteSize) {
+                  throw new Error(
+                    `Visible asset ${asset.name ?? asset.id} has ${blob.size} bytes; expected ${asset.byteSize}.`,
+                  );
+                }
+
+                await client.assets.restoreBlob(asset.contentHash, blob);
+                const verifiedUrl = await client.assets.getBlobUrl(asset.contentHash);
+                if (!verifiedUrl) {
+                  throw new Error(`Visible asset ${asset.name ?? asset.id} was not durable after recovery.`);
+                }
+                URL.revokeObjectURL(verifiedUrl);
+                globalThis.document.documentElement.dataset.recoveredVisibleAsset = asset.contentHash;
+                diagnosticConsole.log(
+                  'info',
+                  `Recovered visible asset Blob before ${reason}.`,
+                  { assetId: asset.id, contentHash: asset.contentHash, byteSize: blob.size },
+                  'assets',
+                );
+              }
+            }
+          """
+          if marker not in text:
+              raise SystemExit('Studio flush helper marker not found')
+          text = text.replace(marker, replacement, 1)
+
+          old = """        throwIfImportAborted(signal);
+                const revision = await flushDraftOrThrow('import completion');
+                await flushWorkspace();
+          """
+          new = """        throwIfImportAborted(signal);
+                await restoreVisibleAssetBlobs('import completion');
+                const revision = await flushDraftOrThrow('import completion');
+                await flushWorkspace();
+          """
+          if old not in text:
+              raise SystemExit('Import persistence marker not found')
+          text = text.replace(old, new, 1)
+
+          old = """      const revision = await flushDraftOrThrow('publish');
+              await flushWorkspace();
+              if (workspaceDirty) throw new Error('Workspace save did not complete.');
+
+              globalThis.document.documentElement.dataset.publishState = 'capturing-thumbnail';
+          """
+          new = """      const revision = await flushDraftOrThrow('publish');
+              await flushWorkspace();
+              if (workspaceDirty) throw new Error('Workspace save did not complete.');
+              await restoreVisibleAssetBlobs('publish');
+
+              globalThis.document.documentElement.dataset.publishState = 'capturing-thumbnail';
+          """
+          if old not in text:
+              raise SystemExit('Publish preflight marker not found')
+          text = text.replace(old, new, 1)
+          studio.write_text(text)
+
+          spec = Path('tests/e2e/studio-save-publish-public.spec.ts')
+          text = spec.read_text()
+          addition = r'''
+
+test('publish re-persists an imported Blob from the live manifest when IndexedDB loses it', async ({
+  page,
+  context,
+}) => {
+  test.setTimeout(300_000);
+  await createProject(page);
+
+  await page.locator('#asset-import-input').setInputFiles({
+    name: 'live-blob-recovery.glb',
+    mimeType: 'model/gltf-binary',
+    buffer: Buffer.from(createTriangleGlb()),
+  });
+  await expect(page.locator('html')).toHaveAttribute(
+    'data-import-durable',
+    'true',
+    { timeout: 120_000 },
+  );
+  await expect(page.locator('.save-state')).toHaveText('Saved', { timeout: 60_000 });
+
+  const imported = await page.evaluate(async () => {
+    const api = (globalThis as any).kyxosStudio?.api;
+    const asset = Object.values(api.getScene().assets)[0] as any;
+    if (!asset) throw new Error('Imported asset is unavailable.');
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('kyxos-assets', 1);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    await new Promise<void>((resolve, reject) => {
+      const transaction = db.transaction('blobs', 'readwrite');
+      transaction.objectStore('blobs').delete(asset.contentHash);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(transaction.error);
+    });
+    db.close();
+    return { hash: asset.contentHash, id: asset.id };
+  });
+
+  await page.getByRole('button', { name: 'Publish', exact: true }).click();
+  await expect(page.locator('html')).toHaveAttribute('data-publish-state', 'published', {
+    timeout: 90_000,
+  });
+  await expect(page.locator('html')).toHaveAttribute(
+    'data-recovered-visible-asset',
+    imported.hash,
+  );
+
+  const restored = await page.evaluate(async ({ hash }) => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('kyxos-assets', 1);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const exists = await new Promise<boolean>((resolve, reject) => {
+      const request = db.transaction('blobs').objectStore('blobs').get(hash);
+      request.onsuccess = () => resolve(request.result instanceof Blob);
+      request.onerror = () => reject(request.error);
+    });
+    db.close();
+    return exists;
+  }, imported);
+  expect(restored).toBe(true);
+
+  const href = await page.locator('.viewport-overlay a', { hasText: 'Open' }).getAttribute('href');
+  expect(href).toBeTruthy();
+  const publicPage = await context.newPage();
+  await publicPage.goto(href!);
+  await expect(publicPage.locator('html')).toHaveAttribute(
+    'data-public-viewer-stage',
+    'ready',
+    { timeout: 120_000 },
+  );
+});
+'''
+          if "publish re-persists an imported Blob from the live manifest" in text:
+              raise SystemExit('Live Blob recovery test already exists')
+          spec.write_text(text + addition)
+          PY
+      - name: Install workspace
+        run: pnpm install --no-frozen-lockfile
+      - name: Typecheck API client and Studio
+        run: |
+          pnpm --filter @kyxos/api-client typecheck
+          pnpm --filter @kyxos/studio build
+      - name: Remove one-time workflow and commit
+        run: |
+          rm .github/workflows/pr32-recover-live-import-blob.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add packages/api-client/src/index.ts packages/api-client/src/durable.ts apps/studio/src/main.ts tests/e2e/studio-save-publish-public.spec.ts .github/workflows/pr32-recover-live-import-blob.yml
+          git commit -m "fix: recover visible imported blobs before publish"
+          git push origin HEAD:agent/fix-save-publish-public-loading-v2
