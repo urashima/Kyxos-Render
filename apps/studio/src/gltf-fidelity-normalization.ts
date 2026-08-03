@@ -125,6 +125,10 @@ function embeddedTextureAssetId(modelAssetId: string, textureIndex: number): str
   return `embedded-gltf-texture:${modelAssetId}:${textureIndex}`;
 }
 
+function embeddedTextureHash(modelHash: string, textureIndex: number): string {
+  return `${modelHash.slice(0, 56)}${textureIndex.toString(16).padStart(8, '0')}`;
+}
+
 function textureImageIndex(texture: ReportTexture | undefined): number | null {
   const basis = asRecord(texture?.extensions?.KHR_texture_basisu);
   const source = typeof basis.source === 'number' ? basis.source : texture?.source;
@@ -143,10 +147,11 @@ function ensureEmbeddedTextureAsset(
 
   const assetId = embeddedTextureAssetId(model.id, textureIndex);
   const image = report.images?.[imageIndex];
+  const contentHash = embeddedTextureHash(model.contentHash, textureIndex);
   scene.assets[assetId] = {
     id: assetId,
-    uri: `asset://${model.contentHash}-embedded-texture-${textureIndex}`,
-    contentHash: `${model.contentHash}:embedded-texture:${textureIndex}`,
+    uri: `asset://${contentHash}`,
+    contentHash,
     kind: 'texture',
     mimeType: mimeFromImage(image),
     name: image?.name || `Embedded Texture ${textureIndex + 1}`,
