@@ -3,8 +3,14 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "exports": { ".": "./src/index.ts" },
-  "scripts": { "build": "tsc -p tsconfig.json --noEmit", "typecheck": "tsc -p tsconfig.json --noEmit" },
+  "exports": {
+    ".": "./src/index.ts",
+    "./durable": "./src/durable.ts"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
   "dependencies": {
     "@kyxos/scene-contract": "workspace:*",
     "@supabase/supabase-js": "2.57.4"
