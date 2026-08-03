@@ -1,0 +1,21 @@
+.asset-workspace-items[data-virtualized="true"] {
+  align-content: start;
+  contain: layout style paint;
+  min-height: 0;
+  overflow-anchor: none;
+}
+
+.asset-virtual-spacer {
+  grid-column: 1 / -1;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.asset-workspace-item[aria-posinset] {
+  contain: layout style paint;
+}
