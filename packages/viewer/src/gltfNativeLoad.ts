@@ -49,8 +49,35 @@ function associationIndex(value: unknown, key: string): number | null {
   return typeof index === 'number' && Number.isInteger(index) ? index : null;
 }
 
+function setMaterialIndex(material: THREE.Material | undefined, index: unknown): void {
+  if (material && typeof index === 'number' && Number.isInteger(index)) {
+    material.userData.gltfMaterialIndex = index;
+  }
+}
+
+function annotateMeshMaterials(
+  object: THREE.Object3D,
+  meshIndex: number | null,
+  primitiveIndex: number | null,
+  json: any,
+): void {
+  const mesh = object as THREE.Mesh;
+  if (!mesh.isMesh || !mesh.material || meshIndex == null) return;
+  const primitives = json?.meshes?.[meshIndex]?.primitives as Array<{ material?: number }> | undefined;
+  if (!primitives?.length) return;
+  const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+
+  if (materials.length === primitives.length) {
+    materials.forEach((material, index) => setMaterialIndex(material, primitives[index]?.material));
+    return;
+  }
+  const sourcePrimitive = primitives[primitiveIndex ?? 0] ?? primitives[0];
+  materials.forEach((material) => setMaterialIndex(material, sourcePrimitive?.material));
+}
+
 function annotateAssociations(gltf: any): void {
   const associations = gltf?.parser?.associations as Map<object, unknown> | undefined;
+  const json = gltf?.parser?.json;
   if (!associations) return;
   for (const [resource, association] of associations) {
     if (resource instanceof THREE.Object3D) {
@@ -61,12 +88,24 @@ function annotateAssociations(gltf: any): void {
       if (nodeIndex != null) object.userData.gltfNodeIndex = nodeIndex;
       if (meshIndex != null) object.userData.gltfMeshIndex = meshIndex;
       if (primitiveIndex != null) object.userData.gltfPrimitiveIndex = primitiveIndex;
+      annotateMeshMaterials(object, meshIndex, primitiveIndex, json);
     } else if (resource instanceof THREE.Material) {
       const material = resource as THREE.Material;
-      const materialIndex = associationIndex(association, 'materials');
-      if (materialIndex != null) material.userData.gltfMaterialIndex = materialIndex;
+      setMaterialIndex(material, associationIndex(association, 'materials'));
     }
   }
+
+  // Some Three.js revisions associate only the generated Object3D, not the
+  // Material object. Re-run over the scene after all object metadata exists.
+  gltf.scene?.traverse((object: THREE.Object3D) => {
+    const meshIndex = typeof object.userData.gltfMeshIndex === 'number'
+      ? object.userData.gltfMeshIndex
+      : null;
+    const primitiveIndex = typeof object.userData.gltfPrimitiveIndex === 'number'
+      ? object.userData.gltfPrimitiveIndex
+      : null;
+    annotateMeshMaterials(object, meshIndex, primitiveIndex, json);
+  });
 }
 
 function nearestParentNodeIndex(object: THREE.Object3D | null): number | null {
