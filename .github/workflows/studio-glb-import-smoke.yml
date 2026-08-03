@@ -12,6 +12,7 @@ on:
       - 'packages/viewer-adapter/**'
       - 'tests/e2e/studio-viewport-helpers.spec.ts'
       - 'tests/e2e/studio-asset-virtualization.spec.ts'
+      - 'tests/e2e/studio-camera-bookmarks.spec.ts'
       - 'tests/unit/gltf-authoring-parity.spec.ts'
       - 'tests/unit/studio-glb-report.spec.ts'
       - '.github/workflows/studio-glb-import-smoke.yml'
@@ -68,6 +69,9 @@ jobs:
           - id: assets-500
             spec: tests/e2e/studio-asset-virtualization.spec.ts
             grep: Studio virtualizes a 500 asset workspace in Grid and List views
+          - id: camera-bookmarks
+            spec: tests/e2e/studio-camera-bookmarks.spec.ts
+            grep: Studio saves, recalls, renames and deletes editor camera bookmarks
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
