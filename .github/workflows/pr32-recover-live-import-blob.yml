@@ -27,29 +27,35 @@ jobs:
         run: |
           python <<'PY'
           from pathlib import Path
+          from textwrap import dedent
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              old = dedent(old).strip('\n')
+              new = dedent(new).strip('\n')
+              if old not in text:
+                  raise SystemExit(f'{label} marker not found')
+              return text.replace(old, new, 1)
 
           api = Path('packages/api-client/src/index.ts')
           text = api.read_text()
-          old = """    getManifest(assetIds: string[]): Promise<AssetManifest>;
+          text = replace_once(text, '''
+              getManifest(assetIds: string[]): Promise<AssetManifest>;
               getBlobUrl(hash: string): Promise<string | null>;
             };
-          """
-          new = """    getManifest(assetIds: string[]): Promise<AssetManifest>;
+          ''', '''
+              getManifest(assetIds: string[]): Promise<AssetManifest>;
               getBlobUrl(hash: string): Promise<string | null>;
               restoreBlob?(hash: string, blob: Blob): Promise<void>;
             };
-          """
-          if old not in text:
-              raise SystemExit('API asset interface marker not found')
-          text = text.replace(old, new, 1)
-
-          old = """    getBlobUrl: async (hash: string): Promise<string | null> => {
+          ''', 'API asset interface')
+          text = replace_once(text, '''
+              getBlobUrl: async (hash: string): Promise<string | null> => {
                 const blob = await getBlob(hash);
                 return blob ? URL.createObjectURL(blob) : null;
               },
             };
-          """
-          new = """    getBlobUrl: async (hash: string): Promise<string | null> => {
+          ''', '''
+              getBlobUrl: async (hash: string): Promise<string | null> => {
                 const blob = await getBlob(hash);
                 return blob ? URL.createObjectURL(blob) : null;
               },
@@ -62,21 +68,19 @@ jobs:
                 }
               },
             };
-          """
-          if old not in text:
-              raise SystemExit('Local assets getBlobUrl marker not found')
-          text = text.replace(old, new, 1)
+          ''', 'Local asset restore')
           api.write_text(text)
 
           durable = Path('packages/api-client/src/durable.ts')
           text = durable.read_text()
-          old = """    getBlobUrl: async (hash) => {
+          text = replace_once(text, '''
+              getBlobUrl: async (hash) => {
                 await ready;
                 return exclusive(() => originalAssets.getBlobUrl(hash));
               },
             };
-          """
-          new = """    getBlobUrl: async (hash) => {
+          ''', '''
+              getBlobUrl: async (hash) => {
                 await ready;
                 return exclusive(() => originalAssets.getBlobUrl(hash));
               },
@@ -88,15 +92,13 @@ jobs:
                 await exclusive(() => originalAssets.restoreBlob!(hash, blob));
               },
             };
-          """
-          if old not in text:
-              raise SystemExit('Durable assets getBlobUrl marker not found')
-          text = text.replace(old, new, 1)
+          ''', 'Durable asset restore')
           durable.write_text(text)
 
           studio = Path('apps/studio/src/main.ts')
           text = studio.read_text()
-          marker = """  async function flushDraftOrThrow(reason: string): Promise<number> {
+          flush = dedent('''
+            async function flushDraftOrThrow(reason: string): Promise<number> {
               await autosave.flush();
               if (autosave.state !== 'Saved') {
                 throw new Error(`Draft save failed before ${reason}: ${autosave.state}.`);
@@ -110,8 +112,8 @@ jobs:
               globalThis.document.documentElement.dataset.durableDraftRevision = String(persistedRevision);
               return persistedRevision;
             }
-          """
-          replacement = marker + """
+          ''').strip('\n')
+          helper = dedent('''
 
             async function restoreVisibleAssetBlobs(reason: string): Promise<void> {
               if (!client.assets.restoreBlob) return;
@@ -159,40 +161,34 @@ jobs:
                 );
               }
             }
-          """
-          if marker not in text:
+          ''').rstrip('\n')
+          if flush not in text:
               raise SystemExit('Studio flush helper marker not found')
-          text = text.replace(marker, replacement, 1)
-
-          old = """        throwIfImportAborted(signal);
+          text = text.replace(flush, flush + helper, 1)
+          text = replace_once(text, '''
+                throwIfImportAborted(signal);
                 const revision = await flushDraftOrThrow('import completion');
                 await flushWorkspace();
-          """
-          new = """        throwIfImportAborted(signal);
+          ''', '''
+                throwIfImportAborted(signal);
                 await restoreVisibleAssetBlobs('import completion');
                 const revision = await flushDraftOrThrow('import completion');
                 await flushWorkspace();
-          """
-          if old not in text:
-              raise SystemExit('Import persistence marker not found')
-          text = text.replace(old, new, 1)
-
-          old = """      const revision = await flushDraftOrThrow('publish');
+          ''', 'Import persistence')
+          text = replace_once(text, '''
+              const revision = await flushDraftOrThrow('publish');
               await flushWorkspace();
               if (workspaceDirty) throw new Error('Workspace save did not complete.');
 
               globalThis.document.documentElement.dataset.publishState = 'capturing-thumbnail';
-          """
-          new = """      const revision = await flushDraftOrThrow('publish');
+          ''', '''
+              const revision = await flushDraftOrThrow('publish');
               await flushWorkspace();
               if (workspaceDirty) throw new Error('Workspace save did not complete.');
               await restoreVisibleAssetBlobs('publish');
 
               globalThis.document.documentElement.dataset.publishState = 'capturing-thumbnail';
-          """
-          if old not in text:
-              raise SystemExit('Publish preflight marker not found')
-          text = text.replace(old, new, 1)
+          ''', 'Publish preflight')
           studio.write_text(text)
 
           spec = Path('tests/e2e/studio-save-publish-public.spec.ts')
