@@ -1,7 +1,5 @@
 import type { AssetResolver, KyxosSceneContract } from '@kyxos/scene-contract';
 import {
-  Color,
-  MeshBasicMaterial,
   type Camera,
   type Group,
   type Material,
@@ -94,55 +92,25 @@ function restoreOriginalMaterials(viewer: KyxosViewer): void {
   disposeProxyMaterials(internal);
 }
 
-function sourceColor(material: Material): Color {
-  const candidate = (material as Material & { color?: Color }).color;
-  return candidate?.isColor ? candidate.clone() : new Color(0x9aa4b2);
-}
-
-function proxyMaterial(source: Material, internal: ViewerInternals): Material {
-  const candidate = source as Material & {
-    opacity?: number;
-    transparent?: boolean;
-    side?: number;
-    depthTest?: boolean;
-    depthWrite?: boolean;
-    vertexColors?: boolean;
-  };
-  const proxy = new MeshBasicMaterial({
-    color: sourceColor(source),
-    opacity: candidate.opacity ?? 1,
-    transparent: Boolean(candidate.transparent || (candidate.opacity ?? 1) < 1),
-    side: candidate.side,
-    depthTest: candidate.depthTest ?? true,
-    depthWrite: candidate.depthWrite ?? true,
-    vertexColors: Boolean(candidate.vertexColors),
-    toneMapped: false,
-  });
-  proxy.name = `${source.name || source.type} · Authoring Proxy`;
-  proxy.userData.kyxosAuthoringProxy = true;
-  internal.editorProxyMaterials ??= new Set();
-  internal.editorProxyMaterials.add(proxy);
-  return proxy;
-}
-
-function applyAuthoringProxyMaterials(viewer: KyxosViewer): void {
+/**
+ * Studio previously replaced every imported material with MeshBasicMaterial.
+ * That made import transactions cheap, but silently discarded base-color,
+ * normal, AO, metallic/roughness and glTF physical-extension textures. Direct
+ * authoring rendering is already demand-driven, so keep GLTFLoader's exact PBR
+ * graph and only bypass the post-processing pipeline.
+ */
+function applyExactAuthoringMaterials(viewer: KyxosViewer): void {
   const internal = internals(viewer);
   const root = internal.modelRoot;
   if (!root || !internal.editorDirectRender) return;
 
   restoreOriginalMaterials(viewer);
-  const originals = new Map<MeshLike, Material | Material[]>();
-  internal.editorOriginalMaterials = originals;
+  let meshes = 0;
   root.traverse((object) => {
     const mesh = object as MeshLike;
-    if (!mesh.isMesh || !mesh.material) return;
-    const original = mesh.material;
-    originals.set(mesh, original);
-    mesh.material = Array.isArray(original)
-      ? original.map((material) => proxyMaterial(material, internal))
-      : proxyMaterial(original, internal);
+    if (mesh.isMesh && mesh.material) meshes += 1;
   });
-  viewer.canvas.dataset.authoringMaterials = originals.size ? 'proxy' : 'none';
+  viewer.canvas.dataset.authoringMaterials = meshes ? 'exact-gltf' : 'none';
   requestAuthoringRender(viewer);
 }
 
@@ -204,7 +172,7 @@ function setDirectAuthoringRender(viewer: KyxosViewer, enabled: boolean): void {
   internal.editorDirectRender = enabled;
   viewer.canvas.dataset.authoringRender = enabled ? 'direct' : 'pipeline';
   if (enabled) {
-    applyAuthoringProxyMaterials(viewer);
+    applyExactAuthoringMaterials(viewer);
     pauseAuthoringRender(viewer);
     resumeAuthoringRenderAfter(viewer);
   } else {
@@ -293,9 +261,6 @@ function renderDirectFrame(viewer: KyxosViewer, time: number): void {
   if (internal.animationEnabled) internal.animateScene?.(internal.elapsed, delta);
 
   try {
-    // Three.js r186 deprecates renderAsync(). The initialized WebGPURenderer
-    // supports render() for both WebGPU and forceWebGL backends; using it avoids
-    // keeping an unresolved render Promise across the import transaction.
     internal.renderer.render(internal.scene, internal.camera);
   } catch (error) {
     viewer.dispatchEvent(new CustomEvent('error', { detail: { error } }));
@@ -305,9 +270,9 @@ function renderDirectFrame(viewer: KyxosViewer, time: number): void {
 /**
  * Keeps reusable Playground defaults out of authored Scene Contract content.
  * Studio pauses rendering for the complete import transaction and renders only
- * dirty Authoring frames with lightweight color-preserving Basic proxies.
- * Preview restores the exact imported PBR graph and full RenderPipeline. Public
- * Viewer never uses proxies, import pausing or demand-driven editor rendering.
+ * dirty Authoring frames with the exact imported PBR/texture graph. Preview
+ * switches back to the full RenderPipeline. Public Viewer never uses import
+ * pausing or demand-driven editor rendering.
  */
 export function installEditorSceneModeExtension(ViewerClass: typeof KyxosViewer): void {
   const prototype = ViewerClass.prototype as unknown as ViewerPrototypeInternals;
@@ -340,7 +305,7 @@ export function installEditorSceneModeExtension(ViewerClass: typeof KyxosViewer)
     await originalLoadScene.call(this, scene, resolver);
 
     if (internal.editorDirectRender) {
-      applyAuthoringProxyMaterials(this);
+      applyExactAuthoringMaterials(this);
       if (!internal.editorImportActive) resumeAuthoringRenderAfter(this);
     }
 
