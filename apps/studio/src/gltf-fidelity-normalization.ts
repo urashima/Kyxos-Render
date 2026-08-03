@@ -25,6 +25,21 @@ function cloneTransform(transform: Transform): Transform {
   return structuredClone(transform);
 }
 
+function asImportReport(value: unknown): ImportReport | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as ImportReport
+    : null;
+}
+
+function importReport(scene: KyxosSceneContract): ImportReport | null {
+  const modelAsset = Object.values(scene.assets).find((asset) => asset.kind === 'model');
+  const embedded = asImportReport(modelAsset?.metadata?.gltfImportReport);
+  if (embedded?.nodes?.length) return embedded;
+  return asImportReport(
+    (globalThis as typeof globalThis & FidelityGlobal).__kyxosLastGlbImportReport,
+  );
+}
+
 function enrichImportedScene(scene: KyxosSceneContract, report: ImportReport): KyxosSceneContract {
   const next = structuredClone(scene);
   for (const node of next.nodes) {
@@ -37,9 +52,9 @@ function enrichImportedScene(scene: KyxosSceneContract, report: ImportReport): K
       sourceQuaternion: Array.isArray(source.rotation)
         ? structuredClone(source.rotation)
         : node.metadata?.sourceQuaternion,
-      gltfNodeMatrix: Array.isArray(source.matrix)
+      gltfNodeMatrix: Array.isArray(source.matrix) && source.matrix.length === 16
         ? structuredClone(source.matrix)
-        : undefined,
+        : node.metadata?.gltfNodeMatrix,
       gltfOriginalParentIndex: source.parent ?? null,
       gltfOriginalTransform: cloneTransform(node.transform),
     };
@@ -54,11 +69,10 @@ if (!prototype.__kyxosGltfFidelityInstalled) {
     scene: KyxosSceneContract,
     source = 'replace',
   ): void {
-    const report = (globalThis as typeof globalThis & FidelityGlobal)
-      .__kyxosLastGlbImportReport;
+    const report = source === 'import-glb' ? importReport(scene) : null;
     originalReplace.call(
       this,
-      source === 'import-glb' && report ? enrichImportedScene(scene, report) : scene,
+      report ? enrichImportedScene(scene, report) : scene,
       source,
     );
   };
