@@ -53,7 +53,10 @@ export type {
   EditorTransformSnap,
   EditorTransformSpace,
 } from './editorTransformControls';
-export type { EditorViewPreset } from './editorViewportNavigation';
+export type {
+  EditorCameraBookmarkState,
+  EditorViewPreset,
+} from './editorViewportNavigation';
 export type {
   BackendName,
   BackendPreference,
