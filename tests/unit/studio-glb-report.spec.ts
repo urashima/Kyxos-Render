@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { createGlbImportReport } from '../../apps/studio/src/glb-report';
+import { parseGlbInWorker } from '../../apps/studio/src/glb-worker-client';
 import {
   createGltfAuthoringGlb,
   createTriangleGlb,
@@ -33,6 +34,16 @@ describe('Studio shared GLB metadata report parser', () => {
     });
     expect(report.extensionsRequired).toEqual([]);
     expect(report.warnings).toEqual([]);
+  });
+
+  it('keeps the core import path independent from Worker availability', async () => {
+    const bytes = createTriangleGlb();
+    const report = await parseGlbInWorker<ReturnType<typeof createGlbImportReport>>(
+      new File([bytes], 'triangle.glb', { type: 'model/gltf-binary' }),
+    );
+
+    expect(report.sourceName).toBe('triangle.glb');
+    expect(report.nodes[0]).toMatchObject({ name: 'Triangle', mesh: 0 });
   });
 
   it('preserves complete authoring metadata for skins, morphs, cameras, lights and variants', () => {
