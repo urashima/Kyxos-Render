@@ -27,43 +27,16 @@ on:
       - 'tests/unit/gltf-material-complete.spec.ts'
       - 'tests/unit/render-settings-parity.spec.ts'
       - 'tests/unit/studio-glb-report.spec.ts'
-      - '.github/scripts/pr32_live_blob_patch.py'
-      - '.github/workflows/pr32-recover-live-import-blob.yml'
       - '.github/workflows/studio-glb-import-smoke.yml'
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: studio-glb-import-smoke-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
-  patch-live-blob-recovery:
-    if: github.head_ref == 'agent/fix-save-publish-public-loading-v2'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - name: Checkout pull request head
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.ref }}
-          fetch-depth: 0
-      - name: Apply live Blob recovery patch
-        run: |
-          if [ ! -f .github/scripts/pr32_live_blob_patch.py ]; then
-            echo 'Patch script already consumed.'
-            exit 0
-          fi
-          python .github/scripts/pr32_live_blob_patch.py
-          rm .github/scripts/pr32_live_blob_patch.py
-          rm -f .github/workflows/pr32-recover-live-import-blob.yml
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add apps/studio/src/main.ts packages/api-client/src/index.ts packages/api-client/src/durable.ts tests/e2e/studio-save-publish-public.spec.ts .github/scripts/pr32_live_blob_patch.py .github/workflows/pr32-recover-live-import-blob.yml
-          git commit -m 'fix: recover visible imported blobs before publish'
-          git push origin HEAD:${{ github.event.pull_request.head.ref }}
-
   gltf-unit:
     runs-on: ubuntu-24.04
     timeout-minutes: 8
@@ -104,6 +77,9 @@ jobs:
           - id: durable-publish
             spec: tests/e2e/studio-save-publish-public.spec.ts
             grep: imported scene saves durably, publishes, opens and reloads from the public link
+          - id: live-blob-recovery
+            spec: tests/e2e/studio-save-publish-public.spec.ts
+            grep: publish re-persists an imported Blob from the live manifest when IndexedDB loses it
           - id: authoring
             spec: tests/e2e/studio-viewport-helpers.spec.ts
             grep: Studio imports, edits and reimports complete glTF authoring content
