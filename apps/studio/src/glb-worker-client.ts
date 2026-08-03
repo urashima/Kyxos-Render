@@ -1,4 +1,5 @@
 import './gltf-node-inspector-bootstrap';
+import { createGlbImportReport } from './glb-report';
 
 export interface GlbWorkerResponse<T = unknown> {
   ok: boolean;
@@ -10,6 +11,7 @@ export interface GlbWorkerLifecycleDetail {
   stage:
     | 'created'
     | 'posted'
+    | 'fallback'
     | 'complete'
     | 'failed'
     | 'message-error'
@@ -22,6 +24,7 @@ export interface GlbWorkerLifecycleDetail {
 export interface ParseGlbInWorkerOptions {
   signal?: AbortSignal;
   timeoutMs?: number;
+  fallbackDelayMs?: number;
   workerFactory?: () => Worker;
 }
 
@@ -48,28 +51,58 @@ function abortError(signal: AbortSignal): Error {
     : new DOMException('GLB parsing was cancelled.', 'AbortError');
 }
 
+function rememberReport<T>(result: T): T {
+  (globalThis as typeof globalThis & GlbWorkerGlobal).__kyxosLastGlbImportReport = result;
+  return result;
+}
+
 export async function parseGlbInWorker<T = unknown>(
   file: File,
   options: ParseGlbInWorkerOptions = {},
 ): Promise<T> {
-  const { signal, timeoutMs = 30_000 } = options;
+  const {
+    signal,
+    timeoutMs = 30_000,
+    fallbackDelayMs = 1_200,
+  } = options;
   if (signal?.aborted) throw abortError(signal);
 
+  // Keep the original bytes available for the deterministic fallback. A
+  // separate copy is transferred to the Worker so postMessage cannot detach
+  // the only ArrayBuffer owned by the import transaction.
   const buffer = await file.arrayBuffer();
   if (signal?.aborted) throw abortError(signal);
 
-  const worker = options.workerFactory?.() ?? new Worker(
-    new URL('./importWorker.ts', import.meta.url),
-    { type: 'module' },
-  );
+  const parseLocally = (reason?: unknown): T => {
+    if (signal?.aborted) throw abortError(signal);
+    emitLifecycle({
+      stage: 'fallback',
+      fileName: file.name,
+      error: reason instanceof Error ? reason.message : reason == null ? undefined : String(reason),
+    });
+    return rememberReport(createGlbImportReport(buffer, file.name) as T);
+  };
+
+  let worker: Worker;
+  try {
+    worker = options.workerFactory?.() ?? new Worker(
+      new URL('./importWorker.ts', import.meta.url),
+      { type: 'module' },
+    );
+  } catch (error) {
+    return parseLocally(error);
+  }
   emitLifecycle({ stage: 'created', fileName: file.name });
 
   return new Promise<T>((resolve, reject) => {
     let settled = false;
-    let timeout = 0;
+    let fallbackStarted = false;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    let fallbackId: ReturnType<typeof setTimeout> | undefined;
 
     const cleanup = (): void => {
-      if (timeout) window.clearTimeout(timeout);
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
+      if (fallbackId !== undefined) clearTimeout(fallbackId);
       worker.removeEventListener('message', onMessage as EventListener);
       worker.removeEventListener('messageerror', onMessageError);
       worker.removeEventListener('error', onWorkerError);
@@ -93,25 +126,37 @@ export async function parseGlbInWorker<T = unknown>(
       cleanup();
     };
 
+    const complete = (result: T): void => {
+      rememberReport(result);
+      settle('complete', () => resolve(result));
+    };
+
+    const runFallback = (reason?: unknown): void => {
+      if (settled || fallbackStarted) return;
+      fallbackStarted = true;
+      try {
+        complete(parseLocally(reason));
+      } catch (error) {
+        const stage = signal?.aborted ? 'cancelled' : 'failed';
+        settle(stage, () => reject(error), error);
+      }
+    };
+
     const onMessage = (event: MessageEvent<GlbWorkerResponse<T>>): void => {
       const response = event.data;
       if (response?.ok && response.result !== undefined) {
-        (globalThis as typeof globalThis & GlbWorkerGlobal).__kyxosLastGlbImportReport = response.result;
-        settle('complete', () => resolve(response.result as T));
+        complete(response.result as T);
         return;
       }
-      const error = new Error(response?.error || 'GLB parser worker returned no result.');
-      settle('failed', () => reject(error), error);
+      runFallback(new Error(response?.error || 'GLB parser worker returned no result.'));
     };
 
     const onMessageError = (): void => {
-      const error = new Error('GLB parser result could not be cloned.');
-      settle('message-error', () => reject(error), error);
+      runFallback(new Error('GLB parser result could not be cloned.'));
     };
 
     const onWorkerError = (event: ErrorEvent): void => {
-      const error = new Error(event.message || 'GLB parser worker failed.');
-      settle('failed', () => reject(error), error);
+      runFallback(new Error(event.message || 'GLB parser worker failed.'));
     };
 
     const onAbort = (): void => {
@@ -124,16 +169,25 @@ export async function parseGlbInWorker<T = unknown>(
     worker.addEventListener('error', onWorkerError);
     signal?.addEventListener('abort', onAbort, { once: true });
 
-    timeout = window.setTimeout(() => {
+    const boundedFallbackDelay = Math.max(0, Math.min(fallbackDelayMs, timeoutMs));
+    fallbackId = setTimeout(() => {
+      runFallback(
+        new Error(`GLB parser worker did not respond within ${boundedFallbackDelay} ms.`),
+      );
+    }, boundedFallbackDelay);
+    timeoutId = setTimeout(() => {
+      if (settled) return;
       const error = new Error(`GLB parsing timed out after ${timeoutMs} ms.`);
-      settle('timeout', () => reject(error), error);
+      if (!fallbackStarted) runFallback(error);
+      else settle('timeout', () => reject(error), error);
     }, timeoutMs);
 
     try {
-      worker.postMessage({ name: file.name, buffer }, [buffer]);
+      const workerBuffer = buffer.slice(0);
+      worker.postMessage({ name: file.name, buffer: workerBuffer }, [workerBuffer]);
       emitLifecycle({ stage: 'posted', fileName: file.name });
     } catch (error) {
-      settle('failed', () => reject(error), error);
+      runFallback(error);
     }
   });
 }
