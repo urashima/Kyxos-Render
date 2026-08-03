@@ -154,9 +154,9 @@ describe('Studio Scene Auditor', () => {
   it('reports hierarchy, reference and runtime-range problems with undoable safe fixes', () => {
     const auditor = new StudioAuditor();
     const report = auditor.audit(createScene());
-    const codes = new Set(report.findings.map((finding) => finding.code));
+    const codes = report.findings.map((finding) => finding.code);
 
-    expect(codes).toEqual(expect.objectContaining(new Set([
+    expect(codes).toEqual(expect.arrayContaining([
       'camera.active-missing',
       'hierarchy.invalid-children',
       'hierarchy.parent-missing',
@@ -169,7 +169,7 @@ describe('Studio Scene Auditor', () => {
       'light.intensity-invalid',
       'asset.dependency-missing',
       'asset.orphaned',
-    ])));
+    ]));
     expect(report.summary.errors).toBeGreaterThan(5);
     expect(report.summary.fixable).toBeGreaterThan(8);
 
