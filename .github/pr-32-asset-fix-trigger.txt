@@ -1,2 +1,0 @@
-Trigger Studio GLB and Pages verification for the imported asset index recovery fix.
-Source fix commit: e3a6cb2d1757e2e2b56db04e61d98472371d0d01
