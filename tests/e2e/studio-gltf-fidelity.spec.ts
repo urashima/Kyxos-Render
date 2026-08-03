@@ -272,12 +272,19 @@ test('Studio preserves glTF matrices, embedded PBR textures, skin weights and bo
     const material = Object.values(scene?.materials ?? {}).find(
       (entry: any) => entry.name === 'Embedded Checker PBR',
     ) as any;
+    const textureAssetId = material?.baseColorTexture?.assetId;
+    const textureAsset = textureAssetId ? scene?.assets?.[textureAssetId] : undefined;
     return {
       rootPosition: root?.transform?.position,
       rootScale: root?.transform?.scale,
       matrix: root?.metadata?.gltfNodeMatrix,
       jointCount: mesh?.skin?.joints?.length ?? 0,
       textureIndex: material?.metadata?.gltfTextures?.baseColor?.index,
+      textureAssetId,
+      textureAssetKind: textureAsset?.kind,
+      textureAssetIndex: textureAsset?.metadata?.gltfTextureIndex,
+      textureContentHash: textureAsset?.contentHash,
+      textureUri: textureAsset?.uri,
       metallic: material?.metalness,
       roughness: material?.roughness,
     };
@@ -288,8 +295,16 @@ test('Studio preserves glTF matrices, embedded PBR textures, skin weights and bo
   expect(sceneState.matrix).toHaveLength(16);
   expect(sceneState.jointCount).toBe(2);
   expect(sceneState.textureIndex).toBe(0);
+  expect(sceneState.textureAssetId).toMatch(/^embedded-gltf-texture:/);
+  expect(sceneState.textureAssetKind).toBe('texture');
+  expect(sceneState.textureAssetIndex).toBe(0);
+  expect(sceneState.textureContentHash).toMatch(/^[a-f0-9]{64}$/);
+  expect(sceneState.textureUri).toBe(`asset://${sceneState.textureContentHash}`);
   expect(sceneState.metallic).toBeCloseTo(0.2, 5);
   expect(sceneState.roughness).toBeCloseTo(0.55, 5);
+
+  await page.getByText('Textured Skinned Mesh', { exact: true }).first().click();
+  await expect(page.getByLabel('Base Texture')).toHaveValue(sceneState.textureAssetId);
 
   const initialPose = await canvas.getAttribute('data-gltf-bone-pose');
   expect(initialPose).toBeTruthy();
