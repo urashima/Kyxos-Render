@@ -1,4 +1,5 @@
 import './sceneApi';
+import './gltfNativeLoad';
 import './materialEditApi';
 import './animationApi';
 import './lightingApi';
@@ -11,6 +12,7 @@ import './editorRenderModes';
 
 import { KyxosViewer } from './KyxosViewer';
 import { installEditorSceneModeExtension } from './editorSceneMode';
+import { installGltfAuthoringFidelityExtension } from './gltfAuthoringFidelity';
 import { installScreenSpaceSSSExtension } from './materials/screenSpaceSSS';
 import { installScreenSpaceSSSDebugExtension } from './materials/screenSpaceSSSDebug';
 import { installViewerMetricsBroadcast } from './metricsBroadcast';
@@ -27,8 +29,10 @@ installNonBlockingVisibilityRecovery(KyxosViewer);
 
 // Scene API is installed by the side-effect import above. Studio scene mode then
 // removes the procedural playground model and unmanaged lights before loading
-// any Scene Contract.
+// any Scene Contract. Native glTF fidelity is restored after the editor wrapper
+// so authored scenes keep their exact hierarchy, skin bind space and materials.
 installEditorSceneModeExtension(KyxosViewer);
+installGltfAuthoringFidelityExtension(KyxosViewer);
 
 // Install the procedural study before the SSS load wrapper so loading the study
 // still restores and reapplies material masks through the normal Viewer API.
