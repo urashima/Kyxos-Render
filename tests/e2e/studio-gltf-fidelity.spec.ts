@@ -277,7 +277,7 @@ test('Studio preserves glTF matrices, embedded PBR textures, skin weights and bo
       rootScale: root?.transform?.scale,
       matrix: root?.metadata?.gltfNodeMatrix,
       jointCount: mesh?.skin?.joints?.length ?? 0,
-      textureIndex: material?.metadata?.gltf?.pbr?.baseColorTexture?.index,
+      textureIndex: material?.metadata?.gltfTextures?.baseColor?.index,
       metallic: material?.metalness,
       roughness: material?.roughness,
     };
