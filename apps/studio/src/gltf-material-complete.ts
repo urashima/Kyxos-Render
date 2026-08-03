@@ -47,7 +47,7 @@ interface ReportSampler {
   wrapT?: number;
 }
 
-interface ImportReport {
+export interface CompleteGltfMaterialImportReport {
   materials?: ReportMaterial[];
   images?: ReportImage[];
   textures?: {
@@ -57,7 +57,7 @@ interface ImportReport {
 }
 
 interface MaterialImportGlobal {
-  __kyxosLastGlbImportReport?: ImportReport;
+  __kyxosLastGlbImportReport?: CompleteGltfMaterialImportReport;
 }
 
 interface SceneDocumentPrototype {
@@ -65,7 +65,7 @@ interface SceneDocumentPrototype {
   __kyxosCompleteGltfMaterialsInstalled?: boolean;
 }
 
-type CompleteSceneMaterial = SceneMaterial & {
+export type CompleteSceneMaterial = SceneMaterial & {
   unlit?: boolean;
   aoIntensity?: number;
   clearcoatNormalTexture?: TextureRef;
@@ -106,14 +106,44 @@ type CompleteTextureField =
   | 'iridescenceThicknessTexture'
   | 'anisotropyTexture';
 
+const extensionFields = {
+  KHR_materials_clearcoat: [
+    'clearcoat',
+    'clearcoatRoughness',
+    'clearcoatNormalScale',
+  ],
+  KHR_materials_transmission: ['transmission'],
+  KHR_materials_volume: ['thickness', 'attenuationDistance', 'attenuationColor'],
+  KHR_materials_ior: ['ior'],
+  KHR_materials_sheen: ['sheenColor', 'sheenRoughness'],
+  KHR_materials_specular: ['specularIntensity', 'specularColor'],
+  KHR_materials_emissive_strength: ['emissiveIntensity'],
+  KHR_materials_iridescence: [
+    'iridescence',
+    'iridescenceIor',
+    'iridescenceThicknessMinimum',
+    'iridescenceThicknessMaximum',
+  ],
+  KHR_materials_anisotropy: ['anisotropy', 'anisotropyRotation'],
+  KHR_materials_dispersion: ['dispersion'],
+} as const;
+
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {};
 }
 
+function hasOwn(value: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
 function finite(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+function optionalFinite(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
 function factor(value: unknown, size: number, defaults: number[]): number[] {
@@ -132,11 +162,11 @@ function vec4(value: unknown, defaults: number[]): Vec4 {
   return { x: result[0], y: result[1], z: result[2], w: result[3] };
 }
 
-function importReport(scene: KyxosSceneContract): ImportReport | null {
+function importReport(scene: KyxosSceneContract): CompleteGltfMaterialImportReport | null {
   const model = Object.values(scene.assets).find((asset) => asset.kind === 'model');
   const embedded = model?.metadata?.gltfImportReport;
   if (embedded && typeof embedded === 'object' && !Array.isArray(embedded)) {
-    return embedded as ImportReport;
+    return embedded as CompleteGltfMaterialImportReport;
   }
   const globalReport = (globalThis as typeof globalThis & MaterialImportGlobal)
     .__kyxosLastGlbImportReport;
@@ -172,7 +202,7 @@ function textureHash(modelHash: string, textureIndex: number): string {
 
 function ensureTextureAsset(
   scene: KyxosSceneContract,
-  report: ImportReport,
+  report: CompleteGltfMaterialImportReport,
   textureIndex: number,
 ): string | null {
   const model = Object.values(scene.assets).find((asset) => asset.kind === 'model');
@@ -239,7 +269,7 @@ function vector2(value: unknown): { x: number; y: number } | undefined {
 
 function textureRef(
   scene: KyxosSceneContract,
-  report: ImportReport,
+  report: CompleteGltfMaterialImportReport,
   value: unknown,
   colorSpace: TextureRef['colorSpace'],
   channel: TextureRef['channel'],
@@ -255,7 +285,7 @@ function textureRef(
     ? undefined
     : report.textures?.samplers?.[texture.sampler];
   const transform = record(record(info.extensions).KHR_texture_transform);
-  const result: TextureRef = {
+  return {
     assetId,
     colorSpace,
     channel,
@@ -268,7 +298,6 @@ function textureRef(
     minFilter: minFilter(sampler?.minFilter) ?? 'linearMipLinear',
     magFilter: magFilter(sampler?.magFilter) ?? 'linear',
   };
-  return result;
 }
 
 function assignTexture(
@@ -276,13 +305,25 @@ function assignTexture(
   field: CompleteTextureField,
   value: TextureRef | undefined,
 ): void {
-  if (value) (material as Record<string, unknown>)[field] = value;
-  else delete (material as Record<string, unknown>)[field];
+  const target = material as unknown as Record<string, unknown>;
+  if (value) target[field] = value;
+  else delete target[field];
+}
+
+function deleteFields(material: CompleteSceneMaterial, fields: readonly string[]): void {
+  const target = material as unknown as Record<string, unknown>;
+  for (const field of fields) delete target[field];
+}
+
+function materialPayload(material: CompleteSceneMaterial): Record<string, unknown> {
+  const payload = structuredClone(material) as unknown as Record<string, unknown>;
+  delete payload.metadata;
+  return payload;
 }
 
 function normalizeMaterial(
   scene: KyxosSceneContract,
-  report: ImportReport,
+  report: CompleteGltfMaterialImportReport,
   material: CompleteSceneMaterial,
   source: ReportMaterial,
 ): void {
@@ -304,44 +345,93 @@ function normalizeMaterial(
   material.alphaCutoff = finite(source.alphaCutoff, 0.5);
   material.doubleSided = Boolean(source.doubleSided);
 
-  const clearcoat = record(extensions.KHR_materials_clearcoat);
-  const transmission = record(extensions.KHR_materials_transmission);
-  const volume = record(extensions.KHR_materials_volume);
-  const ior = record(extensions.KHR_materials_ior);
-  const sheen = record(extensions.KHR_materials_sheen);
-  const specular = record(extensions.KHR_materials_specular);
-  const emissiveStrength = record(extensions.KHR_materials_emissive_strength);
-  const iridescence = record(extensions.KHR_materials_iridescence);
-  const anisotropy = record(extensions.KHR_materials_anisotropy);
-  const dispersion = record(extensions.KHR_materials_dispersion);
+  material.unlit = hasOwn(extensions, 'KHR_materials_unlit') || undefined;
+  if (!material.unlit) delete material.unlit;
 
-  material.unlit = 'KHR_materials_unlit' in extensions;
-  material.clearcoat = finite(clearcoat.clearcoatFactor, 0);
-  material.clearcoatRoughness = finite(clearcoat.clearcoatRoughnessFactor, 0);
-  material.clearcoatNormalScale = finite(record(clearcoat.clearcoatNormalTexture).scale, 1);
-  material.transmission = finite(transmission.transmissionFactor, 0);
-  material.thickness = finite(volume.thicknessFactor, 0);
-  material.attenuationDistance = finite(volume.attenuationDistance, Number.POSITIVE_INFINITY);
-  material.attenuationColor = vec3(volume.attenuationColor, [1, 1, 1]);
-  material.ior = finite(ior.ior, 1.5);
-  material.sheenColor = vec3(sheen.sheenColorFactor, [0, 0, 0]);
-  material.sheenRoughness = finite(sheen.sheenRoughnessFactor, 0);
-  material.specularIntensity = finite(specular.specularFactor, 1);
-  material.specularColor = vec3(specular.specularColorFactor, [1, 1, 1]);
-  material.emissiveIntensity = finite(emissiveStrength.emissiveStrength, 1);
-  material.iridescence = finite(iridescence.iridescenceFactor, 0);
-  material.iridescenceIor = finite(iridescence.iridescenceIor, 1.3);
-  material.iridescenceThicknessMinimum = finite(
-    iridescence.iridescenceThicknessMinimum,
-    100,
-  );
-  material.iridescenceThicknessMaximum = finite(
-    iridescence.iridescenceThicknessMaximum,
-    400,
-  );
-  material.anisotropy = finite(anisotropy.anisotropyStrength, 0);
-  material.anisotropyRotation = finite(anisotropy.anisotropyRotation, 0);
-  material.dispersion = finite(dispersion.dispersion, 0);
+  const clearcoat = record(extensions.KHR_materials_clearcoat);
+  if (hasOwn(extensions, 'KHR_materials_clearcoat')) {
+    material.clearcoat = finite(clearcoat.clearcoatFactor, 0);
+    material.clearcoatRoughness = finite(clearcoat.clearcoatRoughnessFactor, 0);
+    material.clearcoatNormalScale = finite(record(clearcoat.clearcoatNormalTexture).scale, 1);
+  } else {
+    deleteFields(material, extensionFields.KHR_materials_clearcoat);
+  }
+
+  const transmission = record(extensions.KHR_materials_transmission);
+  if (hasOwn(extensions, 'KHR_materials_transmission')) {
+    material.transmission = finite(transmission.transmissionFactor, 0);
+  } else {
+    deleteFields(material, extensionFields.KHR_materials_transmission);
+  }
+
+  const volume = record(extensions.KHR_materials_volume);
+  if (hasOwn(extensions, 'KHR_materials_volume')) {
+    material.thickness = finite(volume.thicknessFactor, 0);
+    material.attenuationColor = vec3(volume.attenuationColor, [1, 1, 1]);
+    const attenuationDistance = optionalFinite(volume.attenuationDistance);
+    if (attenuationDistance == null) delete material.attenuationDistance;
+    else material.attenuationDistance = attenuationDistance;
+  } else {
+    deleteFields(material, extensionFields.KHR_materials_volume);
+  }
+
+  const ior = record(extensions.KHR_materials_ior);
+  if (hasOwn(extensions, 'KHR_materials_ior')) material.ior = finite(ior.ior, 1.5);
+  else deleteFields(material, extensionFields.KHR_materials_ior);
+
+  const sheen = record(extensions.KHR_materials_sheen);
+  if (hasOwn(extensions, 'KHR_materials_sheen')) {
+    material.sheenColor = vec3(sheen.sheenColorFactor, [0, 0, 0]);
+    material.sheenRoughness = finite(sheen.sheenRoughnessFactor, 0);
+  } else {
+    deleteFields(material, extensionFields.KHR_materials_sheen);
+  }
+
+  const specular = record(extensions.KHR_materials_specular);
+  if (hasOwn(extensions, 'KHR_materials_specular')) {
+    material.specularIntensity = finite(specular.specularFactor, 1);
+    material.specularColor = vec3(specular.specularColorFactor, [1, 1, 1]);
+  } else {
+    deleteFields(material, extensionFields.KHR_materials_specular);
+  }
+
+  const emissiveStrength = record(extensions.KHR_materials_emissive_strength);
+  if (hasOwn(extensions, 'KHR_materials_emissive_strength')) {
+    material.emissiveIntensity = finite(emissiveStrength.emissiveStrength, 1);
+  } else {
+    deleteFields(material, extensionFields.KHR_materials_emissive_strength);
+  }
+
+  const iridescence = record(extensions.KHR_materials_iridescence);
+  if (hasOwn(extensions, 'KHR_materials_iridescence')) {
+    material.iridescence = finite(iridescence.iridescenceFactor, 0);
+    material.iridescenceIor = finite(iridescence.iridescenceIor, 1.3);
+    material.iridescenceThicknessMinimum = finite(
+      iridescence.iridescenceThicknessMinimum,
+      100,
+    );
+    material.iridescenceThicknessMaximum = finite(
+      iridescence.iridescenceThicknessMaximum,
+      400,
+    );
+  } else {
+    deleteFields(material, extensionFields.KHR_materials_iridescence);
+  }
+
+  const anisotropy = record(extensions.KHR_materials_anisotropy);
+  if (hasOwn(extensions, 'KHR_materials_anisotropy')) {
+    material.anisotropy = finite(anisotropy.anisotropyStrength, 0);
+    material.anisotropyRotation = finite(anisotropy.anisotropyRotation, 0);
+  } else {
+    deleteFields(material, extensionFields.KHR_materials_anisotropy);
+  }
+
+  const dispersion = record(extensions.KHR_materials_dispersion);
+  if (hasOwn(extensions, 'KHR_materials_dispersion')) {
+    material.dispersion = finite(dispersion.dispersion, 0);
+  } else {
+    deleteFields(material, extensionFields.KHR_materials_dispersion);
+  }
 
   const metallicRoughnessTexture = pbr.metallicRoughnessTexture;
   assignTexture(material, 'baseColorTexture', textureRef(
@@ -494,13 +584,14 @@ function normalizeMaterial(
       'iridescenceTexture',
       'iridescenceThicknessTexture',
       'anisotropyTexture',
-    ].filter((field) => Boolean((material as Record<string, unknown>)[field])),
+    ].filter((field) => Boolean((material as unknown as Record<string, unknown>)[field])),
   };
+  material.metadata.original = materialPayload(material);
 }
 
 export function normalizeCompleteGltfMaterials(
   input: KyxosSceneContract,
-  report: ImportReport,
+  report: CompleteGltfMaterialImportReport,
 ): KyxosSceneContract {
   const scene = structuredClone(input);
   for (const materialValue of Object.values(scene.materials)) {
