@@ -1,10 +1,25 @@
-import type { EditorViewPreset, KyxosViewer } from '@kyxos/viewer';
+import type {
+  EditorCameraBookmarkState,
+  EditorViewPreset,
+  KyxosViewer,
+} from '@kyxos/viewer';
 
 import { BrowserKyxosViewportAdapter } from './index';
 
 export type EditorViewportCommand =
   | { command: 'view'; preset: EditorViewPreset }
-  | { command: 'frame-all' };
+  | { command: 'frame-all' }
+  | { command: 'capture-bookmark'; requestId: string }
+  | {
+      command: 'restore-bookmark';
+      state: EditorCameraBookmarkState;
+      slot?: number;
+    };
+
+export interface EditorCameraBookmarkResponse {
+  requestId: string;
+  state: EditorCameraBookmarkState;
+}
 
 interface AdapterInternals {
   viewer: KyxosViewer | null;
@@ -42,8 +57,25 @@ export function installEditorViewportCommandBridge(): void {
       const command = (event as CustomEvent<EditorViewportCommand>).detail;
       const viewer = internals(this).viewer;
       if (!viewer || !command) return;
-      if (command.command === 'view') viewer.setEditorViewPreset(command.preset);
-      else if (command.command === 'frame-all') viewer.frameAllEditorContent();
+      if (command.command === 'view') {
+        viewer.setEditorViewPreset(command.preset);
+      } else if (command.command === 'frame-all') {
+        viewer.frameAllEditorContent();
+      } else if (command.command === 'capture-bookmark') {
+        canvas.dispatchEvent(
+          new CustomEvent<EditorCameraBookmarkResponse>(
+            'kyxos:editor-camera-bookmark-state',
+            {
+              detail: {
+                requestId: command.requestId,
+                state: viewer.captureEditorCameraBookmark(),
+              },
+            },
+          ),
+        );
+      } else if (command.command === 'restore-bookmark') {
+        viewer.restoreEditorCameraBookmark(command.state, command.slot);
+      }
     };
     canvas.addEventListener('kyxos:editor-viewport-command', onCommand);
     states.set(this, { canvas, onCommand });
