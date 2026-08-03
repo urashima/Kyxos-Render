@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 
-const opaqueTwoByTwoPng = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFUlEQVR4nGP8////fwYGBgYmBigAAD34BADaOyqcAAAAAElFTkSuQmCC',
+const opaqueAtlasPng = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAALElEQVR42u3OMQEAAAgDoGn/zjOGDyRg2jaPNs8EBAQEBAQEBAQEBAQEBAQOTYgEPLW/9r8AAAAASUVORK5CYII=',
   'base64',
 );
 
@@ -14,9 +14,9 @@ test('Texture Atlas editor slices, edits, validates, undoes and exports frames',
   await page.locator('#atlas-image-input').setInputFiles({
     name: 'sprite.png',
     mimeType: 'image/png',
-    buffer: opaqueTwoByTwoPng,
+    buffer: opaqueAtlasPng,
   });
-  await expect(page.locator('#atlas-image-info')).toContainText('2 × 2');
+  await expect(page.locator('#atlas-image-info')).toContainText('32 × 32');
   await expect(page.locator('#atlas-canvas')).toBeVisible();
 
   await page.getByRole('button', { name: 'Add frame' }).click();
@@ -54,12 +54,12 @@ test('Texture Atlas editor creates deterministic prompt-driven grids', async ({ 
   await page.locator('#atlas-image-input').setInputFiles({
     name: 'grid.png',
     mimeType: 'image/png',
-    buffer: opaqueTwoByTwoPng,
+    buffer: opaqueAtlasPng,
   });
   const answers = ['1', '1', '0', '0'];
   page.on('dialog', async (dialog) => dialog.accept(answers.shift() ?? '0'));
   await page.getByRole('button', { name: 'Grid slice' }).click();
   await expect(page.locator('.atlas-frame-row')).toHaveCount(1);
-  await expect(page.locator('.atlas-frame-row span')).toHaveText('0, 0 · 2 × 2');
+  await expect(page.locator('.atlas-frame-row span')).toHaveText('0, 0 · 32 × 32');
   await expect(page.locator('#atlas-status')).toContainText('Created 1 grid frames');
 });
