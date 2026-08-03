@@ -17,7 +17,7 @@ concurrency:
 jobs:
   patch-cross-browser-assets:
     if: github.head_ref == 'agent/fix-save-publish-public-loading-v2'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     timeout-minutes: 5
     steps:
       - name: Checkout pull request head
