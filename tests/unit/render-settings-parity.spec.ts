@@ -9,7 +9,7 @@ import {
   createCanonicalQualityPreset,
   enforceCanonicalEffectRules,
   resolveScreenSpaceSssRenderSettings,
-} from '@kyxos/scene-contract/render-settings';
+} from '../../packages/scene-contract/src/render-settings';
 
 describe('canonical render settings parity', () => {
   it('covers every Playground effect with one shared label and switch/slider schema', () => {
@@ -41,10 +41,13 @@ describe('canonical render settings parity', () => {
     expect(high.temporalReprojection.enabled).toBe(true);
     expect(high.temporalDenoise.enabled).toBe(true);
 
-    const ssaa = enforceCanonicalEffectRules({
-      ...high,
-      ssaa: { ...high.ssaa, enabled: true },
-    }, 'ssaa');
+    const ssaa = enforceCanonicalEffectRules(
+      {
+        ...high,
+        ssaa: { ...high.ssaa, enabled: true },
+      },
+      'ssaa',
+    );
     expect(ssaa.ssaa.enabled).toBe(true);
     expect(ssaa.traa.enabled).toBe(false);
     expect(ssaa.fxaa.enabled).toBe(false);
