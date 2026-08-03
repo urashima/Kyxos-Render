@@ -73,15 +73,12 @@ export function installNonBlockingThumbnailCapture(): void {
       throw new Error('Viewport adapter is not mounted.');
     }
 
-    // A GLB import is committed when the SceneDocument and Viewer finish loading.
-    // The caller already treats thumbnail failures as non-fatal. Use a plain,
-    // structured-clone-safe value because DiagnosticConsole persists the reason.
+    // Thumbnail generation is optional for publishing. During an import the
+    // viewport can be deliberately suspended, so return a valid fallback instead
+    // of rejecting the entire immutable-release transaction.
     if (hasActiveImportTransaction()) {
-      canvas.dataset.thumbnailCapture = 'aborted-active-import';
-      throw {
-        name: 'ThumbnailDeferred',
-        message: 'Thumbnail generation is deferred until after import.',
-      };
+      canvas.dataset.thumbnailCapture = 'fallback-active-import';
+      return fallbackThumbnail();
     }
 
     // Automated/software renderers can block GPU readback for minutes. Publishing
