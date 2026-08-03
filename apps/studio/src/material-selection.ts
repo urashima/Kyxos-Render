@@ -71,19 +71,29 @@ function installStyles(): void {
   document.head.append(style);
 }
 
+function setDatasetValue(
+  target: HTMLElement,
+  key: 'selectedMaterialId' | 'selectedMaterialName' | 'selectedMaterialSlot',
+  value?: string,
+): void {
+  if (value == null) {
+    if (target.dataset[key] !== undefined) delete target.dataset[key];
+    return;
+  }
+  if (target.dataset[key] !== value) target.dataset[key] = value;
+}
+
 function syncMaterialPresentation(session: ProjectSession): void {
   const material = currentMaterial(session);
   const canvas = document.querySelector<HTMLCanvasElement>('#studio-canvas');
   if (canvas) {
-    if (material) {
-      canvas.dataset.selectedMaterialId = material.id;
-      canvas.dataset.selectedMaterialName = material.name;
-      canvas.dataset.selectedMaterialSlot = String(material.slot);
-    } else {
-      delete canvas.dataset.selectedMaterialId;
-      delete canvas.dataset.selectedMaterialName;
-      delete canvas.dataset.selectedMaterialSlot;
-    }
+    setDatasetValue(canvas, 'selectedMaterialId', material?.id);
+    setDatasetValue(canvas, 'selectedMaterialName', material?.name);
+    setDatasetValue(
+      canvas,
+      'selectedMaterialSlot',
+      material ? String(material.slot) : undefined,
+    );
   }
 
   const materialSection = [
@@ -104,8 +114,10 @@ function syncMaterialPresentation(session: ProjectSession): void {
     const summary = materialSection.querySelector(':scope > summary');
     summary?.insertAdjacentElement('afterend', banner);
   }
-  banner.querySelector('strong')!.textContent = material.name;
-  banner.title = `${material.name} · ${material.id}`;
+  const name = banner.querySelector<HTMLElement>('strong');
+  if (name && name.textContent !== material.name) name.textContent = material.name;
+  const title = `${material.name} · ${material.id}`;
+  if (banner.title !== title) banner.title = title;
 
   const slotControl = materialSection.querySelector<HTMLSelectElement>(
     'select[aria-label="Material slot"]',
@@ -140,15 +152,16 @@ function install(): void {
       });
     };
 
-    const observer = new MutationObserver(scheduleSync);
-    const root = document.querySelector('#app');
-    if (root) observer.observe(root, { childList: true, subtree: true });
+    // Scene and selection events are the authoritative causes of Inspector
+    // changes. A previous document-wide MutationObserver observed the banner
+    // inserted by syncMaterialPresentation itself; assigning textContent then
+    // generated another childList record forever and trapped the browser in a
+    // microtask feedback loop immediately after GLB activation.
     session.document.addEventListener('change', scheduleSync);
     session.selection.addEventListener('change', scheduleSync);
     scheduleSync();
 
     return () => {
-      observer.disconnect();
       session.document.removeEventListener('change', scheduleSync);
       session.selection.removeEventListener('change', scheduleSync);
       disposeOriginal();
