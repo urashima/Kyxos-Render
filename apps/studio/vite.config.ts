@@ -11,6 +11,7 @@ export default defineConfig({
       input: {
         studio: fileURLToPath(new URL('./index.html', import.meta.url)),
         'ui-lab': fileURLToPath(new URL('./ui-lab/index.html', import.meta.url)),
+        'texture-atlas': fileURLToPath(new URL('./texture-atlas/index.html', import.meta.url)),
       },
     },
   },
