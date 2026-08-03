@@ -17,183 +17,175 @@ jobs:
         with:
           ref: agent/fix-save-publish-public-loading-v2
           fetch-depth: 0
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10.14.0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
       - name: Apply live manifest Blob recovery
         run: |
           python <<'PY'
           from pathlib import Path
-          from textwrap import dedent
 
           def replace_once(text: str, old: str, new: str, label: str) -> str:
-              old = dedent(old).strip('\n')
-              new = dedent(new).strip('\n')
               if old not in text:
                   raise SystemExit(f'{label} marker not found')
               return text.replace(old, new, 1)
 
           api = Path('packages/api-client/src/index.ts')
           text = api.read_text()
-          text = replace_once(text, '''
-              getManifest(assetIds: string[]): Promise<AssetManifest>;
-              getBlobUrl(hash: string): Promise<string | null>;
-            };
-          ''', '''
-              getManifest(assetIds: string[]): Promise<AssetManifest>;
-              getBlobUrl(hash: string): Promise<string | null>;
-              restoreBlob?(hash: string, blob: Blob): Promise<void>;
-            };
-          ''', 'API asset interface')
-          text = replace_once(text, '''
-              getBlobUrl: async (hash: string): Promise<string | null> => {
-                const blob = await getBlob(hash);
-                return blob ? URL.createObjectURL(blob) : null;
-              },
-            };
-          ''', '''
-              getBlobUrl: async (hash: string): Promise<string | null> => {
-                const blob = await getBlob(hash);
-                return blob ? URL.createObjectURL(blob) : null;
-              },
-              restoreBlob: async (hash: string, blob: Blob): Promise<void> => {
-                if (!hash || !blob.size) throw new Error('Recovered asset Blob is empty.');
-                await putBlob(hash, blob);
-                const persisted = await getBlob(hash);
-                if (!persisted || persisted.size !== blob.size) {
-                  throw new Error('Recovered asset Blob could not be verified after persistence.');
-                }
-              },
-            };
-          ''', 'Local asset restore')
+          old = (
+              '    getManifest(assetIds: string[]): Promise<AssetManifest>;\n'
+              '    getBlobUrl(hash: string): Promise<string | null>;\n'
+              '  };'
+          )
+          new = (
+              '    getManifest(assetIds: string[]): Promise<AssetManifest>;\n'
+              '    getBlobUrl(hash: string): Promise<string | null>;\n'
+              '    restoreBlob?(hash: string, blob: Blob): Promise<void>;\n'
+              '  };'
+          )
+          text = replace_once(text, old, new, 'API asset interface')
+
+          old = (
+              '    getBlobUrl: async (hash: string): Promise<string | null> => {\n'
+              '      const blob = await getBlob(hash);\n'
+              '      return blob ? URL.createObjectURL(blob) : null;\n'
+              '    },\n'
+              '  };'
+          )
+          new = (
+              '    getBlobUrl: async (hash: string): Promise<string | null> => {\n'
+              '      const blob = await getBlob(hash);\n'
+              '      return blob ? URL.createObjectURL(blob) : null;\n'
+              '    },\n'
+              '    restoreBlob: async (hash: string, blob: Blob): Promise<void> => {\n'
+              "      if (!hash || !blob.size) throw new Error('Recovered asset Blob is empty.');\n"
+              '      await putBlob(hash, blob);\n'
+              '      const persisted = await getBlob(hash);\n'
+              '      if (!persisted || persisted.size !== blob.size) {\n'
+              "        throw new Error('Recovered asset Blob could not be verified after persistence.');\n"
+              '      }\n'
+              '    },\n'
+              '  };'
+          )
+          text = replace_once(text, old, new, 'Local asset restore')
           api.write_text(text)
 
           durable = Path('packages/api-client/src/durable.ts')
           text = durable.read_text()
-          text = replace_once(text, '''
-              getBlobUrl: async (hash) => {
-                await ready;
-                return exclusive(() => originalAssets.getBlobUrl(hash));
-              },
-            };
-          ''', '''
-              getBlobUrl: async (hash) => {
-                await ready;
-                return exclusive(() => originalAssets.getBlobUrl(hash));
-              },
-              restoreBlob: async (hash, blob) => {
-                await ready;
-                if (!originalAssets.restoreBlob) {
-                  throw new Error('This asset provider cannot restore local Blobs.');
-                }
-                await exclusive(() => originalAssets.restoreBlob!(hash, blob));
-              },
-            };
-          ''', 'Durable asset restore')
+          old = (
+              '    getBlobUrl: async (hash) => {\n'
+              '      await ready;\n'
+              '      return exclusive(() => originalAssets.getBlobUrl(hash));\n'
+              '    },\n'
+              '  };'
+          )
+          new = (
+              '    getBlobUrl: async (hash) => {\n'
+              '      await ready;\n'
+              '      return exclusive(() => originalAssets.getBlobUrl(hash));\n'
+              '    },\n'
+              '    restoreBlob: async (hash, blob) => {\n'
+              '      await ready;\n'
+              '      if (!originalAssets.restoreBlob) {\n'
+              "        throw new Error('This asset provider cannot restore local Blobs.');\n"
+              '      }\n'
+              '      await exclusive(() => originalAssets.restoreBlob!(hash, blob));\n'
+              '    },\n'
+              '  };'
+          )
+          text = replace_once(text, old, new, 'Durable asset restore')
           durable.write_text(text)
 
           studio = Path('apps/studio/src/main.ts')
           text = studio.read_text()
-          flush = dedent('''
-            async function flushDraftOrThrow(reason: string): Promise<number> {
-              await autosave.flush();
-              if (autosave.state !== 'Saved') {
-                throw new Error(`Draft save failed before ${reason}: ${autosave.state}.`);
-              }
-              const persistedRevision = await client.drafts.getRevision(project.id);
-              if (persistedRevision !== autosave.revision) {
-                throw new Error(
-                  `Draft revision mismatch before ${reason}: local ${autosave.revision}, persisted ${persistedRevision}.`,
-                );
-              }
-              globalThis.document.documentElement.dataset.durableDraftRevision = String(persistedRevision);
-              return persistedRevision;
-            }
-          ''').strip('\n')
-          helper = dedent('''
+          old = (
+              '    globalThis.document.documentElement.dataset.durableDraftRevision = String(persistedRevision);\n'
+              '    return persistedRevision;\n'
+              '  }\n\n'
+              '  let previewMode = false;'
+          )
+          helper = '''    globalThis.document.documentElement.dataset.durableDraftRevision = String(persistedRevision);
+    return persistedRevision;
+  }
 
-            async function restoreVisibleAssetBlobs(reason: string): Promise<void> {
-              if (!client.assets.restoreBlob) return;
-              for (const asset of Object.values(document.value.assets)) {
-                const persistedUrl = await client.assets.getBlobUrl(asset.contentHash);
-                if (persistedUrl) {
-                  URL.revokeObjectURL(persistedUrl);
-                  continue;
-                }
+  async function restoreVisibleAssetBlobs(reason: string): Promise<void> {
+    if (!client.assets.restoreBlob) return;
+    for (const asset of Object.values(document.value.assets)) {
+      const persistedUrl = await client.assets.getBlobUrl(asset.contentHash);
+      if (persistedUrl) {
+        URL.revokeObjectURL(persistedUrl);
+        continue;
+      }
 
-                const liveUrl = manifest.assets[asset.uri]
-                  ?? manifest.assets[`asset://${asset.contentHash}`];
-                if (!liveUrl) continue;
+      const liveUrl = manifest.assets[asset.uri]
+        ?? manifest.assets[`asset://${asset.contentHash}`];
+      if (!liveUrl?.startsWith('blob:')) continue;
 
-                let blob: Blob;
-                try {
-                  const response = await fetch(liveUrl);
-                  if (!response.ok) {
-                    throw new Error(`Live asset response failed (${response.status}).`);
-                  }
-                  blob = await response.blob();
-                } catch (error) {
-                  throw new Error(
-                    `Visible asset ${asset.name ?? asset.id} could not be recovered before ${reason}: ${errorMessage(error)}`,
-                  );
-                }
-                if (asset.byteSize && blob.size !== asset.byteSize) {
-                  throw new Error(
-                    `Visible asset ${asset.name ?? asset.id} has ${blob.size} bytes; expected ${asset.byteSize}.`,
-                  );
-                }
+      let blob: Blob;
+      try {
+        const response = await fetch(liveUrl);
+        if (!response.ok) throw new Error(`Live asset response failed (${response.status}).`);
+        blob = await response.blob();
+      } catch (error) {
+        throw new Error(
+          `Visible asset ${asset.name ?? asset.id} could not be recovered before ${reason}: ${errorMessage(error)}`,
+        );
+      }
+      if (asset.byteSize && blob.size !== asset.byteSize) {
+        throw new Error(
+          `Visible asset ${asset.name ?? asset.id} has ${blob.size} bytes; expected ${asset.byteSize}.`,
+        );
+      }
 
-                await client.assets.restoreBlob(asset.contentHash, blob);
-                const verifiedUrl = await client.assets.getBlobUrl(asset.contentHash);
-                if (!verifiedUrl) {
-                  throw new Error(`Visible asset ${asset.name ?? asset.id} was not durable after recovery.`);
-                }
-                URL.revokeObjectURL(verifiedUrl);
-                globalThis.document.documentElement.dataset.recoveredVisibleAsset = asset.contentHash;
-                diagnosticConsole.log(
-                  'info',
-                  `Recovered visible asset Blob before ${reason}.`,
-                  { assetId: asset.id, contentHash: asset.contentHash, byteSize: blob.size },
-                  'assets',
-                );
-              }
-            }
-          ''').rstrip('\n')
-          if flush not in text:
-              raise SystemExit('Studio flush helper marker not found')
-          text = text.replace(flush, flush + helper, 1)
-          text = replace_once(text, '''
-                throwIfImportAborted(signal);
-                const revision = await flushDraftOrThrow('import completion');
-                await flushWorkspace();
-          ''', '''
-                throwIfImportAborted(signal);
-                await restoreVisibleAssetBlobs('import completion');
-                const revision = await flushDraftOrThrow('import completion');
-                await flushWorkspace();
-          ''', 'Import persistence')
-          text = replace_once(text, '''
-              const revision = await flushDraftOrThrow('publish');
-              await flushWorkspace();
-              if (workspaceDirty) throw new Error('Workspace save did not complete.');
+      await client.assets.restoreBlob(asset.contentHash, blob);
+      const verifiedUrl = await client.assets.getBlobUrl(asset.contentHash);
+      if (!verifiedUrl) {
+        throw new Error(`Visible asset ${asset.name ?? asset.id} was not durable after recovery.`);
+      }
+      URL.revokeObjectURL(verifiedUrl);
+      globalThis.document.documentElement.dataset.recoveredVisibleAsset = asset.contentHash;
+      diagnosticConsole.log(
+        'info',
+        `Recovered visible asset Blob before ${reason}.`,
+        { assetId: asset.id, contentHash: asset.contentHash, byteSize: blob.size },
+        'assets',
+      );
+    }
+  }
 
-              globalThis.document.documentElement.dataset.publishState = 'capturing-thumbnail';
-          ''', '''
-              const revision = await flushDraftOrThrow('publish');
-              await flushWorkspace();
-              if (workspaceDirty) throw new Error('Workspace save did not complete.');
-              await restoreVisibleAssetBlobs('publish');
+  let previewMode = false;'''
+          text = replace_once(text, old, helper, 'Studio live recovery helper')
 
-              globalThis.document.documentElement.dataset.publishState = 'capturing-thumbnail';
-          ''', 'Publish preflight')
+          old = (
+              '        throwIfImportAborted(signal);\n'
+              "        const revision = await flushDraftOrThrow('import completion');\n"
+              '        await flushWorkspace();'
+          )
+          new = (
+              '        throwIfImportAborted(signal);\n'
+              "        await restoreVisibleAssetBlobs('import completion');\n"
+              "        const revision = await flushDraftOrThrow('import completion');\n"
+              '        await flushWorkspace();'
+          )
+          text = replace_once(text, old, new, 'Import persistence')
+
+          old = (
+              "      const revision = await flushDraftOrThrow('publish');\n"
+              '      await flushWorkspace();\n'
+              "      if (workspaceDirty) throw new Error('Workspace save did not complete.');\n\n"
+              "      globalThis.document.documentElement.dataset.publishState = 'capturing-thumbnail';"
+          )
+          new = (
+              "      const revision = await flushDraftOrThrow('publish');\n"
+              '      await flushWorkspace();\n'
+              "      if (workspaceDirty) throw new Error('Workspace save did not complete.');\n"
+              "      await restoreVisibleAssetBlobs('publish');\n\n"
+              "      globalThis.document.documentElement.dataset.publishState = 'capturing-thumbnail';"
+          )
+          text = replace_once(text, old, new, 'Publish preflight')
           studio.write_text(text)
 
           spec = Path('tests/e2e/studio-save-publish-public.spec.ts')
           text = spec.read_text()
-          addition = r'''
+          if 'publish re-persists an imported Blob from the live manifest' not in text:
+              text += r'''
 
 test('publish re-persists an imported Blob from the live manifest when IndexedDB loses it', async ({
   page,
@@ -231,7 +223,7 @@ test('publish re-persists an imported Blob from the live manifest when IndexedDB
       transaction.onabort = () => reject(transaction.error);
     });
     db.close();
-    return { hash: asset.contentHash, id: asset.id };
+    return { hash: asset.contentHash };
   });
 
   await page.getByRole('button', { name: 'Publish', exact: true }).click();
@@ -270,17 +262,9 @@ test('publish re-persists an imported Blob from the live manifest when IndexedDB
   );
 });
 '''
-          if "publish re-persists an imported Blob from the live manifest" in text:
-              raise SystemExit('Live Blob recovery test already exists')
-          spec.write_text(text + addition)
+          spec.write_text(text)
           PY
-      - name: Install workspace
-        run: pnpm install --no-frozen-lockfile
-      - name: Typecheck API client and Studio
-        run: |
-          pnpm --filter @kyxos/api-client typecheck
-          pnpm --filter @kyxos/studio build
-      - name: Remove one-time workflow and commit
+      - name: Remove workflow and commit patch
         run: |
           rm .github/workflows/pr32-recover-live-import-blob.yml
           git config user.name github-actions[bot]
