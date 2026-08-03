@@ -122,7 +122,7 @@ function attach(canvas: HTMLCanvasElement, topbar: HTMLElement): void {
   const controls = document.createElement('div');
   controls.className = 'tool-group viewport-render-mode-group';
   controls.setAttribute('role', 'group');
-  controls.setAttribute('aria-label', 'Viewport render modes');
+  controls.setAttribute('aria-label', 'Viewport rendering');
 
   const label = document.createElement('span');
   label.className = 'toolbar-label';
