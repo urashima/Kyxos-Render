@@ -18,12 +18,40 @@ function viewer(adapter: BrowserKyxosViewportAdapter): KyxosViewer | null {
   return (adapter as unknown as { viewer: KyxosViewer | null }).viewer;
 }
 
+function canvas(adapter: BrowserKyxosViewportAdapter): HTMLCanvasElement | null {
+  return (adapter as unknown as { canvas: HTMLCanvasElement | null }).canvas;
+}
+
+function syncCanvasDiagnostics(
+  adapter: BrowserKyxosViewportAdapter,
+  settings: ViewportHelperSettings,
+): void {
+  const target = canvas(adapter);
+  if (!target) return;
+  target.dataset.editorGridVisible = String(settings.grid);
+  target.dataset.editorAxesVisible = String(settings.axes);
+  target.dataset.editorBoundsVisible = String(settings.bounds);
+  target.dataset.editorHoverVisible = String(settings.hover);
+  target.dataset.editorSkeletonsVisible = String(settings.skeletons);
+  target.dataset.editorLightHelpersVisible = String(settings.lights);
+  target.dataset.editorCameraHelpersVisible = String(settings.cameras);
+  target.dispatchEvent(new CustomEvent('kyxos:editor-viewport-helper-change', {
+    bubbles: true,
+    composed: true,
+    detail: { settings: structuredClone(settings) },
+  }));
+}
+
 export function getAdapterViewportHelpers(
   adapter: BrowserKyxosViewportAdapter,
 ): ViewportHelperSettings {
-  return structuredClone(
-    helperSettings.get(adapter) ?? DEFAULT_EDITOR_VIEWPORT_HELPERS,
+  const runtime = viewer(adapter)?.getEditorViewportHelperSettings();
+  const settings = structuredClone(
+    runtime ?? helperSettings.get(adapter) ?? DEFAULT_EDITOR_VIEWPORT_HELPERS,
   );
+  helperSettings.set(adapter, settings);
+  syncCanvasDiagnostics(adapter, settings);
+  return settings;
 }
 
 const prototype = BrowserKyxosViewportAdapter.prototype as BrowserKyxosViewportAdapter & {
@@ -42,7 +70,10 @@ if (!prototype[installed]) {
       ...settings,
     };
     helperSettings.set(this, next);
-    viewer(this)?.setEditorViewportHelperSettings(next);
+    const runtime = viewer(this);
+    runtime?.setEditorViewportHelperSettings(next);
+    runtime?.refreshEditorViewportHelpers();
+    syncCanvasDiagnostics(this, next);
     this.dispatchEvent(new CustomEvent('tool', {
       detail: { viewportHelpers: structuredClone(next) },
     }));
