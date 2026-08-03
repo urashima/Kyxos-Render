@@ -180,6 +180,7 @@ export interface KyxosApiClient {
     completeUpload(assetId: string, metadata?: Record<string, unknown>): Promise<void>;
     getManifest(assetIds: string[]): Promise<AssetManifest>;
     getBlobUrl(hash: string): Promise<string | null>;
+    restoreBlob?(hash: string, blob: Blob): Promise<void>;
   };
   drafts: {
     load(projectId: string): Promise<DraftRecord | null>;
@@ -801,6 +802,14 @@ export class LocalKyxosApiClient implements KyxosApiClient {
     getBlobUrl: async (hash: string): Promise<string | null> => {
       const blob = await getBlob(hash);
       return blob ? URL.createObjectURL(blob) : null;
+    },
+    restoreBlob: async (hash: string, blob: Blob): Promise<void> => {
+      if (!hash || !blob.size) throw new Error('Recovered asset Blob is empty.');
+      await putBlob(hash, blob);
+      const persisted = await getBlob(hash);
+      if (!persisted || persisted.size !== blob.size) {
+        throw new Error('Recovered asset Blob could not be verified after persistence.');
+      }
     },
   };
 

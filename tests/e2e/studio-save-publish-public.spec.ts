@@ -162,3 +162,79 @@ test('imported scene saves durably, publishes, opens and reloads from the public
   await expect(publicPage.locator('html')).toHaveAttribute('data-public-viewer-ready', 'true');
   await expect(publicPage.locator('.loading')).toHaveCount(0);
 });
+
+
+test('publish re-persists an imported Blob from the live manifest when IndexedDB loses it', async ({
+  page,
+  context,
+}) => {
+  test.setTimeout(300_000);
+  await createProject(page);
+
+  await page.locator('#asset-import-input').setInputFiles({
+    name: 'live-blob-recovery.glb',
+    mimeType: 'model/gltf-binary',
+    buffer: Buffer.from(createTriangleGlb()),
+  });
+  await expect(page.locator('html')).toHaveAttribute(
+    'data-import-durable',
+    'true',
+    { timeout: 120_000 },
+  );
+  await expect(page.locator('.save-state')).toHaveText('Saved', { timeout: 60_000 });
+
+  const imported = await page.evaluate(async () => {
+    const api = (globalThis as any).kyxosStudio?.api;
+    const asset = Object.values(api.getScene().assets)[0] as any;
+    if (!asset) throw new Error('Imported asset is unavailable.');
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('kyxos-assets', 1);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    await new Promise<void>((resolve, reject) => {
+      const transaction = db.transaction('blobs', 'readwrite');
+      transaction.objectStore('blobs').delete(asset.contentHash);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(transaction.error);
+    });
+    db.close();
+    return { hash: asset.contentHash };
+  });
+
+  await page.getByRole('button', { name: 'Publish', exact: true }).click();
+  await expect(page.locator('html')).toHaveAttribute('data-publish-state', 'published', {
+    timeout: 90_000,
+  });
+  await expect(page.locator('html')).toHaveAttribute(
+    'data-recovered-visible-asset',
+    imported.hash,
+  );
+
+  const restored = await page.evaluate(async ({ hash }) => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('kyxos-assets', 1);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const exists = await new Promise<boolean>((resolve, reject) => {
+      const request = db.transaction('blobs').objectStore('blobs').get(hash);
+      request.onsuccess = () => resolve(request.result instanceof Blob);
+      request.onerror = () => reject(request.error);
+    });
+    db.close();
+    return exists;
+  }, imported);
+  expect(restored).toBe(true);
+
+  const href = await page.locator('.viewport-overlay a', { hasText: 'Open' }).getAttribute('href');
+  expect(href).toBeTruthy();
+  const publicPage = await context.newPage();
+  await publicPage.goto(href!);
+  await expect(publicPage.locator('html')).toHaveAttribute(
+    'data-public-viewer-stage',
+    'ready',
+    { timeout: 120_000 },
+  );
+});

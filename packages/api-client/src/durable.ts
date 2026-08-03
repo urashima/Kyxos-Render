@@ -298,6 +298,13 @@ function createDurableLocalClient(): KyxosApiClient {
       await ready;
       return exclusive(() => originalAssets.getBlobUrl(hash));
     },
+    restoreBlob: async (hash, blob) => {
+      await ready;
+      if (!originalAssets.restoreBlob) {
+        throw new Error('This asset provider cannot restore local Blobs.');
+      }
+      await exclusive(() => originalAssets.restoreBlob!(hash, blob));
+    },
   };
 
   client.drafts = {

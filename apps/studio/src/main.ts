@@ -325,6 +325,51 @@ async function openProject(project: ProjectSummary): Promise<void> {
     return persistedRevision;
   }
 
+  async function restoreVisibleAssetBlobs(reason: string): Promise<void> {
+    if (!client.assets.restoreBlob) return;
+    for (const asset of Object.values(document.value.assets)) {
+      const persistedUrl = await client.assets.getBlobUrl(asset.contentHash);
+      if (persistedUrl) {
+        URL.revokeObjectURL(persistedUrl);
+        continue;
+      }
+
+      const liveUrl = manifest.assets[asset.uri]
+        ?? manifest.assets[`asset://${asset.contentHash}`];
+      if (!liveUrl?.startsWith('blob:')) continue;
+
+      let blob: Blob;
+      try {
+        const response = await fetch(liveUrl);
+        if (!response.ok) throw new Error(`Live asset response failed (${response.status}).`);
+        blob = await response.blob();
+      } catch (error) {
+        throw new Error(
+          `Visible asset ${asset.name ?? asset.id} could not be recovered before ${reason}: ${errorMessage(error)}`,
+        );
+      }
+      if (asset.byteSize && blob.size !== asset.byteSize) {
+        throw new Error(
+          `Visible asset ${asset.name ?? asset.id} has ${blob.size} bytes; expected ${asset.byteSize}.`,
+        );
+      }
+
+      await client.assets.restoreBlob(asset.contentHash, blob);
+      const verifiedUrl = await client.assets.getBlobUrl(asset.contentHash);
+      if (!verifiedUrl) {
+        throw new Error(`Visible asset ${asset.name ?? asset.id} was not durable after recovery.`);
+      }
+      URL.revokeObjectURL(verifiedUrl);
+      globalThis.document.documentElement.dataset.recoveredVisibleAsset = asset.contentHash;
+      diagnosticConsole.log(
+        'info',
+        `Recovered visible asset Blob before ${reason}.`,
+        { assetId: asset.id, contentHash: asset.contentHash, byteSize: blob.size },
+        'assets',
+      );
+    }
+  }
+
   let previewMode = false;
   let activeAnimationId = initial.animations.find((entry) => entry.autoplay)?.id ?? initial.animations[0]?.id;
   let animationPlaying = false;
@@ -2493,6 +2538,7 @@ async function importAsset(
       progress: 0.98,
       async run(_current, signal) {
         throwIfImportAborted(signal);
+        await restoreVisibleAssetBlobs('import completion');
         const revision = await flushDraftOrThrow('import completion');
         await flushWorkspace();
         if (workspaceDirty) {
@@ -2559,6 +2605,7 @@ async function importAsset(
       const revision = await flushDraftOrThrow('publish');
       await flushWorkspace();
       if (workspaceDirty) throw new Error('Workspace save did not complete.');
+      await restoreVisibleAssetBlobs('publish');
 
       globalThis.document.documentElement.dataset.publishState = 'capturing-thumbnail';
       let thumbnail: Blob | undefined;
