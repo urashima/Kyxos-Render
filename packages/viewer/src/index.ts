@@ -3,6 +3,7 @@ import './gltfNativeLoad';
 import './embeddedGltfTextureApi';
 import './materialEditApi';
 import './materialCompleteApi';
+import './materialTransparencyApi';
 import './animationApi';
 import './lightingApi';
 import './capabilityApi';
