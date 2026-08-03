@@ -33,13 +33,14 @@ test('Studio saves, recalls, renames and deletes editor camera bookmarks', async
   await createStudioProject(page);
 
   const canvas = page.locator('#studio-canvas');
-  const view = page.getByLabel('Viewport view');
-  const bookmarks = page.getByLabel('Camera bookmark');
+  const cameraControls = page.getByRole('group', { name: 'Viewport camera' });
+  const view = cameraControls.getByLabel('Viewport view');
+  const bookmarks = cameraControls.getByLabel('Camera bookmark');
 
   await view.selectOption('front');
   await expect(canvas).toHaveAttribute('data-editor-view', 'front');
   await bookmarks.selectOption('1');
-  await page.getByRole('button', { name: 'Save View', exact: true }).click();
+  await cameraControls.getByRole('button', { name: 'Save View', exact: true }).click();
   await expect(canvas).toHaveAttribute('data-editor-bookmark-saved', '1');
   await expect.poll(() => sceneBookmarks(page)).toEqual([
     { name: 'View 1', slot: 1, preset: 'front', projection: 'orthographic' },
@@ -47,7 +48,7 @@ test('Studio saves, recalls, renames and deletes editor camera bookmarks', async
 
   await view.selectOption('right');
   await expect(canvas).toHaveAttribute('data-editor-view', 'right');
-  await page.getByRole('button', { name: 'Recall', exact: true }).click();
+  await cameraControls.getByRole('button', { name: 'Recall', exact: true }).click();
   await expect(canvas).toHaveAttribute('data-editor-bookmark-slot', '1');
   await expect(canvas).toHaveAttribute('data-editor-view', 'front');
 
@@ -61,7 +62,7 @@ test('Studio saves, recalls, renames and deletes editor camera bookmarks', async
 
   await bookmarks.selectOption('2');
   page.once('dialog', (dialog) => dialog.accept('Top Review'));
-  await page.getByRole('button', { name: 'Rename', exact: true }).click();
+  await cameraControls.getByRole('button', { name: 'Rename', exact: true }).click();
   await expect(bookmarks.locator('option[value="2"]')).toHaveText('2 · Top Review');
   await expect.poll(() => sceneBookmarks(page)).toContainEqual({
     name: 'Top Review',
@@ -70,7 +71,7 @@ test('Studio saves, recalls, renames and deletes editor camera bookmarks', async
     projection: 'orthographic',
   });
 
-  await page.getByRole('button', { name: 'Delete', exact: true }).click();
+  await cameraControls.getByRole('button', { name: 'Delete', exact: true }).click();
   await expect(bookmarks.locator('option[value="2"]')).toHaveText('2 · Empty');
   await expect.poll(() => sceneBookmarks(page)).toEqual([
     { name: 'View 1', slot: 1, preset: 'front', projection: 'orthographic' },
