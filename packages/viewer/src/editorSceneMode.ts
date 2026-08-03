@@ -26,6 +26,7 @@ interface StudioImportLifecycleDetail {
 }
 
 interface ViewerInternals {
+  scene?: { children: Object3D[] };
   modelRoot?: Group;
   animateScene?: (elapsed: number, delta: number) => void;
   animationEnabled?: boolean;
@@ -134,13 +135,23 @@ function clearModelRoot(viewer: KyxosViewer): void {
   internal.animationEnabled = false;
 }
 
-function clearUnmanagedPlaygroundLights(viewer: KyxosViewer): void {
-  const scene = (viewer as unknown as { scene?: { children: Object3D[] } }).scene;
+function clearStudioDefaultDecorations(viewer: KyxosViewer): void {
+  const scene = internals(viewer).scene;
   if (!scene) return;
+  let floorCount = 0;
+  let lightCount = 0;
   for (const child of [...scene.children]) {
-    const light = child as Object3D & { isLight?: boolean };
-    if (light.isLight && !light.userData.kyxosManagedLight) light.removeFromParent();
+    const object = child as Object3D & { isLight?: boolean };
+    const defaultAdornment = object.userData.kyxosDefaultSceneAdornment === true;
+    const unmanagedLight = object.isLight && object.userData.kyxosManagedLight !== true;
+    if (!defaultAdornment && !unmanagedLight) continue;
+    if (object.isLight) lightCount += 1;
+    else floorCount += 1;
+    object.removeFromParent();
+    disposeObject3D(object);
   }
+  viewer.canvas.dataset.studioDefaultFloor = floorCount ? 'removed' : 'absent';
+  viewer.canvas.dataset.studioDefaultLights = lightCount ? 'removed' : 'absent';
 }
 
 function bindImportLifecycle(viewer: KyxosViewer): void {
@@ -213,7 +224,7 @@ export function installEditorSceneModeExtension(ViewerClass: typeof KyxosViewer)
     internal.editorSceneLoading = true;
     if (studio) pauseStudioPipeline(this);
     clearModelRoot(this);
-    clearUnmanagedPlaygroundLights(this);
+    if (studio) clearStudioDefaultDecorations(this);
 
     try {
       await originalLoadScene.call(this, scene, resolver);
