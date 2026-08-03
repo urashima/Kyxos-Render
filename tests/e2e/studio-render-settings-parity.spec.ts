@@ -58,6 +58,7 @@ test('Studio, Public Viewer and Embed share Playground render settings and produ
       ),
     )
     .toBe('#d32d2d');
+  await page.close();
 
   const publicPage = await context.newPage();
   await publicPage.goto('/public/?slug=ui-fixture&backend=webgl2&theme=light');
@@ -69,6 +70,7 @@ test('Studio, Public Viewer and Embed share Playground render settings and produ
   );
   await expect(publicPage.locator('html')).toHaveAttribute('data-kx-product-theme', 'light');
   await expect(publicPage.getByRole('button', { name: /Use dark green and black theme/ })).toBeVisible();
+  await publicPage.close();
 
   // `site/embed` is the same built Public Viewer artifact copied by the Pages
   // composer. Exercise its no-UI mode on the shared build here; the Pages
@@ -83,4 +85,5 @@ test('Studio, Public Viewer and Embed share Playground render settings and produ
   );
   await expect(embedPage.locator('html')).toHaveAttribute('data-kx-product-theme', 'dark');
   await expect(embedPage.locator('.controls')).toHaveCount(0);
+  await embedPage.close();
 });
