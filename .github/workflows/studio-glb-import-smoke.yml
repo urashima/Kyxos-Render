@@ -27,6 +27,7 @@ on:
       - 'tests/unit/gltf-material-complete.spec.ts'
       - 'tests/unit/render-settings-parity.spec.ts'
       - 'tests/unit/studio-glb-report.spec.ts'
+      - 'playwright.config.ts'
       - '.github/workflows/studio-glb-import-smoke.yml'
 
 permissions:
@@ -62,6 +63,46 @@ jobs:
           tests/unit/gltf-authoring-parity.spec.ts
           tests/unit/gltf-material-complete.spec.ts
           tests/unit/render-settings-parity.spec.ts
+
+  live-blob-webkit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    steps:
+      - name: Checkout pull request
+        uses: actions/checkout@v4
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install workspace
+        run: pnpm install --no-frozen-lockfile
+      - name: Install WebKit
+        run: pnpm exec playwright install --with-deps webkit
+      - name: Run live Blob recovery in WebKit
+        env:
+          CI: true
+          KYXOS_WEBKIT_E2E: '1'
+        run: >-
+          pnpm exec playwright test
+          tests/e2e/studio-save-publish-public.spec.ts
+          --project=webkit
+          --workers=1
+          --retries=0
+          --timeout=120000
+          --grep 'publish re-persists an imported Blob from the live manifest when IndexedDB loses it'
+      - name: Upload WebKit diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: studio-glb-live-blob-webkit
+          if-no-files-found: ignore
+          path: |
+            test-results
+            playwright-report
 
   glb-browser:
     strategy:
