@@ -20,6 +20,7 @@ import { installScreenSpaceSSSExtension } from './materials/screenSpaceSSS';
 import { installScreenSpaceSSSDebugExtension } from './materials/screenSpaceSSSDebug';
 import { installViewerMetricsBroadcast } from './metricsBroadcast';
 import { installNonBlockingVisibilityRecovery } from './nonBlockingVisibilityRecovery';
+import { installRenderSettingsParity } from './renderSettingsParity';
 import { installSSSStudyModelExtension } from './scene/sssStudyModel';
 import { installSsrEnvironmentGuard } from './ssrEnvironmentGuard';
 import { installTimestampQueryGuard } from './timestampQueryGuard';
@@ -43,6 +44,7 @@ installGltfTextureDiagnostics(KyxosViewer);
 installSSSStudyModelExtension(KyxosViewer);
 installScreenSpaceSSSExtension(KyxosViewer);
 installScreenSpaceSSSDebugExtension(KyxosViewer);
+installRenderSettingsParity(KyxosViewer);
 installViewerMetricsBroadcast(KyxosViewer);
 
 export { KyxosViewer };
@@ -55,6 +57,28 @@ export {
   DEFAULT_EDITOR_VIEWPORT_HELPERS,
   type EditorViewportHelperSettings,
 } from './editorViewportHelpers';
+export {
+  DEFAULT_SCREEN_SPACE_SSS_RENDER_SETTINGS,
+  RENDER_BACKEND_OPTIONS,
+  RENDER_EFFECT_LABELS,
+  RENDER_EFFECT_ORDER,
+  RENDER_EFFECT_PARAMETERS,
+  RENDER_QUALITY_OPTIONS,
+  RENDER_TONE_MAPPING_OPTIONS,
+  SCREEN_SPACE_SSS_EFFECT,
+  SCREEN_SPACE_SSS_PARAMETERS,
+  SCREEN_SPACE_SSS_PRESETS,
+  createCanonicalQualityPreset,
+  enforceCanonicalEffectRules,
+  formatRenderControlValue,
+  mergeCanonicalEffectSettings,
+  resolveCanonicalEffects,
+  resolveScreenSpaceSssRenderSettings,
+  type CanonicalEffectState,
+  type RenderOption,
+  type RenderParameterDefinition,
+  type ScreenSpaceSssRenderSettings,
+} from '@kyxos/scene-contract/render-settings';
 export type { AnimationState, CameraState, PickResult } from './sceneTypes';
 export type {
   EditorTransformMode,
