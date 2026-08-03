@@ -9,6 +9,7 @@ permissions:
   contents: read
   pages: write
   id-token: write
+  issues: write
 
 concurrency:
   group: kyxos-pages-main
@@ -119,3 +120,33 @@ jobs:
           grep -q 'Kyxos UI Lab' ui-lab.html
           grep -q 'Kyxos Public Viewer' public.html
           grep -q 'Kyxos Public Viewer' embed.html
+
+      - name: Publish deployment receipt
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const marker = '<!-- kyxos-main-pages -->';
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = `${marker}\n### Main Pages deployment\n\n- Commit: \`${context.sha}\`\n- Run: ${runUrl}\n- Studio: https://urashima.github.io/Kyxos-Render/studio/\n- UI Lab: https://urashima.github.io/Kyxos-Render/studio/ui-lab/\n- Viewer: https://urashima.github.io/Kyxos-Render/latest/\n- Public Viewer: https://urashima.github.io/Kyxos-Render/public/\n- Deployment identity: https://urashima.github.io/Kyxos-Render/deployment.json\n\nThe production artifact, deployment identity, and all online product routes passed verification.`;
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: 20,
+              per_page: 100,
+            });
+            const existing = comments.find((comment) => comment.body?.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: 20,
+                body,
+              });
+            }
