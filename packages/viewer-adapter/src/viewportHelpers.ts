@@ -45,11 +45,14 @@ function syncCanvasDiagnostics(
 export function getAdapterViewportHelpers(
   adapter: BrowserKyxosViewportAdapter,
 ): ViewportHelperSettings {
+  // Adapter state is the authoring preference and must survive Viewer helper-root
+  // recreation during GLB replacement. Runtime state is only the first-mount seed.
+  const stored = helperSettings.get(adapter);
   const runtime = viewer(adapter)?.getEditorViewportHelperSettings();
   const settings = structuredClone(
-    runtime ?? helperSettings.get(adapter) ?? DEFAULT_EDITOR_VIEWPORT_HELPERS,
+    stored ?? runtime ?? DEFAULT_EDITOR_VIEWPORT_HELPERS,
   );
-  helperSettings.set(adapter, settings);
+  if (!stored) helperSettings.set(adapter, settings);
   syncCanvasDiagnostics(adapter, settings);
   return settings;
 }
