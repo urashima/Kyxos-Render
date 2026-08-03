@@ -1,0 +1,121 @@
+name: Deploy main Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: kyxos-pages-main
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Build production Pages site
+        env:
+          PAGES_BUILD: '1'
+        run: pnpm build:pages
+
+      - name: Add deployment identity
+        shell: bash
+        run: |
+          node <<'NODE'
+          const { mkdirSync, writeFileSync } = require('node:fs');
+          const metadata = {
+            repository: process.env.GITHUB_REPOSITORY,
+            ref: process.env.GITHUB_REF,
+            sha: process.env.GITHUB_SHA,
+            runId: process.env.GITHUB_RUN_ID,
+            runNumber: process.env.GITHUB_RUN_NUMBER,
+            deployedAt: new Date().toISOString(),
+          };
+          const json = `${JSON.stringify(metadata, null, 2)}\n`;
+          writeFileSync('site/deployment.json', json);
+          for (const route of ['latest', 'studio', 'public', 'embed']) {
+            mkdirSync(`site/${route}`, { recursive: true });
+            writeFileSync(`site/${route}/deployment.json`, json);
+          }
+          NODE
+
+      - name: Verify production artifact
+        shell: bash
+        run: |
+          test -f site/index.html
+          test -f site/latest/index.html
+          test -f site/studio/index.html
+          test -f site/studio/ui-lab/index.html
+          test -f site/public/index.html
+          test -f site/embed/index.html
+          test -f site/deployment.json
+          grep -q 'Kyxos WebGPU Realism Lab' site/latest/index.html
+          grep -q 'Kyxos Studio' site/studio/index.html
+          grep -q 'Kyxos UI Lab' site/studio/ui-lab/index.html
+          grep -q 'Kyxos Public Viewer' site/public/index.html
+          grep -q "${GITHUB_SHA}" site/deployment.json
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Deploy production Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Verify production routes online
+        shell: bash
+        env:
+          ROOT_URL: https://urashima.github.io/Kyxos-Render/
+        run: |
+          rm -f deployment.json root.html latest.html studio.html ui-lab.html public.html embed.html
+          for attempt in $(seq 1 24); do
+            cache_bust="?sha=${GITHUB_SHA}&attempt=${attempt}"
+            if curl --fail --silent --show-error --location -H 'Cache-Control: no-cache' "${ROOT_URL}deployment.json${cache_bust}" --output deployment.json && \
+               grep -q "${GITHUB_SHA}" deployment.json && \
+               curl --fail --silent --show-error --location -H 'Cache-Control: no-cache' "${ROOT_URL}${cache_bust}" --output root.html && \
+               curl --fail --silent --show-error --location -H 'Cache-Control: no-cache' "${ROOT_URL}latest/${cache_bust}" --output latest.html && \
+               curl --fail --silent --show-error --location -H 'Cache-Control: no-cache' "${ROOT_URL}studio/${cache_bust}" --output studio.html && \
+               curl --fail --silent --show-error --location -H 'Cache-Control: no-cache' "${ROOT_URL}studio/ui-lab/${cache_bust}" --output ui-lab.html && \
+               curl --fail --silent --show-error --location -H 'Cache-Control: no-cache' "${ROOT_URL}public/${cache_bust}" --output public.html && \
+               curl --fail --silent --show-error --location -H 'Cache-Control: no-cache' "${ROOT_URL}embed/${cache_bust}" --output embed.html; then
+              break
+            fi
+            rm -f deployment.json root.html latest.html studio.html ui-lab.html public.html embed.html
+            sleep 5
+          done
+          test -s deployment.json
+          grep -q "${GITHUB_SHA}" deployment.json
+          grep -q 'Kyxos WebGPU Realism Lab' latest.html
+          grep -q 'Kyxos Studio' studio.html
+          grep -q 'Kyxos UI Lab' ui-lab.html
+          grep -q 'Kyxos Public Viewer' public.html
+          grep -q 'Kyxos Public Viewer' embed.html
