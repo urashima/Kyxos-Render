@@ -304,7 +304,9 @@ test('Studio preserves glTF matrices, embedded PBR textures, skin weights and bo
   expect(sceneState.roughness).toBeCloseTo(0.55, 5);
 
   await page.getByText('Textured Skinned Mesh', { exact: true }).first().click();
-  await expect(page.getByLabel('Base Texture')).toHaveValue(sceneState.textureAssetId);
+  await expect(page.getByRole('combobox', { name: /base Color/i })).toHaveValue(
+    sceneState.textureAssetId,
+  );
 
   const initialPose = await canvas.getAttribute('data-gltf-bone-pose');
   expect(initialPose).toBeTruthy();
