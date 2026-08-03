@@ -16,6 +16,7 @@ on:
       - 'tests/e2e/studio-render-modes.spec.ts'
       - 'tests/e2e/studio-gltf-fidelity.spec.ts'
       - 'tests/unit/gltf-authoring-parity.spec.ts'
+      - 'tests/unit/gltf-material-complete.spec.ts'
       - 'tests/unit/studio-glb-report.spec.ts'
       - '.github/workflows/studio-glb-import-smoke.yml'
 
@@ -50,6 +51,7 @@ jobs:
           tests/unit/studio-glb-report.spec.ts
           tests/unit/gltf-bundler.spec.ts
           tests/unit/gltf-authoring-parity.spec.ts
+          tests/unit/gltf-material-complete.spec.ts
 
   glb-browser:
     strategy:
