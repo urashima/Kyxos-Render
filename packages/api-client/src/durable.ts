@@ -32,7 +32,11 @@ interface LocalStateShape {
   assets?: Record<string, {
     id: string;
     hash: string;
+    name?: string;
+    mimeType?: string;
+    byteSize?: number;
     completed?: boolean;
+    metadata?: Record<string, unknown>;
   }>;
   current?: Record<string, string>;
   disabled?: string[];
@@ -236,6 +240,7 @@ function createDurableLocalClient(): KyxosApiClient {
   const ready = migrateLegacyHeavyState();
   const client = gateClient(new LocalKyxosApiClient(), ready);
   const originalProjects = client.projects;
+  const originalAssets = client.assets;
 
   client.projects = {
     ...originalProjects,
@@ -273,6 +278,29 @@ function createDurableLocalClient(): KyxosApiClient {
         deleteRecord('drafts', projectId),
         deleteRecord('workspaces', projectId),
       ]);
+    },
+  };
+
+  client.assets = {
+    createUpload: async (input) => {
+      await ready;
+      return exclusive(() => originalAssets.createUpload(input));
+    },
+    upload: async (ticket, file) => {
+      await ready;
+      await originalAssets.upload(ticket, file);
+    },
+    completeUpload: async (assetId, metadata) => {
+      await ready;
+      await exclusive(() => originalAssets.completeUpload(assetId, metadata));
+    },
+    getManifest: async (assetIds) => {
+      await ready;
+      return exclusive(() => originalAssets.getManifest(assetIds));
+    },
+    getBlobUrl: async (hash) => {
+      await ready;
+      return exclusive(() => originalAssets.getBlobUrl(hash));
     },
   };
 
@@ -377,13 +405,35 @@ function createDurableLocalClient(): KyxosApiClient {
         const state = readState();
         const project = state.projects?.find((entry) => entry.id === projectId);
         if (!project) throw new Error('Project not found.');
-        const storedAssets = Object.values(state.assets ?? {});
-        for (const asset of Object.values(contract.assets)) {
-          const stored = storedAssets.find(
-            (entry) => entry.hash === asset.contentHash && entry.completed !== false,
-          );
-          if (!stored) throw new Error(`Missing asset ${asset.contentHash}.`);
+        state.assets ??= {};
+        let repairedAssetIndex = false;
+        for (const [assetKey, asset] of Object.entries(contract.assets)) {
+          const blobUrl = await originalAssets.getBlobUrl(asset.contentHash);
+          if (!blobUrl) throw new Error(`Missing asset ${asset.contentHash}.`);
+          URL.revokeObjectURL(blobUrl);
+
+          const stored = state.assets[assetKey];
+          if (
+            !stored ||
+            stored.hash !== asset.contentHash ||
+            stored.completed === false
+          ) {
+            state.assets[assetKey] = {
+              id: asset.id || assetKey,
+              hash: asset.contentHash,
+              name: asset.name ?? asset.id ?? assetKey,
+              mimeType: asset.mimeType ?? 'application/octet-stream',
+              byteSize: asset.byteSize ?? 0,
+              completed: true,
+              metadata: {
+                ...(stored?.metadata ?? {}),
+                recoveredFromSceneContract: true,
+              },
+            };
+            repairedAssetIndex = true;
+          }
         }
+        if (repairedAssetIndex) writeState(state);
 
         state.releases ??= [];
         const existingMeta = state.releases.find(

@@ -35,6 +35,24 @@ test('imported scene saves durably, publishes, opens and reloads from the public
   );
   await expect(page.locator('.save-state')).toHaveText('Saved', { timeout: 60_000 });
 
+  // Reproduce the mobile failure where a concurrent Draft/Workspace save
+  // overwrote the just-completed GLB asset metadata. The binary Blob remains
+  // in IndexedDB, so Publish must repair the lightweight asset index from
+  // the Scene Contract instead of requiring a reimport.
+  const simulatedLostAsset = await page.evaluate(() => {
+    const api = (globalThis as any).kyxosStudio?.api;
+    const scene = api.getScene();
+    const asset = Object.values(scene.assets)[0] as any;
+    const raw = localStorage.getItem('kyxos-studio-local-v1') ?? '{}';
+    const state = JSON.parse(raw);
+    if (!asset || !state.assets?.[asset.id]) {
+      throw new Error('Imported asset metadata was not durably registered.');
+    }
+    delete state.assets[asset.id];
+    localStorage.setItem('kyxos-studio-local-v1', JSON.stringify(state));
+    return { id: asset.id, hash: asset.contentHash };
+  });
+
   // This payload exceeds the practical localStorage allowance once duplicated
   // into Draft, Workspace and Release snapshots. The durable provider must keep
   // the heavy scene in IndexedDB and only lightweight indexes in localStorage.
@@ -53,6 +71,16 @@ test('imported scene saves durably, publishes, opens and reloads from the public
     timeout: 90_000,
   });
   await expect(page.locator('html')).toHaveAttribute('data-publish-state', 'published');
+
+  const repairedAsset = await page.evaluate(({ id }) => {
+    const state = JSON.parse(localStorage.getItem('kyxos-studio-local-v1') ?? '{}');
+    return state.assets?.[id] ?? null;
+  }, simulatedLostAsset);
+  expect(repairedAsset).toMatchObject({
+    id: simulatedLostAsset.id,
+    hash: simulatedLostAsset.hash,
+    completed: true,
+  });
 
   const localIndex = await page.evaluate(() => {
     const raw = localStorage.getItem('kyxos-studio-local-v1') ?? '';
