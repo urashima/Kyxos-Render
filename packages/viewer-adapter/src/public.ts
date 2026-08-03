@@ -1,5 +1,8 @@
 export * from './index';
-export type { EditorCameraBookmarkState } from '@kyxos/viewer';
+export type {
+  EditorCameraBookmarkState,
+  EditorRenderMode,
+} from '@kyxos/viewer';
 export type {
   EditorCameraBookmarkResponse,
   EditorViewportCommand,
