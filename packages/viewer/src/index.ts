@@ -1,5 +1,6 @@
 import './sceneApi';
 import './gltfNativeLoad';
+import './embeddedGltfTextureApi';
 import './materialEditApi';
 import './animationApi';
 import './lightingApi';
