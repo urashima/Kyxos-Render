@@ -116,7 +116,11 @@ export async function recoverLocalAssetBlob(
       storedKey === assetKey ||
       stored.id === asset.id ||
       stored.hash === expectedHash ||
-      (Boolean(asset.name) && stored.name === asset.name && (!asset.byteSize || stored.byteSize === asset.byteSize));
+      (
+        Boolean(asset.name) &&
+        stored.name === asset.name &&
+        (!asset.byteSize || stored.byteSize === asset.byteSize)
+      );
     if (!sameLogicalAsset) continue;
     candidateKeys.add(storedKey);
     candidateKeys.add(stored.id);
