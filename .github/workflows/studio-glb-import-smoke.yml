@@ -4,10 +4,13 @@ on:
   pull_request:
     branches: [main]
     paths:
+      - 'apps/playground/**'
+      - 'apps/public-viewer/**'
       - 'apps/studio/**'
       - 'packages/editor-core/**'
       - 'packages/scene-contract/**'
       - 'packages/test-fixtures/**'
+      - 'packages/ui-theme/**'
       - 'packages/viewer/**'
       - 'packages/viewer-adapter/**'
       - 'tests/e2e/studio-viewport-helpers.spec.ts'
@@ -16,8 +19,10 @@ on:
       - 'tests/e2e/studio-render-modes.spec.ts'
       - 'tests/e2e/studio-gltf-fidelity.spec.ts'
       - 'tests/e2e/studio-material-fidelity.spec.ts'
+      - 'tests/e2e/studio-render-settings-parity.spec.ts'
       - 'tests/unit/gltf-authoring-parity.spec.ts'
       - 'tests/unit/gltf-material-complete.spec.ts'
+      - 'tests/unit/render-settings-parity.spec.ts'
       - 'tests/unit/studio-glb-report.spec.ts'
       - '.github/workflows/studio-glb-import-smoke.yml'
 
@@ -45,7 +50,7 @@ jobs:
           node-version: 22
       - name: Install workspace
         run: pnpm install --no-frozen-lockfile
-      - name: Verify glTF authoring and virtualization unit coverage
+      - name: Verify glTF authoring and render parity unit coverage
         run: >-
           pnpm exec vitest run
           tests/unit/studio-import-lifecycle.spec.ts
@@ -53,6 +58,7 @@ jobs:
           tests/unit/gltf-bundler.spec.ts
           tests/unit/gltf-authoring-parity.spec.ts
           tests/unit/gltf-material-complete.spec.ts
+          tests/unit/render-settings-parity.spec.ts
 
   glb-browser:
     strategy:
@@ -86,6 +92,9 @@ jobs:
           - id: render-modes
             spec: tests/e2e/studio-render-modes.spec.ts
             grep: Studio switches and persists complete viewport render modes
+          - id: render-parity
+            spec: tests/e2e/studio-render-settings-parity.spec.ts
+            grep: Studio, Public Viewer and Embed share Playground render settings and product themes
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
