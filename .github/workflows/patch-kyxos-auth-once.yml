@@ -1,0 +1,115 @@
+name: Patch Kyxos API auth once
+
+on:
+  push:
+    branches: [agent/cloud-persistence-acceptance]
+    paths:
+      - '.github/workflows/patch-kyxos-auth-once.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  SUPABASE_PROJECT_REF: nmifubpreaanbndgmiee
+
+jobs:
+  patch-and-deploy:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    environment: production-supabase
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+    steps:
+      - name: Checkout acceptance branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/cloud-persistence-acceptance
+          fetch-depth: 0
+
+      - name: Pass request JWT explicitly to Supabase Auth
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path('services/backend/functions/kyxos-api/index.ts')
+          source = path.read_text()
+          old = """  const authHeader = request.headers.get('authorization') ?? '';
+          const userClient = createClient(SUPABASE_URL, ANON_KEY, {
+            global: { headers: { authorization: authHeader } },
+          });
+          const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+          const {
+            data: { user },
+          } = await userClient.auth.getUser();
+          """
+          new = """  const authHeader = request.headers.get('authorization') ?? '';
+          const accessToken = authHeader.replace(/^Bearer\\s+/i, '').trim();
+          const userClient = createClient(SUPABASE_URL, ANON_KEY, {
+            global: { headers: { Authorization: authHeader } },
+          });
+          const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+          const {
+            data: { user },
+            error: authError,
+          } = await userClient.auth.getUser(accessToken);
+          """
+          if old not in source:
+              if 'auth.getUser(accessToken)' in source:
+                  print('Authentication patch is already present.')
+              else:
+                  raise SystemExit('Expected authentication block was not found.')
+          else:
+              source = source.replace(old, new, 1)
+              source = source.replace(
+                  "    if (!user) return json(request, { error: 'authentication required' }, 401);",
+                  "    if (authError || !user) return json(request, { error: 'authentication required' }, 401);",
+                  1,
+              )
+              path.write_text(source)
+
+      - name: Verify authentication patch
+        shell: bash
+        run: |
+          grep -q "auth.getUser(accessToken)" services/backend/functions/kyxos-api/index.ts
+          grep -q "authError || !user" services/backend/functions/kyxos-api/index.ts
+
+      - name: Commit patched function source
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo 'No source changes to commit.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add services/backend/functions/kyxos-api/index.ts
+          git commit -m 'fix(backend): validate request JWT explicitly'
+          git push origin HEAD:agent/cloud-persistence-acceptance
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Require deployment token
+        shell: bash
+        run: |
+          test -n "$SUPABASE_ACCESS_TOKEN" || {
+            echo 'SUPABASE_ACCESS_TOKEN is unavailable.' >&2
+            exit 1
+          }
+
+      - name: Deploy authenticated Studio API
+        run: >-
+          supabase functions deploy kyxos-api
+          --project-ref "$SUPABASE_PROJECT_REF"
+          --use-api
+
+      - name: Verify unauthenticated boundary
+        shell: bash
+        run: |
+          status=$(curl --silent --output /tmp/kyxos-api.json --write-out '%{http_code}' \
+            -H 'apikey: sb_publishable_n3-QCQTDrxydochYLA_81Q_d51HUenv' \
+            "https://${SUPABASE_PROJECT_REF}.supabase.co/functions/v1/kyxos-api/projects")
+          test "$status" = '401'
