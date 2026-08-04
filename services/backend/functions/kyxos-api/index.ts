@@ -32,7 +32,7 @@ function requestOrigin(request: Request): string {
 
 function originAllowed(request: Request): boolean {
   const origin = requestOrigin(request);
-  return !origin || ALLOWED_ORIGINS.has(origin);
+  return !origin || ALLOWED_ORIGINS.size === 0 || ALLOWED_ORIGINS.has(origin);
 }
 
 function cors(request: Request): HeadersInit {
