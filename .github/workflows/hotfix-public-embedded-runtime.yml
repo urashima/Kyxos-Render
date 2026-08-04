@@ -1,0 +1,157 @@
+name: Hotfix embedded glTF public runtime
+
+on:
+  push:
+    branches: [agent/cloud-persistence-acceptance]
+    paths:
+      - '.github/workflows/hotfix-public-embedded-runtime.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-verify:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/cloud-persistence-acceptance
+          fetch-depth: 0
+
+      - name: Patch public manifest and embedded texture fallback
+        shell: python
+        run: |
+          from pathlib import Path
+
+          public_path = Path('apps/public-viewer/src/main.ts')
+          public = public_path.read_text()
+
+          helper_marker = "async function resolvePublishedScene(): Promise<{\n"
+          helper = """function requiresPublishedAsset(asset: any): boolean {
+            const metadata = asset?.metadata ?? {};
+            const id = String(asset?.id ?? '');
+            return (
+              metadata.embedded !== true &&
+              !metadata.embeddedInAssetId &&
+              asset?.storageType !== 'virtual' &&
+              asset?.runtimeOnly !== true &&
+              !id.startsWith('embedded-gltf-')
+            );
+          }
+
+          """
+          if 'function requiresPublishedAsset(asset: any)' not in public:
+              if helper_marker not in public:
+                  raise SystemExit('resolvePublishedScene marker was not found')
+              public = public.replace(helper_marker, helper + helper_marker, 1)
+
+          old_fallback = """  const manifest = await client.assets.getManifest(Object.keys(release.sceneSnapshot.assets));
+          """
+          new_fallback = """  const manifest = await client.assets.getManifest(
+            Object.values(release.sceneSnapshot.assets)
+              .filter(requiresPublishedAsset)
+              .map((asset) => asset.id),
+          );
+          """
+          if old_fallback in public:
+              public = public.replace(old_fallback, new_fallback, 1)
+          elif '.filter(requiresPublishedAsset)' not in public:
+              raise SystemExit('public manifest fallback was not found')
+
+          old_verify = """  const missing = Object.values(contract.assets)
+            .filter((asset) => !manifest.assets[asset.uri])
+          """
+          new_verify = """  const missing = Object.values(contract.assets)
+            .filter(requiresPublishedAsset)
+            .filter((asset) => !manifest.assets[asset.uri])
+          """
+          if old_verify in public:
+              public = public.replace(old_verify, new_verify, 1)
+          elif '.filter(requiresPublishedAsset)\n    .filter((asset) => !manifest.assets[asset.uri])' not in public:
+              raise SystemExit('verifyManifest block was not found')
+
+          public_path.write_text(public)
+
+          material_path = Path('packages/viewer/src/materialCompleteApi.ts')
+          material = material_path.read_text()
+          old_native = """  if (native) {
+            const texture = native.clone();
+            texture.userData.gltfTextureIndex = nativeIndex;
+            applyTextureReference(texture, reference);
+            return texture;
+          }
+
+          const resolver = resolverByViewer.get(viewer);
+          """
+          new_native = """  if (native) {
+            const texture = native.clone();
+            texture.userData.gltfTextureIndex = nativeIndex;
+            applyTextureReference(texture, reference);
+            return texture;
+          }
+
+          // Embedded glTF textures live inside the parent GLB. Never resolve their
+          // virtual asset URI through the external manifest: a compatibility alias
+          // may point at the GLB itself, which TextureLoader cannot decode as an image.
+          // If the native registry has no entry, retain the material texture created
+          // by GLTFLoader instead of replacing it with an invalid external request.
+          if (nativeIndex != null) {
+            viewer.canvas.dataset.embeddedTextureFallbackBlocked = reference.assetId;
+            viewer.dispatchEvent(new CustomEvent('warning', {
+              detail: {
+                message: `Embedded glTF texture ${reference.assetId} was not available in the native texture registry; the GLTFLoader material texture was retained.`,
+              },
+            }));
+            return null;
+          }
+
+          const resolver = resolverByViewer.get(viewer);
+          """
+          if old_native in material:
+              material = material.replace(old_native, new_native, 1)
+          elif 'embeddedTextureFallbackBlocked' not in material:
+              raise SystemExit('embedded texture resolution block was not found')
+          material_path.write_text(material)
+
+      - name: Verify source patch
+        shell: bash
+        run: |
+          grep -Fq 'function requiresPublishedAsset(asset: any)' apps/public-viewer/src/main.ts
+          grep -Fq '.filter(requiresPublishedAsset)' apps/public-viewer/src/main.ts
+          grep -Fq 'embeddedTextureFallbackBlocked' packages/viewer/src/materialCompleteApi.ts
+          grep -Fq 'return null;' packages/viewer/src/materialCompleteApi.ts
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install workspace
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck Viewer and Public Viewer
+        run: |
+          pnpm --filter @kyxos/viewer typecheck
+          pnpm --filter @kyxos/public-viewer typecheck
+
+      - name: Build Public Viewer
+        run: pnpm --filter @kyxos/public-viewer build
+
+      - name: Commit runtime fix
+        shell: bash
+        run: |
+          if ! git diff --quiet; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add apps/public-viewer/src/main.ts packages/viewer/src/materialCompleteApi.ts
+            git commit -m 'fix(public-viewer): keep embedded glTF textures inside parent model'
+            git push origin HEAD:agent/cloud-persistence-acceptance
+          fi
