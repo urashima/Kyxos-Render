@@ -54,11 +54,25 @@ function validUuid(value: string | null): value is string {
   );
 }
 
+function isPersistentSnapshotAsset(asset: any): boolean {
+  const metadata = asset?.metadata ?? {};
+  const id = String(asset?.id ?? '');
+  const hash = String(asset?.contentHash ?? '');
+  return (
+    /^[a-f0-9]{64}$/.test(hash) &&
+    metadata.embedded !== true &&
+    !metadata.embeddedInAssetId &&
+    asset?.storageType !== 'virtual' &&
+    asset?.runtimeOnly !== true &&
+    !id.startsWith('embedded-gltf-')
+  );
+}
+
 function expectedAssetHashes(snapshot: any): Set<string> {
   return new Set(
     Object.values(snapshot?.assets ?? {})
-      .map((asset: any) => String(asset.contentHash ?? ''))
-      .filter((hash) => /^[a-f0-9]{64}$/.test(hash)),
+      .filter(isPersistentSnapshotAsset)
+      .map((asset: any) => String(asset.contentHash ?? '')),
   );
 }
 
