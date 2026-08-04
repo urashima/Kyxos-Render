@@ -17,10 +17,12 @@ on:
       - 'tests/e2e/studio-authoring-runtime.spec.ts'
       - 'tests/e2e/studio-asset-virtualization.spec.ts'
       - 'tests/e2e/studio-camera-bookmarks.spec.ts'
+      - 'tests/e2e/studio-editor-experience.spec.ts'
       - 'tests/e2e/studio-render-modes.spec.ts'
       - 'tests/e2e/studio-gltf-fidelity.spec.ts'
       - 'tests/e2e/studio-material-fidelity.spec.ts'
       - 'tests/e2e/studio-render-settings-parity.spec.ts'
+      - 'tests/unit/editor-auditor.spec.ts'
       - 'tests/unit/gltf-authoring-parity.spec.ts'
       - 'tests/unit/gltf-material-complete.spec.ts'
       - 'tests/unit/render-settings-parity.spec.ts'
@@ -51,9 +53,12 @@ jobs:
           node-version: 22
       - name: Install workspace
         run: pnpm install --no-frozen-lockfile
-      - name: Verify glTF authoring and render parity unit coverage
+      - name: Typecheck Editor Core and Studio
+        run: pnpm --filter @kyxos/editor-core typecheck && pnpm --filter @kyxos/studio typecheck
+      - name: Verify glTF authoring, Auditor and render parity unit coverage
         run: >-
           pnpm exec vitest run
+          tests/unit/editor-auditor.spec.ts
           tests/unit/studio-import-lifecycle.spec.ts
           tests/unit/studio-glb-report.spec.ts
           tests/unit/gltf-bundler.spec.ts
@@ -72,6 +77,9 @@ jobs:
           - id: authoring-runtime
             spec: tests/e2e/studio-authoring-runtime.spec.ts
             grep: Studio helpers, empty defaults, publish and transparent surfaces remain functional
+          - id: auditor
+            spec: tests/e2e/studio-editor-experience.spec.ts
+            grep: Studio command palette runs the Auditor and persists its per-scene report
           - id: authoring
             spec: tests/e2e/studio-viewport-helpers.spec.ts
             grep: Studio imports, edits and reimports complete glTF authoring content
