@@ -27,13 +27,46 @@ jobs:
           ref: main
           fetch-depth: 0
 
-      - name: Patch manifests, errors, and persistence migrations
+      - name: Patch persistent asset validation and manifests
         shell: python
         run: |
           from pathlib import Path
 
-          source_path = Path('services/backend/functions/kyxos-api/index.ts')
-          source = source_path.read_text()
+          api_path = Path('services/backend/functions/kyxos-api/index.ts')
+          source = api_path.read_text()
+
+          old_hashes = """function sceneAssetHashes(scene: any): string[] {
+            return [...new Set(
+              Object.values(scene?.assets ?? {}).map((asset: any) => String(asset.contentHash)),
+            )];
+          }
+          """
+          new_hashes = """function isPersistentSceneAsset(asset: any): boolean {
+            const metadata = asset?.metadata ?? {};
+            const id = String(asset?.id ?? '');
+            const hash = String(asset?.contentHash ?? '');
+            return (
+              validHash(hash) &&
+              metadata.embedded !== true &&
+              !metadata.embeddedInAssetId &&
+              asset?.storageType !== 'virtual' &&
+              asset?.runtimeOnly !== true &&
+              !id.startsWith('embedded-gltf-')
+            );
+          }
+
+          function sceneAssetHashes(scene: any): string[] {
+            return [...new Set(
+              Object.values(scene?.assets ?? {})
+                .filter(isPersistentSceneAsset)
+                .map((asset: any) => String(asset.contentHash)),
+            )];
+          }
+          """
+          if old_hashes in source:
+              source = source.replace(old_hashes, new_hashes, 1)
+          elif 'function isPersistentSceneAsset(asset: any)' not in source:
+              raise SystemExit('sceneAssetHashes block was not found')
 
           helper_marker = "async function signedUpload(\n"
           helper = """function describeError(error: unknown): string {
@@ -89,12 +122,74 @@ jobs:
           elif 'const requestedIds = Array.isArray(body.assetIds)' not in source:
               raise SystemExit('assets/manifest block was not found')
 
+          old_validation = """      if (
+            assets.length !== hashes.length ||
+            assets.some((asset: any) => asset.metadata_json?.completed !== true)
+          ) {
+            throw new Error('One or more assets are missing or incomplete.');
+          }
+          """
+          new_validation = """      const completedHashes = new Set(
+            assets
+              .filter((asset: any) => asset.metadata_json?.completed === true)
+              .map((asset: any) => String(asset.content_hash)),
+          );
+          const missingHashes = hashes.filter((hash) => !completedHashes.has(hash));
+          if (missingHashes.length) {
+            throw new Error(
+              `Missing or incomplete persistent assets: ${missingHashes.join(', ')}`,
+            );
+          }
+          """
+          if old_validation in source:
+              source = source.replace(old_validation, new_validation, 1)
+          elif 'const missingHashes = hashes.filter' not in source:
+              raise SystemExit('publish asset validation block was not found')
+
           source = source.replace(
               "    const raw = error instanceof Error ? error.message : String(error);",
               "    const raw = describeError(error);",
               1,
           )
-          source_path.write_text(source)
+          api_path.write_text(source)
+
+          public_path = Path('services/backend/functions/public-scene/index.ts')
+          public_source = public_path.read_text()
+          old_expected = """function expectedAssetHashes(snapshot: any): Set<string> {
+            return new Set(
+              Object.values(snapshot?.assets ?? {})
+                .map((asset: any) => String(asset.contentHash ?? ''))
+                .filter((hash) => /^[a-f0-9]{64}$/.test(hash)),
+            );
+          }
+          """
+          new_expected = """function isPersistentSnapshotAsset(asset: any): boolean {
+            const metadata = asset?.metadata ?? {};
+            const id = String(asset?.id ?? '');
+            const hash = String(asset?.contentHash ?? '');
+            return (
+              /^[a-f0-9]{64}$/.test(hash) &&
+              metadata.embedded !== true &&
+              !metadata.embeddedInAssetId &&
+              asset?.storageType !== 'virtual' &&
+              asset?.runtimeOnly !== true &&
+              !id.startsWith('embedded-gltf-')
+            );
+          }
+
+          function expectedAssetHashes(snapshot: any): Set<string> {
+            return new Set(
+              Object.values(snapshot?.assets ?? {})
+                .filter(isPersistentSnapshotAsset)
+                .map((asset: any) => String(asset.contentHash ?? '')),
+            );
+          }
+          """
+          if old_expected in public_source:
+              public_source = public_source.replace(old_expected, new_expected, 1)
+          elif 'function isPersistentSnapshotAsset(asset: any)' not in public_source:
+              raise SystemExit('public expectedAssetHashes block was not found')
+          public_path.write_text(public_source)
 
           migrations = Path('services/backend/migrations')
           migrations.mkdir(parents=True, exist_ok=True)
@@ -166,6 +261,9 @@ jobs:
       - name: Verify patch
         shell: bash
         run: |
+          grep -Fq 'function isPersistentSceneAsset(asset: any)' services/backend/functions/kyxos-api/index.ts
+          grep -Fq 'const missingHashes = hashes.filter' services/backend/functions/kyxos-api/index.ts
+          grep -Fq 'function isPersistentSnapshotAsset(asset: any)' services/backend/functions/public-scene/index.ts
           grep -Fq 'function describeError(error: unknown)' services/backend/functions/kyxos-api/index.ts
           grep -Fq 'const requestedIds = Array.isArray(body.assetIds)' services/backend/functions/kyxos-api/index.ts
           grep -Fq 'const raw = describeError(error);' services/backend/functions/kyxos-api/index.ts
@@ -178,8 +276,8 @@ jobs:
           if ! git diff --quiet; then
             git config user.name 'github-actions[bot]'
             git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git add services/backend/functions/kyxos-api/index.ts services/backend/migrations/0007_allow_browser_glb_mime.sql services/backend/migrations/0008_fix_editor_json_guard_record_fields.sql
-            git commit -m 'fix(backend): save drafts and ignore virtual asset IDs'
+            git add services/backend/functions/kyxos-api/index.ts services/backend/functions/public-scene/index.ts services/backend/migrations/0007_allow_browser_glb_mime.sql services/backend/migrations/0008_fix_editor_json_guard_record_fields.sql
+            git commit -m 'fix(backend): publish only persistent scene assets'
             git push origin HEAD:main
           fi
 
@@ -203,11 +301,24 @@ jobs:
           --project-ref "$SUPABASE_PROJECT_REF"
           --use-api
 
-      - name: Verify anonymous boundary
+      - name: Deploy Public Scene API
+        working-directory: services/backend
+        run: >-
+          supabase functions deploy public-scene
+          --project-ref "$SUPABASE_PROJECT_REF"
+          --use-api
+          --no-verify-jwt
+
+      - name: Verify anonymous boundaries
         shell: bash
         run: |
-          base="https://${SUPABASE_PROJECT_REF}.supabase.co/functions/v1/kyxos-api/projects"
-          status=$(curl --silent --output /tmp/api.json --write-out '%{http_code}' \
-            -H 'apikey: sb_publishable_n3-QCQTDrxydochYLA_81Q_d51HUenv' "$base")
+          private_url="https://${SUPABASE_PROJECT_REF}.supabase.co/functions/v1/kyxos-api/projects"
+          private_status=$(curl --silent --output /tmp/api.json --write-out '%{http_code}' \
+            -H 'apikey: sb_publishable_n3-QCQTDrxydochYLA_81Q_d51HUenv' "$private_url")
           cat /tmp/api.json
-          test "$status" = '401'
+          test "$private_status" = '401'
+
+          public_url="https://${SUPABASE_PROJECT_REF}.supabase.co/functions/v1/public-scene"
+          public_status=$(curl --silent --output /tmp/public.json --write-out '%{http_code}' "$public_url")
+          cat /tmp/public.json
+          test "$public_status" = '400'
