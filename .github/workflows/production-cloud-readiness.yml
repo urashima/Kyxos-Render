@@ -1,0 +1,101 @@
+name: Production cloud backend readiness
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'apps/studio/**'
+      - 'apps/public-viewer/**'
+      - 'packages/api-client/**'
+      - 'services/backend/**'
+      - 'tests/integration/signed-upload.spec.ts'
+      - 'tests/unit/runtime-backend-config.spec.ts'
+      - '.github/workflows/deploy-main-pages.yml'
+      - '.github/workflows/production-cloud-readiness.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-cloud-readiness-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contract:
+    name: Cloud client and publish contract
+    runs-on: ubuntu-22.04
+    timeout-minutes: 8
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install workspace
+        run: pnpm install --no-frozen-lockfile
+      - name: Verify runtime and signed upload contracts
+        run: >-
+          pnpm exec vitest run
+          tests/unit/runtime-backend-config.spec.ts
+          tests/integration/signed-upload.spec.ts
+          --reporter=verbose
+
+  live-backend:
+    name: Live Supabase backend
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    env:
+      KYXOS_SUPABASE_URL: ${{ vars.KYXOS_SUPABASE_URL || secrets.KYXOS_SUPABASE_URL }}
+      KYXOS_SUPABASE_ANON_KEY: ${{ vars.KYXOS_SUPABASE_ANON_KEY || secrets.KYXOS_SUPABASE_ANON_KEY }}
+      KYXOS_FUNCTIONS_URL: ${{ vars.KYXOS_FUNCTIONS_URL }}
+    steps:
+      - name: Require production browser credentials
+        shell: bash
+        run: |
+          missing=()
+          [[ -n "$KYXOS_SUPABASE_URL" ]] || missing+=(KYXOS_SUPABASE_URL)
+          [[ -n "$KYXOS_SUPABASE_ANON_KEY" ]] || missing+=(KYXOS_SUPABASE_ANON_KEY)
+          if (( ${#missing[@]} )); then
+            echo "::error title=Kyxos cloud backend is not configured::Missing repository Variables or Secrets: ${missing[*]}"
+            echo 'The Studio would otherwise fall back to browser-local projects, so production publishing is blocked.'
+            exit 1
+          fi
+
+      - name: Verify Supabase Auth and Edge Functions
+        shell: bash
+        run: |
+          base="${KYXOS_SUPABASE_URL%/}"
+          function_base="${KYXOS_FUNCTIONS_URL:-$base/functions/v1}"
+
+          auth_status=$(curl --silent --output /tmp/auth.json --write-out '%{http_code}' \
+            -H "apikey: $KYXOS_SUPABASE_ANON_KEY" \
+            "$base/auth/v1/settings")
+          api_status=$(curl --silent --output /tmp/api.json --write-out '%{http_code}' \
+            -H "apikey: $KYXOS_SUPABASE_ANON_KEY" \
+            "$function_base/kyxos-api/projects")
+          public_status=$(curl --silent --output /tmp/public.json --write-out '%{http_code}' \
+            "$function_base/public-scene")
+
+          [[ "$auth_status" == '200' ]] || {
+            cat /tmp/auth.json
+            echo "Supabase Auth is unavailable (HTTP $auth_status)." >&2
+            exit 1
+          }
+          [[ "$api_status" == '401' || "$api_status" == '403' ]] || {
+            cat /tmp/api.json
+            echo "kyxos-api is missing or misconfigured (HTTP $api_status)." >&2
+            exit 1
+          }
+          [[ "$public_status" == '400' ]] || {
+            cat /tmp/public.json
+            echo "public-scene is missing or misconfigured (HTTP $public_status)." >&2
+            exit 1
+          }
+
+          echo 'Supabase Auth, kyxos-api and public-scene are reachable.'
