@@ -1,4 +1,4 @@
-name: Patch GLB MIME and Realtime once
+name: Patch embedded glTF public runtime once
 
 on:
   push:
@@ -13,7 +13,7 @@ permissions:
 jobs:
   patch:
     runs-on: ubuntu-22.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Checkout acceptance branch
         uses: actions/checkout@v4
@@ -21,136 +21,117 @@ jobs:
           ref: agent/cloud-persistence-acceptance
           fetch-depth: 0
 
-      - name: Patch upload MIME and Realtime auth ordering
+      - name: Patch public manifest and embedded texture fallback
         shell: python
         run: |
           from pathlib import Path
 
-          api_path = Path('packages/api-client/src/index.ts')
-          source = api_path.read_text()
+          public_path = Path('apps/public-viewer/src/main.ts')
+          public = public_path.read_text()
 
-          marker = 'export class SupabaseKyxosApiClient implements KyxosApiClient {'
-          helper = '''function normalizedUploadContentType(file: Blob): string {
-            const declared = file.type.trim().toLowerCase();
-            if (typeof File !== 'undefined' && file instanceof File) {
-              const extension = file.name.split('.').pop()?.toLowerCase() ?? '';
-              const inferred = ({
-                glb: 'model/gltf-binary',
-                gltf: 'model/gltf+json',
-                hdr: 'image/vnd.radiance',
-                exr: 'image/x-exr',
-                png: 'image/png',
-                jpg: 'image/jpeg',
-                jpeg: 'image/jpeg',
-                webp: 'image/webp',
-                ktx2: 'image/ktx2',
-              } as Record<string, string>)[extension];
-              if (inferred && (!declared || declared === 'application/octet-stream')) return inferred;
-            }
-            return declared || 'application/octet-stream';
+          helper_marker = "async function resolvePublishedScene(): Promise<{\n"
+          helper = """function requiresPublishedAsset(asset: any): boolean {
+            const metadata = asset?.metadata ?? {};
+            const id = String(asset?.id ?? '');
+            return (
+              metadata.embedded !== true &&
+              !metadata.embeddedInAssetId &&
+              asset?.storageType !== 'virtual' &&
+              asset?.runtimeOnly !== true &&
+              !id.startsWith('embedded-gltf-')
+            );
           }
 
-          '''
-          if 'function normalizedUploadContentType' not in source:
-            source = source.replace(marker, helper + marker, 1)
+          """
+          if 'function requiresPublishedAsset(asset: any)' not in public:
+              if helper_marker not in public:
+                  raise SystemExit('resolvePublishedScene marker was not found')
+              public = public.replace(helper_marker, helper + helper_marker, 1)
 
-          source = source.replace(
-            '      this.realtimeClient.realtime.setAuth(this.token);\n      return {',
-            '      await this.realtimeClient.realtime.setAuth(this.token);\n      return {',
-            1,
-          )
-          source = source.replace(
-            "      this.realtimeClient.realtime.setAuth();\n      sessionStorage.removeItem('kyxos-token');",
-            "      await this.realtimeClient.realtime.setAuth();\n      sessionStorage.removeItem('kyxos-token');",
-            1,
-          )
-          source = source.replace(
-            '      const user = await response.json();\n      return { userId: user.id, email: user.email, accessToken: this.token };',
-            '      const user = await response.json();\n      await this.realtimeClient.realtime.setAuth(this.token);\n      return { userId: user.id, email: user.email, accessToken: this.token };',
-            1,
-          )
-          source = source.replace(
-            '      this.realtimeClient.realtime.setAuth(this.token);\n      const channel =',
-            '      await this.realtimeClient.realtime.setAuth(this.token);\n      const channel =',
-            1,
-          )
-          source = source.replace(
-            "        const timeout = window.setTimeout(() => reject(new Error('Realtime connection timed out.')), 10_000);",
-            """        const timeout = window.setTimeout(() => {
-                    void this.realtimeClient.removeChannel(channel);
-                    reject(new Error('Realtime connection timed out.'));
-                  }, 20_000);""",
-            1,
-          )
+          old_fallback = "  const manifest = await client.assets.getManifest(Object.keys(release.sceneSnapshot.assets));"
+          new_fallback = """  const manifest = await client.assets.getManifest(
+            Object.values(release.sceneSnapshot.assets)
+              .filter(requiresPublishedAsset)
+              .map((asset) => asset.id),
+          );"""
+          if old_fallback in public:
+              public = public.replace(old_fallback, new_fallback, 1)
+          elif '.map((asset) => asset.id)' not in public:
+              raise SystemExit('public manifest fallback was not found')
 
-          old_upload = '''      const { error } = await this.realtimeClient.storage
-                  .from('kyxos-assets')
-                  .uploadToSignedUrl(ticket.storageKey, ticket.uploadToken, file, {
-                    cacheControl: '31536000',
-                    contentType: file.type || 'application/octet-stream',
-                  });'''
-          new_upload = '''      const contentType = normalizedUploadContentType(file);
-                const uploadBody = file.type === contentType
-                  ? file
-                  : file.slice(0, file.size, contentType);
-                const { error } = await this.realtimeClient.storage
-                  .from('kyxos-assets')
-                  .uploadToSignedUrl(ticket.storageKey, ticket.uploadToken, uploadBody, {
-                    cacheControl: '31536000',
-                    contentType,
-                  });'''
-          if old_upload in source:
-            source = source.replace(old_upload, new_upload, 1)
-          api_path.write_text(source)
+          old_verify = """  const missing = Object.values(contract.assets)
+            .filter((asset) => !manifest.assets[asset.uri])"""
+          new_verify = """  const missing = Object.values(contract.assets)
+            .filter(requiresPublishedAsset)
+            .filter((asset) => !manifest.assets[asset.uri])"""
+          if old_verify in public:
+              public = public.replace(old_verify, new_verify, 1)
+          elif '.filter(requiresPublishedAsset)\n    .filter((asset) => !manifest.assets[asset.uri])' not in public:
+              raise SystemExit('verifyManifest block was not found')
+          public_path.write_text(public)
 
-          studio_path = Path('apps/studio/src/main.ts')
-          studio = studio_path.read_text()
-          studio = studio.replace(
-            'mimeType: file.type || mimeFor(extension),',
-            'mimeType: mimeFor(extension),',
-          )
-          studio = studio.replace(
-            "mimeType: file.type || 'model/gltf-binary',",
-            "mimeType: 'model/gltf-binary',",
-          )
-          studio = studio.replace(
-            "      if (generation === collaborationGeneration) showNotice(`Realtime offline: ${errorMessage(error)}`, true);",
-            """      if (generation === collaborationGeneration) {
-                    showNotice(`Realtime unavailable; editing and uploads remain available. ${errorMessage(error)}`);
-                  }""",
-            1,
-          )
-          studio_path.write_text(studio)
+          material_path = Path('packages/viewer/src/materialCompleteApi.ts')
+          material = material_path.read_text()
+          old_native = """  if (native) {
+            const texture = native.clone();
+            texture.userData.gltfTextureIndex = nativeIndex;
+            applyTextureReference(texture, reference);
+            return texture;
+          }
 
-          migration = Path('services/backend/migrations/0007_allow_browser_glb_mime.sql')
-          if not migration.exists():
-            migration.write_text('''begin;
+          const resolver = resolverByViewer.get(viewer);"""
+          new_native = """  if (native) {
+            const texture = native.clone();
+            texture.userData.gltfTextureIndex = nativeIndex;
+            applyTextureReference(texture, reference);
+            return texture;
+          }
 
-update storage.buckets
-set allowed_mime_types = array[
-  'model/gltf-binary',
-  'model/gltf+json',
-  'application/octet-stream',
-  'image/png',
-  'image/jpeg',
-  'image/webp',
-  'image/ktx2',
-  'image/vnd.radiance',
-  'image/x-exr'
-]::text[]
-where id = 'kyxos-assets';
+          // Embedded glTF textures live inside the parent GLB. Never resolve their
+          // virtual URI through the external manifest. If the native registry has
+          // no entry, retain the texture already created by GLTFLoader.
+          if (nativeIndex != null) {
+            viewer.canvas.dataset.embeddedTextureFallbackBlocked = reference.assetId;
+            viewer.dispatchEvent(new CustomEvent('warning', {
+              detail: {
+                message: `Embedded glTF texture ${reference.assetId} was not available in the native texture registry; the GLTFLoader material texture was retained.`,
+              },
+            }));
+            return null;
+          }
 
-commit;
-''')
+          const resolver = resolverByViewer.get(viewer);"""
+          if old_native in material:
+              material = material.replace(old_native, new_native, 1)
+          elif 'embeddedTextureFallbackBlocked' not in material:
+              raise SystemExit('embedded texture resolution block was not found')
+          material_path.write_text(material)
 
-      - name: Verify patch
+      - name: Verify source patch
         shell: bash
         run: |
-          grep -Fq 'function normalizedUploadContentType' packages/api-client/src/index.ts
-          grep -Fq 'await this.realtimeClient.realtime.setAuth(this.token)' packages/api-client/src/index.ts
-          grep -Fq 'contentType,' packages/api-client/src/index.ts
-          grep -Fq 'mimeType: mimeFor(extension)' apps/studio/src/main.ts
-          grep -Fq 'application/octet-stream' services/backend/migrations/0007_allow_browser_glb_mime.sql
+          grep -Fq 'function requiresPublishedAsset(asset: any)' apps/public-viewer/src/main.ts
+          grep -Fq '.filter(requiresPublishedAsset)' apps/public-viewer/src/main.ts
+          grep -Fq 'embeddedTextureFallbackBlocked' packages/viewer/src/materialCompleteApi.ts
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install workspace
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck and build
+        run: |
+          pnpm --filter @kyxos/viewer typecheck
+          pnpm --filter @kyxos/public-viewer typecheck
+          pnpm --filter @kyxos/public-viewer build
 
       - name: Commit source fix
         shell: bash
@@ -158,7 +139,7 @@ commit;
           if ! git diff --quiet; then
             git config user.name 'github-actions[bot]'
             git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git add packages/api-client/src/index.ts apps/studio/src/main.ts services/backend/migrations/0007_allow_browser_glb_mime.sql
-            git commit -m 'fix(studio): accept browser GLB MIME and await Realtime auth'
+            git add apps/public-viewer/src/main.ts packages/viewer/src/materialCompleteApi.ts
+            git commit -m 'fix(public-viewer): keep embedded glTF textures inside parent model'
             git push origin HEAD:agent/cloud-persistence-acceptance
           fi
