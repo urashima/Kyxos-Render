@@ -252,7 +252,6 @@ Deno.serve(async (request) => {
   const authHeader = request.headers.get('authorization') ?? '';
   const accessToken = authHeader.replace(/^Bearer\s+/i, '').trim();
   const userClient = createClient(SUPABASE_URL, ANON_KEY, {
-  accessToken: async () => accessToken,
   global: {
     headers: { Authorization: `Bearer ${accessToken}` },
     fetch: (input, init = {}) => {
@@ -332,14 +331,41 @@ Deno.serve(async (request) => {
     if (authError || !user) return json(request, { error: 'authentication required' }, 401);
 
     if (path === 'projects' && request.method === 'GET') {
-      const { data, error } = await userClient
-        .from('projects')
-        .select('*')
-        .eq('status', 'active')
-        .order('updated_at', { ascending: false });
-      if (error) throw error;
-      return json(request, data.map(normalizeProject));
-    }
+  const ownedResult = await admin
+    .from('projects')
+    .select('*')
+    .eq('owner_id', user.id)
+    .eq('status', 'active');
+  if (ownedResult.error) throw ownedResult.error;
+
+  const membershipResult = await admin
+    .from('project_members')
+    .select('project_id')
+    .eq('user_id', user.id);
+  if (membershipResult.error) throw membershipResult.error;
+
+  const memberIds = [...new Set(
+    (membershipResult.data ?? []).map((row) => row.project_id),
+  )];
+  let sharedRows = [];
+  if (memberIds.length) {
+    const sharedResult = await admin
+      .from('projects')
+      .select('*')
+      .in('id', memberIds)
+      .eq('status', 'active');
+    if (sharedResult.error) throw sharedResult.error;
+    sharedRows = sharedResult.data ?? [];
+  }
+
+  const projects = [...new Map(
+    [...(ownedResult.data ?? []), ...sharedRows]
+      .map((row) => [row.id, row]),
+  ).values()].sort(
+    (a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at),
+  );
+  return json(request, projects.map(normalizeProject));
+}
 
     if (path === 'projects' && request.method === 'POST') {
   const body = await request.json();
