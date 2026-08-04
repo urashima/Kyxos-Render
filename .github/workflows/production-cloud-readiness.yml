@@ -54,6 +54,7 @@ jobs:
       KYXOS_SUPABASE_URL: ${{ vars.KYXOS_SUPABASE_URL || secrets.KYXOS_SUPABASE_URL || 'https://nmifubpreaanbndgmiee.supabase.co' }}
       KYXOS_SUPABASE_ANON_KEY: ${{ vars.KYXOS_SUPABASE_ANON_KEY || secrets.KYXOS_SUPABASE_ANON_KEY || 'sb_publishable_n3-QCQTDrxydochYLA_81Q_d51HUenv' }}
       KYXOS_FUNCTIONS_URL: ${{ vars.KYXOS_FUNCTIONS_URL || 'https://nmifubpreaanbndgmiee.supabase.co/functions/v1' }}
+      KYXOS_BROWSER_ORIGIN: https://urashima.github.io
     steps:
       - name: Require production browser credentials
         shell: bash
@@ -67,7 +68,7 @@ jobs:
             exit 1
           fi
 
-      - name: Verify Supabase database, Auth and Edge Functions
+      - name: Verify Supabase database, Auth, Edge Functions and browser CORS
         shell: bash
         run: |
           base="${KYXOS_SUPABASE_URL%/}"
@@ -90,11 +91,27 @@ jobs:
           public_status=$(curl --silent --output /tmp/public.json --write-out '%{http_code}' \
             "$function_base/public-scene")
 
+          api_cors_status=$(curl --silent --dump-header /tmp/api-cors.headers \
+            --output /tmp/api-cors.body --write-out '%{http_code}' \
+            -X OPTIONS \
+            -H "apikey: $KYXOS_SUPABASE_ANON_KEY" \
+            -H "Origin: $KYXOS_BROWSER_ORIGIN" \
+            -H 'Access-Control-Request-Method: GET' \
+            "$function_base/kyxos-api/projects")
+          public_cors_status=$(curl --silent --dump-header /tmp/public-cors.headers \
+            --output /tmp/public-cors.body --write-out '%{http_code}' \
+            -X OPTIONS \
+            -H "Origin: $KYXOS_BROWSER_ORIGIN" \
+            -H 'Access-Control-Request-Method: GET' \
+            "$function_base/public-scene")
+
           echo "Auth: HTTP $auth_status"
           echo "projects table: HTTP $projects_status"
           echo "public_slugs table: HTTP $slugs_status"
           echo "kyxos-api: HTTP $api_status"
           echo "public-scene: HTTP $public_status"
+          echo "kyxos-api CORS: HTTP $api_cors_status"
+          echo "public-scene CORS: HTTP $public_cors_status"
 
           failed=0
           if [[ "$auth_status" != '200' ]]; then
@@ -122,8 +139,20 @@ jobs:
             echo 'public-scene is missing or misconfigured; deploy the Edge Function.' >&2
             failed=1
           fi
+          if [[ "$api_cors_status" != '204' ]] || ! grep -Eqi "^access-control-allow-origin: ${KYXOS_BROWSER_ORIGIN}\r?$" /tmp/api-cors.headers; then
+            cat /tmp/api-cors.headers
+            cat /tmp/api-cors.body
+            echo 'kyxos-api browser CORS preflight failed.' >&2
+            failed=1
+          fi
+          if [[ "$public_cors_status" != '204' ]] || ! grep -Eqi "^access-control-allow-origin: ${KYXOS_BROWSER_ORIGIN}\r?$" /tmp/public-cors.headers; then
+            cat /tmp/public-cors.headers
+            cat /tmp/public-cors.body
+            echo 'public-scene browser CORS preflight failed.' >&2
+            failed=1
+          fi
           if (( failed )); then
             exit 1
           fi
 
-          echo 'Supabase database, Auth, kyxos-api and public-scene are ready.'
+          echo 'Supabase database, Auth, Edge Functions and browser CORS are ready.'
