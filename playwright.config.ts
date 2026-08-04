@@ -19,6 +19,15 @@ const chromiumProject = {
   },
 };
 
+const webkitProject = {
+  name: 'webkit',
+  testIgnore: '**/webgpu.spec.ts',
+  use: {
+    ...devices['Desktop Safari'],
+    ...commonUse,
+  },
+};
+
 const webgpuProject = {
   name: 'chromium-webgpu',
   testMatch: '**/webgpu.spec.ts',
@@ -50,7 +59,11 @@ export default defineConfig({
   retries: process.env.CI ? 1 : 0,
   workers: process.env.CI ? 1 : undefined,
   reporter: process.env.CI ? [['html', { open: 'never' }], ['list']] : 'list',
-  projects: [chromiumProject, ...(process.env.KYXOS_WEBGPU_E2E === '1' ? [webgpuProject] : [])],
+  projects: [
+    chromiumProject,
+    ...(process.env.KYXOS_WEBKIT_E2E === '1' ? [webkitProject] : []),
+    ...(process.env.KYXOS_WEBGPU_E2E === '1' ? [webgpuProject] : []),
+  ],
   webServer: {
     command: 'pnpm build:pages && node scripts/serve-site.mjs',
     url: 'http://127.0.0.1:4173/latest/',

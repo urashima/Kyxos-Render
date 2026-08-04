@@ -180,6 +180,7 @@ export interface KyxosApiClient {
     completeUpload(assetId: string, metadata?: Record<string, unknown>): Promise<void>;
     getManifest(assetIds: string[]): Promise<AssetManifest>;
     getBlobUrl(hash: string): Promise<string | null>;
+    restoreBlob?(hash: string, blob: Blob): Promise<void>;
   };
   drafts: {
     load(projectId: string): Promise<DraftRecord | null>;
@@ -341,26 +342,60 @@ function openAssetDb(): Promise<IDBDatabase> {
   });
 }
 
-async function putBlob(hash: string, blob: Blob): Promise<void> {
-  const db = await openAssetDb();
-  await new Promise<void>((resolve, reject) => {
-    const transaction = db.transaction('blobs', 'readwrite');
-    transaction.objectStore('blobs').put(blob, hash);
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () => reject(transaction.error);
+interface StoredAssetBlobRecord {
+  bytes: ArrayBuffer;
+  type: string;
+}
+
+function decodeStoredAssetBlob(value: unknown): Blob | null {
+  if (value instanceof Blob) return value;
+  if (!value || typeof value !== 'object') return null;
+  const record = value as Partial<StoredAssetBlobRecord>;
+  if (!(record.bytes instanceof ArrayBuffer)) return null;
+  return new Blob([record.bytes], {
+    type: typeof record.type === 'string' && record.type
+      ? record.type
+      : 'application/octet-stream',
   });
-  db.close();
+}
+
+async function putBlob(hash: string, blob: Blob): Promise<void> {
+  const persistable: StoredAssetBlobRecord = {
+    bytes: await blob.arrayBuffer(),
+    type: blob.type || 'application/octet-stream',
+  };
+  const db = await openAssetDb();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const transaction = db.transaction('blobs', 'readwrite');
+      const request = transaction.objectStore('blobs').put(persistable, hash);
+      const failure = () => reject(
+        transaction.error
+          ?? request.error
+          ?? new Error(`IndexedDB rejected asset bytes ${hash}.`),
+      );
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = failure;
+      transaction.onabort = failure;
+      request.onerror = failure;
+    });
+  } finally {
+    db.close();
+  }
 }
 
 async function getBlob(hash: string): Promise<Blob | null> {
   const db = await openAssetDb();
-  const value = await new Promise<Blob | null>((resolve, reject) => {
-    const request = db.transaction('blobs').objectStore('blobs').get(hash);
-    request.onsuccess = () => resolve(request.result ?? null);
-    request.onerror = () => reject(request.error);
-  });
-  db.close();
-  return value;
+  try {
+    const value = await new Promise<unknown>((resolve, reject) => {
+      const request = db.transaction('blobs').objectStore('blobs').get(hash);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    return decodeStoredAssetBlob(value);
+  } finally {
+    db.close();
+  }
 }
 
 export class LocalKyxosApiClient implements KyxosApiClient {
@@ -802,6 +837,14 @@ export class LocalKyxosApiClient implements KyxosApiClient {
       const blob = await getBlob(hash);
       return blob ? URL.createObjectURL(blob) : null;
     },
+    restoreBlob: async (hash: string, blob: Blob): Promise<void> => {
+      if (!hash || !blob.size) throw new Error('Recovered asset Blob is empty.');
+      await putBlob(hash, blob);
+      const persisted = await getBlob(hash);
+      if (!persisted || persisted.size !== blob.size) {
+        throw new Error('Recovered asset Blob could not be verified after persistence.');
+      }
+    },
   };
 
   drafts = {
@@ -1216,18 +1259,14 @@ export class SupabaseKyxosApiClient implements KyxosApiClient {
       this.request('assets/upload', { method: 'POST', body: JSON.stringify(input) }),
     upload: async (ticket: UploadTicket, file: Blob): Promise<void> => {
       if (ticket.alreadyExists) return;
-      if (!ticket.uploadUrl) throw new Error('Signed upload URL is missing.');
-      const form = new FormData();
-      form.append('cacheControl', '31536000');
-      form.append('', file);
-      const response = await fetch(ticket.uploadUrl, {
-        method: 'PUT',
-        headers: { 'x-upsert': 'false', ...(ticket.headers ?? {}) },
-        body: form,
-      });
-      if (!response.ok) {
-        throw new Error(`Signed asset upload failed (${response.status}).`);
-      }
+      if (!ticket.uploadToken) throw new Error('Signed upload token is missing.');
+      const { error } = await this.realtimeClient.storage
+        .from('kyxos-assets')
+        .uploadToSignedUrl(ticket.storageKey, ticket.uploadToken, file, {
+          cacheControl: '31536000',
+          contentType: file.type || 'application/octet-stream',
+        });
+      if (error) throw new Error(`Signed asset upload failed: ${error.message}`);
     },
     completeUpload: async (
       assetId: string,

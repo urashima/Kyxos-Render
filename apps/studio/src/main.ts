@@ -1,6 +1,5 @@
 import './styles.css';
 import {
-  createApiClient,
   hashBlob,
   type AssetManifest,
   type BranchRecord,
@@ -12,6 +11,8 @@ import {
   type ProjectMemberRecord,
   type ReleaseRecord,
 } from '@kyxos/api-client';
+import { createDurableApiClient } from '@kyxos/api-client/durable';
+import { resolveKyxosRuntimeBackendConfig } from '@kyxos/api-client/runtime-config';
 import {
   AssetWorkspaceService,
   AutosaveController,
@@ -71,16 +72,32 @@ import {
 import { parseGlbInWorker } from './glb-worker-client';
 
 const app = document.querySelector<HTMLElement>('#app')!;
-const client = createApiClient({
-  url: import.meta.env.VITE_SUPABASE_URL,
-  anonKey: import.meta.env.VITE_SUPABASE_ANON_KEY,
-  functionsUrl: import.meta.env.VITE_KYXOS_FUNCTIONS_URL,
+const backendConfig = resolveKyxosRuntimeBackendConfig(import.meta.env);
+document.documentElement.dataset.apiProvider = backendConfig.provider;
+const client = createDurableApiClient({
+  url: backendConfig.supabaseUrl,
+  anonKey: backendConfig.supabaseAnonKey,
+  functionsUrl: backendConfig.functionsUrl,
 });
 
 const offlineStore = createIndexedDbDraftStore();
 let disposeCurrentScreen: (() => void) | null = null;
 
-void boot();
+if (backendConfig.error) renderBackendConfigurationError(backendConfig.error);
+else void boot();
+
+function renderBackendConfigurationError(message: string): void {
+  const panel = element('section', { className: 'auth-card' });
+  panel.innerHTML = [
+    '<div class="brand-mark">K</div>',
+    '<h1>Cloud backend unavailable</h1>',
+    `<p>${safeText(message)}</p>`,
+    '<small>Projects and published releases are intentionally blocked instead of being saved only in this browser.</small>',
+  ].join('');
+  const screen = element('main', { className: 'auth-screen' });
+  screen.append(panel);
+  app.replaceChildren(screen);
+}
 
 async function boot(): Promise<void> {
   disposeCurrentScreen?.();
@@ -99,7 +116,9 @@ function renderLogin(): void {
     '<label>Email<input name="email" type="email" required autocomplete="email"></label>',
     '<label>Password<input name="password" type="password" required autocomplete="current-password"></label>',
     '<button type="submit">Sign in</button>',
-    '<small>Without Supabase variables, this preview uses the local acceptance provider.</small>',
+    `<small>${backendConfig.provider === 'supabase'
+      ? 'Cloud workspace · projects, drafts, assets and releases are stored on the server.'
+      : 'Local acceptance workspace · data exists only in this browser.'}</small>`,
     '<div class="form-error" role="alert"></div>',
   ].join('');
   panel.addEventListener('submit', async (event) => {
@@ -308,6 +327,67 @@ async function openProject(project: ProjectSummary): Promise<void> {
     offlineStore,
     draft?.revision ?? 0,
   );
+
+
+  async function flushDraftOrThrow(reason: string): Promise<number> {
+    await autosave.flush();
+    if (autosave.state !== 'Saved') {
+      throw new Error(`Draft save failed before ${reason}: ${autosave.state}.`);
+    }
+    const persistedRevision = await client.drafts.getRevision(project.id);
+    if (persistedRevision !== autosave.revision) {
+      throw new Error(
+        `Draft revision mismatch before ${reason}: local ${autosave.revision}, persisted ${persistedRevision}.`,
+      );
+    }
+    globalThis.document.documentElement.dataset.durableDraftRevision = String(persistedRevision);
+    return persistedRevision;
+  }
+
+  async function restoreVisibleAssetBlobs(reason: string): Promise<void> {
+    if (!client.assets.restoreBlob) return;
+    for (const asset of Object.values(document.value.assets)) {
+      const persistedUrl = await client.assets.getBlobUrl(asset.contentHash);
+      if (persistedUrl) {
+        URL.revokeObjectURL(persistedUrl);
+        continue;
+      }
+
+      const liveUrl = manifest.assets[asset.uri]
+        ?? manifest.assets[`asset://${asset.contentHash}`];
+      if (!liveUrl?.startsWith('blob:')) continue;
+
+      let blob: Blob;
+      try {
+        const response = await fetch(liveUrl);
+        if (!response.ok) throw new Error(`Live asset response failed (${response.status}).`);
+        blob = await response.blob();
+      } catch (error) {
+        throw new Error(
+          `Visible asset ${asset.name ?? asset.id} could not be recovered before ${reason}: ${errorMessage(error)}`,
+        );
+      }
+      if (asset.byteSize && blob.size !== asset.byteSize) {
+        throw new Error(
+          `Visible asset ${asset.name ?? asset.id} has ${blob.size} bytes; expected ${asset.byteSize}.`,
+        );
+      }
+
+      await client.assets.restoreBlob(asset.contentHash, blob);
+      const verifiedUrl = await client.assets.getBlobUrl(asset.contentHash);
+      if (!verifiedUrl) {
+        throw new Error(`Visible asset ${asset.name ?? asset.id} was not durable after recovery.`);
+      }
+      URL.revokeObjectURL(verifiedUrl);
+      globalThis.document.documentElement.dataset.recoveredVisibleAsset = asset.contentHash;
+      diagnosticConsole.log(
+        'info',
+        `Recovered visible asset Blob before ${reason}.`,
+        { assetId: asset.id, contentHash: asset.contentHash, byteSize: blob.size },
+        'assets',
+      );
+    }
+  }
 
   let previewMode = false;
   let activeAnimationId = initial.animations.find((entry) => entry.autoplay)?.id ?? initial.animations[0]?.id;
@@ -2471,6 +2551,22 @@ async function importAsset(
         throwIfImportAborted(signal);
       },
     },
+    {
+      id: 'persist-import',
+      stage: 'building',
+      progress: 0.98,
+      async run(_current, signal) {
+        throwIfImportAborted(signal);
+        await restoreVisibleAssetBlobs('import completion');
+        const revision = await flushDraftOrThrow('import completion');
+        await flushWorkspace();
+        if (workspaceDirty) {
+          throw new Error('Workspace save failed during import completion.');
+        }
+        globalThis.document.documentElement.dataset.importDurable = 'true';
+        globalThis.document.documentElement.dataset.importDurableRevision = String(revision);
+      },
+    },
   ]);
 
   const ticket = state.ticket!;
@@ -2513,18 +2609,6 @@ async function importAsset(
     );
   }
 
-  scheduleImportPostprocess({
-    label: `autosave:${file.name}`,
-    run: () => autosave.flush(),
-    onWarning(label, error) {
-      diagnosticConsole.log(
-        'warn',
-        `Optional import post-processing failed: ${label}`,
-        error,
-        'assets',
-      );
-    },
-  });
 }
 
   async function publish(): Promise<void> {
@@ -2532,19 +2616,42 @@ async function importAsset(
       showNotice('Your project role cannot publish releases.', true);
       return;
     }
+    setBusy(publishButton, true);
+    globalThis.document.documentElement.dataset.publishState = 'saving';
+    delete globalThis.document.documentElement.dataset.publishError;
     try {
-      showNotice('Saving and publishing…');
-      await autosave.flush();
-      const thumbnail = await adapter.captureThumbnail();
+      showNotice('Saving the latest scene…');
+      const revision = await flushDraftOrThrow('publish');
+      await flushWorkspace();
+      if (workspaceDirty) throw new Error('Workspace save did not complete.');
+      await restoreVisibleAssetBlobs('publish');
+
+      globalThis.document.documentElement.dataset.publishState = 'capturing-thumbnail';
+      let thumbnail: Blob | undefined;
+      try {
+        thumbnail = await adapter.captureThumbnail();
+      } catch (error) {
+        diagnosticConsole.log('warn', 'Publish thumbnail capture fell back.', error, 'publish');
+      }
+
+      globalThis.document.documentElement.dataset.publishState = 'publishing';
+      showNotice('Creating immutable published version…');
       const release = await client.releases.publish(
         project.id,
         document.value,
-        autosave.revision,
+        revision,
         thumbnail,
       );
+      globalThis.document.documentElement.dataset.publishState = 'published';
+      globalThis.document.documentElement.dataset.publishedReleaseId = release.id;
+      globalThis.document.documentElement.dataset.publishedVersion = String(release.versionNumber);
       showPublishedNotice(release);
     } catch (error) {
+      globalThis.document.documentElement.dataset.publishState = 'error';
+      globalThis.document.documentElement.dataset.publishError = errorMessage(error);
       showNotice(errorMessage(error), true);
+    } finally {
+      setBusy(publishButton, false);
     }
   }
 

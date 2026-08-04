@@ -44,6 +44,8 @@ VITE_KYXOS_FUNCTIONS_URL
 VITE_KYXOS_PUBLIC_FUNCTION_URL
 ```
 
+GitHub Pages production reads `KYXOS_SUPABASE_URL` and `KYXOS_SUPABASE_ANON_KEY` from repository Variables or Secrets. Production sets `VITE_KYXOS_REQUIRE_REMOTE=1` and fails before deployment when either value or either required Edge Function is unavailable. Browser-local persistence is acceptance-only and must never be presented as production publishing.
+
 Optional live two-user RLS acceptance variables:
 
 ```text

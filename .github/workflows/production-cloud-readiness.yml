@@ -1,0 +1,158 @@
+name: Production cloud backend readiness
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'apps/studio/**'
+      - 'apps/public-viewer/**'
+      - 'packages/api-client/**'
+      - 'services/backend/**'
+      - 'tests/integration/signed-upload.spec.ts'
+      - 'tests/unit/runtime-backend-config.spec.ts'
+      - '.github/workflows/deploy-main-pages.yml'
+      - '.github/workflows/production-cloud-readiness.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-cloud-readiness-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contract:
+    name: Cloud client and publish contract
+    runs-on: ubuntu-22.04
+    timeout-minutes: 8
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install workspace
+        run: pnpm install --no-frozen-lockfile
+      - name: Verify runtime and signed upload contracts
+        run: >-
+          pnpm exec vitest run
+          tests/unit/runtime-backend-config.spec.ts
+          tests/integration/signed-upload.spec.ts
+          --reporter=verbose
+
+  live-backend:
+    name: Live Supabase backend
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    env:
+      KYXOS_SUPABASE_URL: ${{ vars.KYXOS_SUPABASE_URL || secrets.KYXOS_SUPABASE_URL || 'https://nmifubpreaanbndgmiee.supabase.co' }}
+      KYXOS_SUPABASE_ANON_KEY: ${{ vars.KYXOS_SUPABASE_ANON_KEY || secrets.KYXOS_SUPABASE_ANON_KEY || 'sb_publishable_n3-QCQTDrxydochYLA_81Q_d51HUenv' }}
+      KYXOS_FUNCTIONS_URL: ${{ vars.KYXOS_FUNCTIONS_URL || 'https://nmifubpreaanbndgmiee.supabase.co/functions/v1' }}
+      KYXOS_BROWSER_ORIGIN: https://urashima.github.io
+    steps:
+      - name: Require production browser credentials
+        shell: bash
+        run: |
+          missing=()
+          [[ -n "$KYXOS_SUPABASE_URL" ]] || missing+=(KYXOS_SUPABASE_URL)
+          [[ -n "$KYXOS_SUPABASE_ANON_KEY" ]] || missing+=(KYXOS_SUPABASE_ANON_KEY)
+          if (( ${#missing[@]} )); then
+            echo "::error title=Kyxos cloud backend is not configured::Missing repository Variables or Secrets: ${missing[*]}"
+            echo 'The Studio would otherwise fall back to browser-local projects, so production publishing is blocked.'
+            exit 1
+          fi
+
+      - name: Verify Supabase database, Auth, Edge Functions and browser CORS
+        shell: bash
+        run: |
+          base="${KYXOS_SUPABASE_URL%/}"
+          function_base="${KYXOS_FUNCTIONS_URL:-$base/functions/v1}"
+
+          auth_status=$(curl --silent --output /tmp/auth.json --write-out '%{http_code}' \
+            -H "apikey: $KYXOS_SUPABASE_ANON_KEY" \
+            "$base/auth/v1/settings")
+          projects_status=$(curl --silent --output /tmp/projects.json --write-out '%{http_code}' \
+            -H "apikey: $KYXOS_SUPABASE_ANON_KEY" \
+            -H "Authorization: Bearer $KYXOS_SUPABASE_ANON_KEY" \
+            "$base/rest/v1/projects?select=id&limit=1")
+          slugs_status=$(curl --silent --output /tmp/slugs.json --write-out '%{http_code}' \
+            -H "apikey: $KYXOS_SUPABASE_ANON_KEY" \
+            -H "Authorization: Bearer $KYXOS_SUPABASE_ANON_KEY" \
+            "$base/rest/v1/public_slugs?select=slug&limit=1")
+          api_status=$(curl --silent --output /tmp/api.json --write-out '%{http_code}' \
+            -H "apikey: $KYXOS_SUPABASE_ANON_KEY" \
+            "$function_base/kyxos-api/projects")
+          public_status=$(curl --silent --output /tmp/public.json --write-out '%{http_code}' \
+            "$function_base/public-scene")
+
+          api_cors_status=$(curl --silent --dump-header /tmp/api-cors.headers \
+            --output /tmp/api-cors.body --write-out '%{http_code}' \
+            -X OPTIONS \
+            -H "apikey: $KYXOS_SUPABASE_ANON_KEY" \
+            -H "Origin: $KYXOS_BROWSER_ORIGIN" \
+            -H 'Access-Control-Request-Method: GET' \
+            "$function_base/kyxos-api/projects")
+          public_cors_status=$(curl --silent --dump-header /tmp/public-cors.headers \
+            --output /tmp/public-cors.body --write-out '%{http_code}' \
+            -X OPTIONS \
+            -H "Origin: $KYXOS_BROWSER_ORIGIN" \
+            -H 'Access-Control-Request-Method: GET' \
+            "$function_base/public-scene")
+
+          echo "Auth: HTTP $auth_status"
+          echo "projects table: HTTP $projects_status"
+          echo "public_slugs table: HTTP $slugs_status"
+          echo "kyxos-api: HTTP $api_status"
+          echo "public-scene: HTTP $public_status"
+          echo "kyxos-api CORS: HTTP $api_cors_status"
+          echo "public-scene CORS: HTTP $public_cors_status"
+
+          failed=0
+          if [[ "$auth_status" != '200' ]]; then
+            cat /tmp/auth.json
+            echo 'Supabase Auth is unavailable.' >&2
+            failed=1
+          fi
+          if [[ "$projects_status" != '200' ]]; then
+            cat /tmp/projects.json
+            echo 'The projects table or its REST schema is unavailable; apply backend migrations.' >&2
+            failed=1
+          fi
+          if [[ "$slugs_status" != '200' ]]; then
+            cat /tmp/slugs.json
+            echo 'The public_slugs table or its REST schema is unavailable; apply backend migrations.' >&2
+            failed=1
+          fi
+          if [[ "$api_status" != '401' && "$api_status" != '403' ]]; then
+            cat /tmp/api.json
+            echo 'kyxos-api is missing or misconfigured; deploy the Edge Function.' >&2
+            failed=1
+          fi
+          if [[ "$public_status" != '400' ]]; then
+            cat /tmp/public.json
+            echo 'public-scene is missing or misconfigured; deploy the Edge Function.' >&2
+            failed=1
+          fi
+          if [[ "$api_cors_status" != '204' ]] || ! tr -d '\r' < /tmp/api-cors.headers | grep -Fqi "access-control-allow-origin: ${KYXOS_BROWSER_ORIGIN}"; then
+            cat /tmp/api-cors.headers
+            cat /tmp/api-cors.body
+            echo 'kyxos-api browser CORS preflight failed.' >&2
+            failed=1
+          fi
+          if [[ "$public_cors_status" != '204' ]] || ! tr -d '\r' < /tmp/public-cors.headers | grep -Fqi "access-control-allow-origin: ${KYXOS_BROWSER_ORIGIN}"; then
+            cat /tmp/public-cors.headers
+            cat /tmp/public-cors.body
+            echo 'public-scene browser CORS preflight failed.' >&2
+            failed=1
+          fi
+          if (( failed )); then
+            exit 1
+          fi
+
+          echo 'Supabase database, Auth, Edge Functions and browser CORS are ready.'
