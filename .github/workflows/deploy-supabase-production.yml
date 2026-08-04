@@ -31,6 +31,7 @@ jobs:
           test -f services/backend/migrations/0002_publish_asset_ownership.sql
           test -f services/backend/migrations/0003_editor_collaboration.sql
           test -f services/backend/migrations/0004_security_hardening.sql
+          test -f services/backend/migrations/0005_public_rls_helpers.sql
           test -f services/backend/functions/kyxos-api/index.ts
           test -f services/backend/functions/public-scene/index.ts
           grep -q 'project_id = "nmifubpreaanbndgmiee"' services/backend/config.toml
