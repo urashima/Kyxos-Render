@@ -1,4 +1,3 @@
-# Registered workflow trigger: 2026-08-04
 name: Hotfix Kyxos API auth
 
 on:
@@ -6,6 +5,8 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/hotfix-kyxos-api-auth.yml'
+      - 'services/backend/config.toml'
+      - 'services/backend/functions/kyxos-api/index.ts'
   workflow_dispatch:
 
 permissions:
@@ -28,49 +29,63 @@ jobs:
           ref: main
           fetch-depth: 0
 
-      - name: Pass request JWT explicitly to Supabase Auth
+      - name: Patch request JWT handling and restore static entrypoint
         shell: python
         run: |
           from pathlib import Path
 
-          path = Path('services/backend/functions/kyxos-api/index.ts')
-          source = path.read_text()
-          old = """  const authHeader = request.headers.get('authorization') ?? '';
-          const userClient = createClient(SUPABASE_URL, ANON_KEY, {
-            global: { headers: { authorization: authHeader } },
-          });
-          const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
-          const {
-            data: { user },
-          } = await userClient.auth.getUser();
-          """
-          new = """  const authHeader = request.headers.get('authorization') ?? '';
-          const accessToken = authHeader.replace(/^Bearer\\s+/i, '').trim();
-          const userClient = createClient(SUPABASE_URL, ANON_KEY, {
-            global: { headers: { Authorization: authHeader } },
-          });
-          const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
-          const {
-            data: { user },
-            error: authError,
-          } = await userClient.auth.getUser(accessToken);
-          """
-          if old in source:
-              source = source.replace(old, new, 1)
+          source_path = Path('services/backend/functions/kyxos-api/index.ts')
+          source = source_path.read_text()
+
+          if 'auth.getUser(accessToken)' not in source:
+              anchor = "  const authHeader = request.headers.get('authorization') ?? '';"
+              if anchor not in source:
+                  raise SystemExit('Authorization header anchor was not found.')
               source = source.replace(
-                  "    if (!user) return json(request, { error: 'authentication required' }, 401);",
+                  anchor,
+                  anchor + "\n  const accessToken = authHeader.replace(/^Bearer\\s+/i, '').trim();",
+                  1,
+              )
+              old_header = 'global: { headers: { authorization: authHeader } },'
+              if old_header not in source:
+                  raise SystemExit('Supabase global authorization header was not found.')
+              source = source.replace(
+                  old_header,
+                  'global: { headers: { Authorization: authHeader } },',
+                  1,
+              )
+              old_get_user = "    data: { user },\n  } = await userClient.auth.getUser();"
+              if old_get_user not in source:
+                  raise SystemExit('Supabase getUser call was not found.')
+              source = source.replace(
+                  old_get_user,
+                  "    data: { user },\n    error: authError,\n  } = await userClient.auth.getUser(accessToken);",
+                  1,
+              )
+              old_boundary = "    if (!user) return json(request, { error: 'authentication required' }, 401);"
+              if old_boundary not in source:
+                  raise SystemExit('Authentication boundary was not found.')
+              source = source.replace(
+                  old_boundary,
                   "    if (authError || !user) return json(request, { error: 'authentication required' }, 401);",
                   1,
               )
-              path.write_text(source)
-          elif 'auth.getUser(accessToken)' not in source:
-              raise SystemExit('Expected authentication block was not found.')
+              source_path.write_text(source)
 
-      - name: Verify authentication patch
+          config_path = Path('services/backend/config.toml')
+          config = config_path.read_text()
+          config = config.replace(
+              'entrypoint = "./functions/kyxos-api/entrypoint.ts"',
+              'entrypoint = "./functions/kyxos-api/index.ts"',
+          )
+          config_path.write_text(config)
+
+      - name: Verify static authentication patch
         shell: bash
         run: |
           grep -q 'auth.getUser(accessToken)' services/backend/functions/kyxos-api/index.ts
           grep -q 'authError || !user' services/backend/functions/kyxos-api/index.ts
+          grep -q 'entrypoint = "./functions/kyxos-api/index.ts"' services/backend/config.toml
 
       - name: Commit patched source
         shell: bash
@@ -78,7 +93,7 @@ jobs:
           if ! git diff --quiet; then
             git config user.name 'github-actions[bot]'
             git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git add services/backend/functions/kyxos-api/index.ts
+            git add services/backend/functions/kyxos-api/index.ts services/backend/config.toml
             git commit -m 'fix(backend): validate request JWT explicitly'
             git push origin HEAD:main
           fi
@@ -109,4 +124,5 @@ jobs:
           status=$(curl --silent --output /tmp/api.json --write-out '%{http_code}' \
             -H 'apikey: sb_publishable_n3-QCQTDrxydochYLA_81Q_d51HUenv' \
             "https://${SUPABASE_PROJECT_REF}.supabase.co/functions/v1/kyxos-api/projects")
+          cat /tmp/api.json
           test "$status" = '401'
