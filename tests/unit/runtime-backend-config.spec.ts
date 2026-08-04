@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolveKyxosRuntimeBackendConfig } from '@kyxos/api-client/runtime-config';
+import { resolveKyxosRuntimeBackendConfig } from '../../packages/api-client/src/runtimeConfig';
 
 describe('runtime backend configuration', () => {
   it('uses Supabase and derives both Edge Function URLs', () => {
