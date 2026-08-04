@@ -15,4 +15,4 @@ Closed pull-request preview paths are not durable acceptance URLs. The stable pr
 
 ## Authentication hotfix checkpoint
 
-The production `kyxos-api` Edge Function is deployed as version 6 with explicit request-JWT validation. This checkpoint retriggers the cloud readiness and preview workflows so their live function probes execute against version 6.
+The production `kyxos-api` Edge Function is deployed as version 7 from the immutable static JWT-fix commit `0ccd201c67648bcdf3a62d5a3816a2ab4539535b`. This checkpoint retriggers the cloud readiness and preview workflows so their live function probes execute against version 7.
