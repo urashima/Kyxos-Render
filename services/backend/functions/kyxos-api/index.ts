@@ -252,8 +252,27 @@ Deno.serve(async (request) => {
   const authHeader = request.headers.get('authorization') ?? '';
   const accessToken = authHeader.replace(/^Bearer\s+/i, '').trim();
   const userClient = createClient(SUPABASE_URL, ANON_KEY, {
-    global: { headers: { Authorization: authHeader } },
-  });
+  accessToken: async () => accessToken,
+  global: {
+    headers: { Authorization: `Bearer ${accessToken}` },
+    fetch: (input, init = {}) => {
+      const headers = new Headers(
+        input instanceof Request ? input.headers : undefined,
+      );
+      new Headers(init.headers).forEach((value, name) => {
+        headers.set(name, value);
+      });
+      headers.set('Authorization', `Bearer ${accessToken}`);
+      headers.set('apikey', ANON_KEY);
+      return fetch(input, { ...init, headers });
+    },
+  },
+  auth: {
+    persistSession: false,
+    autoRefreshToken: false,
+    detectSessionInUrl: false,
+  },
+});
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
   const {
     data: { user },
@@ -323,24 +342,14 @@ Deno.serve(async (request) => {
     }
 
     if (path === 'projects' && request.method === 'POST') {
-      const body = await request.json();
-      const { data, error } = await userClient
-        .from('projects')
-        .insert({
-          owner_id: user.id,
-          name: safeName(String(body.name ?? 'Untitled Project')),
-        })
-        .select()
-        .single();
-      if (error) throw error;
-      const memberResult = await userClient.from('project_members').insert({
-        project_id: data.id,
-        user_id: user.id,
-        role: 'owner',
-      });
-      if (memberResult.error) throw memberResult.error;
-      return json(request, normalizeProject(data), 201);
-    }
+  const body = await request.json();
+  const { data, error } = await admin.rpc('create_project_for_user', {
+    target_user: user.id,
+    project_name: safeName(String(body.name ?? 'Untitled Project')),
+  });
+  if (error) throw error;
+  return json(request, normalizeProject(data), 201);
+}
 
     const projectMatch = path.match(/^projects\/([0-9a-f-]+)(?:\/(duplicate))?$/i);
     if (projectMatch) {
