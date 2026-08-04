@@ -1,4 +1,4 @@
-name: Hotfix Kyxos API authenticated database client
+name: Hotfix Kyxos API authenticated project writes
 
 on:
   push:
@@ -7,6 +7,7 @@ on:
       - '.github/workflows/hotfix-kyxos-api-auth.yml'
       - 'services/backend/config.toml'
       - 'services/backend/functions/kyxos-api/index.ts'
+      - 'services/backend/migrations/0006_atomic_project_creation.sql'
   workflow_dispatch:
 
 permissions:
@@ -29,21 +30,32 @@ jobs:
           ref: main
           fetch-depth: 0
 
-      - name: Force the validated JWT onto every Supabase data request
+      - name: Patch authenticated data client and atomic project creation
         shell: python
         run: |
           from pathlib import Path
 
           source_path = Path('services/backend/functions/kyxos-api/index.ts')
           source = source_path.read_text()
-          old = """  const userClient = createClient(SUPABASE_URL, ANON_KEY, {
-            global: { headers: { Authorization: authHeader } },
-          });
-          """
-          new = """  const userClient = createClient(SUPABASE_URL, ANON_KEY, {
+
+          client_start = source.index(
+              "  const userClient = createClient(SUPABASE_URL, ANON_KEY, {"
+          )
+          client_end = source.index(
+              "  const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);",
+              client_start,
+          )
+          client = """  const userClient = createClient(SUPABASE_URL, ANON_KEY, {
+            accessToken: async () => accessToken,
             global: {
+              headers: { Authorization: `Bearer ${accessToken}` },
               fetch: (input, init = {}) => {
-                const headers = new Headers(init.headers);
+                const headers = new Headers(
+                  input instanceof Request ? input.headers : undefined,
+                );
+                new Headers(init.headers).forEach((value, name) => {
+                  headers.set(name, value);
+                });
                 headers.set('Authorization', `Bearer ${accessToken}`);
                 headers.set('apikey', ANON_KEY);
                 return fetch(input, { ...init, headers });
@@ -56,11 +68,24 @@ jobs:
             },
           });
           """
-          if old in source:
-              source = source.replace(old, new, 1)
-              source_path.write_text(source)
-          elif "headers.set('Authorization', `Bearer ${accessToken}`);" not in source:
-              raise SystemExit('Authenticated Supabase client block was not found.')
+          source = source[:client_start] + client + source[client_end:]
+
+          post_start = source.index(
+              "    if (path === 'projects' && request.method === 'POST') {"
+          )
+          post_end = source.index("\n    const projectMatch =", post_start)
+          post_block = """    if (path === 'projects' && request.method === 'POST') {
+            const body = await request.json();
+            const { data, error } = await admin.rpc('create_project_for_user', {
+              target_user: user.id,
+              project_name: safeName(String(body.name ?? 'Untitled Project')),
+            });
+            if (error) throw error;
+            return json(request, normalizeProject(data), 201);
+          }
+          """
+          source = source[:post_start] + post_block + source[post_end:]
+          source_path.write_text(source)
 
           config_path = Path('services/backend/config.toml')
           config = config_path.read_text().replace(
@@ -69,11 +94,12 @@ jobs:
           )
           config_path.write_text(config)
 
-      - name: Verify authenticated data client
+      - name: Verify source patch
         shell: bash
         run: |
-          grep -Fq 'auth.getUser(accessToken)' services/backend/functions/kyxos-api/index.ts
-          grep -Fq 'headers.set('\''Authorization'\'', `Bearer ${accessToken}`);' services/backend/functions/kyxos-api/index.ts
+          grep -Fq 'accessToken: async () => accessToken' services/backend/functions/kyxos-api/index.ts
+          grep -Fq "input instanceof Request ? input.headers : undefined" services/backend/functions/kyxos-api/index.ts
+          grep -Fq "admin.rpc('create_project_for_user'" services/backend/functions/kyxos-api/index.ts
           grep -Fq 'entrypoint = "./functions/kyxos-api/index.ts"' services/backend/config.toml
 
       - name: Commit patched source
@@ -83,7 +109,7 @@ jobs:
             git config user.name 'github-actions[bot]'
             git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
             git add services/backend/functions/kyxos-api/index.ts services/backend/config.toml
-            git commit -m 'fix(backend): propagate request JWT to PostgREST'
+            git commit -m 'fix(backend): authenticate data requests and create projects atomically'
             git push origin HEAD:main
           fi
 
