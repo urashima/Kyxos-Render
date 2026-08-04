@@ -1,4 +1,4 @@
-name: Hotfix Kyxos API stable project routes
+name: Hotfix Kyxos cloud persistence
 
 on:
   push:
@@ -8,6 +8,9 @@ on:
       - 'services/backend/config.toml'
       - 'services/backend/functions/kyxos-api/index.ts'
       - 'services/backend/migrations/0006_atomic_project_creation.sql'
+      - 'services/backend/migrations/0007_allow_browser_glb_mime.sql'
+      - 'packages/api-client/src/index.ts'
+      - 'apps/studio/src/main.ts'
   workflow_dispatch:
 
 permissions:
@@ -30,7 +33,7 @@ jobs:
           ref: main
           fetch-depth: 0
 
-      - name: Patch stable authenticated client and project routes
+      - name: Patch stable cloud routes, GLB upload and Realtime
         shell: python
         run: |
           from pathlib import Path
@@ -139,6 +142,125 @@ jobs:
           )
           config_path.write_text(config)
 
+          api_path = Path('packages/api-client/src/index.ts')
+          api = api_path.read_text()
+          marker = 'export class SupabaseKyxosApiClient implements KyxosApiClient {'
+          helper = '''function normalizedUploadContentType(file: Blob): string {
+            const declared = file.type.trim().toLowerCase();
+            if (typeof File !== 'undefined' && file instanceof File) {
+              const extension = file.name.split('.').pop()?.toLowerCase() ?? '';
+              const inferred = ({
+                glb: 'model/gltf-binary',
+                gltf: 'model/gltf+json',
+                hdr: 'image/vnd.radiance',
+                exr: 'image/x-exr',
+                png: 'image/png',
+                jpg: 'image/jpeg',
+                jpeg: 'image/jpeg',
+                webp: 'image/webp',
+                ktx2: 'image/ktx2',
+              } as Record<string, string>)[extension];
+              if (inferred and (not declared or declared == 'application/octet-stream')):
+                return inferred
+            }
+            return declared || 'application/octet-stream';
+          }
+
+          '''
+          helper = helper.replace(
+              "              if (inferred and (not declared or declared == 'application/octet-stream')):\n                return inferred\n",
+              "              if (inferred && (!declared || declared === 'application/octet-stream')) return inferred;\n",
+          )
+          if 'function normalizedUploadContentType' not in api:
+            api = api.replace(marker, helper + marker, 1)
+          api = api.replace(
+              '      this.realtimeClient.realtime.setAuth(this.token);\n      return {',
+              '      await this.realtimeClient.realtime.setAuth(this.token);\n      return {',
+              1,
+          )
+          api = api.replace(
+              "      this.realtimeClient.realtime.setAuth();\n      sessionStorage.removeItem('kyxos-token');",
+              "      await this.realtimeClient.realtime.setAuth();\n      sessionStorage.removeItem('kyxos-token');",
+              1,
+          )
+          api = api.replace(
+              '      const user = await response.json();\n      return { userId: user.id, email: user.email, accessToken: this.token };',
+              '      const user = await response.json();\n      await this.realtimeClient.realtime.setAuth(this.token);\n      return { userId: user.id, email: user.email, accessToken: this.token };',
+              1,
+          )
+          api = api.replace(
+              '      this.realtimeClient.realtime.setAuth(this.token);\n      const channel =',
+              '      await this.realtimeClient.realtime.setAuth(this.token);\n      const channel =',
+              1,
+          )
+          api = api.replace(
+              "        const timeout = window.setTimeout(() => reject(new Error('Realtime connection timed out.')), 10_000);",
+              """        const timeout = window.setTimeout(() => {
+            void this.realtimeClient.removeChannel(channel);
+            reject(new Error('Realtime connection timed out.'));
+          }, 20_000);""",
+              1,
+          )
+          old_upload = """      const { error } = await this.realtimeClient.storage
+            .from('kyxos-assets')
+            .uploadToSignedUrl(ticket.storageKey, ticket.uploadToken, file, {
+              cacheControl: '31536000',
+              contentType: file.type || 'application/octet-stream',
+            });"""
+          new_upload = """      const contentType = normalizedUploadContentType(file);
+          const uploadBody = file.type === contentType
+            ? file
+            : file.slice(0, file.size, contentType);
+          const { error } = await this.realtimeClient.storage
+            .from('kyxos-assets')
+            .uploadToSignedUrl(ticket.storageKey, ticket.uploadToken, uploadBody, {
+              cacheControl: '31536000',
+              contentType,
+            });"""
+          if old_upload in api:
+            api = api.replace(old_upload, new_upload, 1)
+          api_path.write_text(api)
+
+          studio_path = Path('apps/studio/src/main.ts')
+          studio = studio_path.read_text()
+          studio = studio.replace(
+              'mimeType: file.type || mimeFor(extension),',
+              'mimeType: mimeFor(extension),',
+          )
+          studio = studio.replace(
+              "mimeType: file.type || 'model/gltf-binary',",
+              "mimeType: 'model/gltf-binary',",
+          )
+          studio = studio.replace(
+              "      if (generation === collaborationGeneration) showNotice(`Realtime offline: ${errorMessage(error)}`, true);",
+              """      if (generation === collaborationGeneration) {
+            showNotice(`Realtime unavailable; editing and uploads remain available. ${errorMessage(error)}`);
+          }""",
+              1,
+          )
+          studio_path.write_text(studio)
+
+          migration_path = Path('services/backend/migrations/0007_allow_browser_glb_mime.sql')
+          if not migration_path.exists():
+            migration_path.write_text("""begin;
+
+update storage.buckets
+set allowed_mime_types = array[
+  'model/gltf-binary',
+  'model/gltf+json',
+  'application/octet-stream',
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'image/ktx2',
+  'image/vnd.radiance',
+  'image/x-exr'
+]::text[]
+where id = 'kyxos-assets';
+
+commit;
+""")
+
       - name: Verify source patch
         shell: bash
         run: |
@@ -147,6 +269,11 @@ jobs:
           grep -Fq ".eq('owner_id', user.id)" services/backend/functions/kyxos-api/index.ts
           grep -Fq "admin.rpc('create_project_for_user'" services/backend/functions/kyxos-api/index.ts
           grep -Fq 'entrypoint = "./functions/kyxos-api/index.ts"' services/backend/config.toml
+          grep -Fq 'function normalizedUploadContentType' packages/api-client/src/index.ts
+          grep -Fq 'await this.realtimeClient.realtime.setAuth(this.token)' packages/api-client/src/index.ts
+          grep -Fq 'uploadToSignedUrl(ticket.storageKey, ticket.uploadToken, uploadBody' packages/api-client/src/index.ts
+          grep -Fq 'mimeType: mimeFor(extension)' apps/studio/src/main.ts
+          grep -Fq 'application/octet-stream' services/backend/migrations/0007_allow_browser_glb_mime.sql
 
       - name: Commit patched source
         shell: bash
@@ -154,8 +281,13 @@ jobs:
           if ! git diff --quiet; then
             git config user.name 'github-actions[bot]'
             git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git add services/backend/functions/kyxos-api/index.ts services/backend/config.toml
-            git commit -m 'fix(backend): use verified user id for project routes'
+            git add \
+              services/backend/functions/kyxos-api/index.ts \
+              services/backend/config.toml \
+              services/backend/migrations/0007_allow_browser_glb_mime.sql \
+              packages/api-client/src/index.ts \
+              apps/studio/src/main.ts
+            git commit -m 'fix(studio): normalize GLB MIME and await Realtime auth'
             git push origin HEAD:main
           fi
 
