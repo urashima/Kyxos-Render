@@ -2,19 +2,22 @@ import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 
 describe('Supabase signed asset upload', () => {
-  it('uses signed upload FormData and only reuses verified hash assets', async () => {
+  it('uses the signed upload token API and only reuses verified hash assets', async () => {
     const client = await readFile('packages/api-client/src/index.ts', 'utf8');
     const backend = await readFile(
       'services/backend/functions/kyxos-api/index.ts',
       'utf8',
     );
 
-    expect(client).toContain("form.append('cacheControl', '31536000')");
-    expect(client).toContain("form.append('', file)");
-    expect(client).toContain("method: 'PUT'");
-    expect(client).toContain("'x-upsert': 'false'");
+    expect(client).toContain("if (!ticket.uploadToken) throw new Error('Signed upload token is missing.')");
+    expect(client).toContain(".from('kyxos-assets')");
+    expect(client).toContain('.uploadToSignedUrl(ticket.storageKey, ticket.uploadToken, file');
+    expect(client).toContain("cacheControl: '31536000'");
+    expect(client).toContain("contentType: file.type || 'application/octet-stream'");
+    expect(client).not.toContain("form.append('', file)");
 
     expect(backend).toContain('createSignedUploadUrl(storageKey)');
+    expect(backend).toContain('uploadToken');
     expect(backend).toContain('metadata_json?.completed === true');
     expect(backend).toContain('metadata_json: { completed: false }');
     expect(backend).toContain('completed: true');
