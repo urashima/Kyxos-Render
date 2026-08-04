@@ -36,6 +36,7 @@ enable_signup = true
 
 [functions.kyxos-api]
 verify_jwt = true
+entrypoint = "./functions/kyxos-api/entrypoint.ts"
 
 [functions.public-scene]
 verify_jwt = false
