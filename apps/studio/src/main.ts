@@ -12,6 +12,7 @@ import {
   type ReleaseRecord,
 } from '@kyxos/api-client';
 import { createDurableApiClient } from '@kyxos/api-client/durable';
+import { resolveKyxosRuntimeBackendConfig } from '@kyxos/api-client/runtime-config';
 import {
   AssetWorkspaceService,
   AutosaveController,
@@ -71,16 +72,32 @@ import {
 import { parseGlbInWorker } from './glb-worker-client';
 
 const app = document.querySelector<HTMLElement>('#app')!;
+const backendConfig = resolveKyxosRuntimeBackendConfig(import.meta.env);
+document.documentElement.dataset.apiProvider = backendConfig.provider;
 const client = createDurableApiClient({
-  url: import.meta.env.VITE_SUPABASE_URL,
-  anonKey: import.meta.env.VITE_SUPABASE_ANON_KEY,
-  functionsUrl: import.meta.env.VITE_KYXOS_FUNCTIONS_URL,
+  url: backendConfig.supabaseUrl,
+  anonKey: backendConfig.supabaseAnonKey,
+  functionsUrl: backendConfig.functionsUrl,
 });
 
 const offlineStore = createIndexedDbDraftStore();
 let disposeCurrentScreen: (() => void) | null = null;
 
-void boot();
+if (backendConfig.error) renderBackendConfigurationError(backendConfig.error);
+else void boot();
+
+function renderBackendConfigurationError(message: string): void {
+  const panel = element('section', { className: 'auth-card' });
+  panel.innerHTML = [
+    '<div class="brand-mark">K</div>',
+    '<h1>Cloud backend unavailable</h1>',
+    `<p>${safeText(message)}</p>`,
+    '<small>Projects and published releases are intentionally blocked instead of being saved only in this browser.</small>',
+  ].join('');
+  const screen = element('main', { className: 'auth-screen' });
+  screen.append(panel);
+  app.replaceChildren(screen);
+}
 
 async function boot(): Promise<void> {
   disposeCurrentScreen?.();
@@ -99,7 +116,9 @@ function renderLogin(): void {
     '<label>Email<input name="email" type="email" required autocomplete="email"></label>',
     '<label>Password<input name="password" type="password" required autocomplete="current-password"></label>',
     '<button type="submit">Sign in</button>',
-    '<small>Without Supabase variables, this preview uses the local acceptance provider.</small>',
+    `<small>${backendConfig.provider === 'supabase'
+      ? 'Cloud workspace · projects, drafts, assets and releases are stored on the server.'
+      : 'Local acceptance workspace · data exists only in this browser.'}</small>`,
     '<div class="form-error" role="alert"></div>',
   ].join('');
   panel.addEventListener('submit', async (event) => {

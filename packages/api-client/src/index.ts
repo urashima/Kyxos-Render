@@ -1259,18 +1259,14 @@ export class SupabaseKyxosApiClient implements KyxosApiClient {
       this.request('assets/upload', { method: 'POST', body: JSON.stringify(input) }),
     upload: async (ticket: UploadTicket, file: Blob): Promise<void> => {
       if (ticket.alreadyExists) return;
-      if (!ticket.uploadUrl) throw new Error('Signed upload URL is missing.');
-      const form = new FormData();
-      form.append('cacheControl', '31536000');
-      form.append('', file);
-      const response = await fetch(ticket.uploadUrl, {
-        method: 'PUT',
-        headers: { 'x-upsert': 'false', ...(ticket.headers ?? {}) },
-        body: form,
-      });
-      if (!response.ok) {
-        throw new Error(`Signed asset upload failed (${response.status}).`);
-      }
+      if (!ticket.uploadToken) throw new Error('Signed upload token is missing.');
+      const { error } = await this.realtimeClient.storage
+        .from('kyxos-assets')
+        .uploadToSignedUrl(ticket.storageKey, ticket.uploadToken, file, {
+          cacheControl: '31536000',
+          contentType: file.type || 'application/octet-stream',
+        });
+      if (error) throw new Error(`Signed asset upload failed: ${error.message}`);
     },
     completeUpload: async (
       assetId: string,

@@ -5,6 +5,7 @@ import {
   type ReleaseRecord,
 } from '@kyxos/api-client';
 import { createDurableApiClient } from '@kyxos/api-client/durable';
+import { resolveKyxosRuntimeBackendConfig } from '@kyxos/api-client/runtime-config';
 import { createEmptySceneContract, type KyxosSceneContract } from '@kyxos/scene-contract';
 import { migrateSceneContract } from '@kyxos/scene-migrations';
 import { KyxosViewer } from '@kyxos/viewer';
@@ -16,11 +17,13 @@ const routeSlug = (() => {
   return match ? decodeURIComponent(match[1]) : null;
 })();
 const embed = location.pathname.includes('/embed') || params.get('ui') === '0';
-const publicFunctionUrl = import.meta.env.VITE_KYXOS_PUBLIC_FUNCTION_URL as string | undefined;
+const backendConfig = resolveKyxosRuntimeBackendConfig(import.meta.env);
+document.documentElement.dataset.apiProvider = backendConfig.provider;
+const publicFunctionUrl = backendConfig.publicFunctionUrl;
 const client = createDurableApiClient({
-  url: import.meta.env.VITE_SUPABASE_URL,
-  anonKey: import.meta.env.VITE_SUPABASE_ANON_KEY,
-  functionsUrl: import.meta.env.VITE_KYXOS_FUNCTIONS_URL,
+  url: backendConfig.supabaseUrl,
+  anonKey: backendConfig.supabaseAnonKey,
+  functionsUrl: backendConfig.functionsUrl,
 });
 
 const root = document.createElement('main');
@@ -114,6 +117,7 @@ async function resolvePublishedScene(): Promise<{
   manifest: AssetManifest;
   allowedEmbedOrigins: string[];
 }> {
+  if (backendConfig.error) throw new Error(backendConfig.error);
   const versionId = params.get('release');
   const slug = params.get('slug') ?? routeSlug;
   if (slug === 'ui-fixture') {
