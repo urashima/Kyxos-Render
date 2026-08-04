@@ -67,7 +67,7 @@ jobs:
             exit 1
           fi
 
-      - name: Verify Supabase Auth and Edge Functions
+      - name: Verify Supabase database, Auth and Edge Functions
         shell: bash
         run: |
           base="${KYXOS_SUPABASE_URL%/}"
@@ -76,26 +76,54 @@ jobs:
           auth_status=$(curl --silent --output /tmp/auth.json --write-out '%{http_code}' \
             -H "apikey: $KYXOS_SUPABASE_ANON_KEY" \
             "$base/auth/v1/settings")
+          projects_status=$(curl --silent --output /tmp/projects.json --write-out '%{http_code}' \
+            -H "apikey: $KYXOS_SUPABASE_ANON_KEY" \
+            -H "Authorization: Bearer $KYXOS_SUPABASE_ANON_KEY" \
+            "$base/rest/v1/projects?select=id&limit=1")
+          slugs_status=$(curl --silent --output /tmp/slugs.json --write-out '%{http_code}' \
+            -H "apikey: $KYXOS_SUPABASE_ANON_KEY" \
+            -H "Authorization: Bearer $KYXOS_SUPABASE_ANON_KEY" \
+            "$base/rest/v1/public_slugs?select=slug&limit=1")
           api_status=$(curl --silent --output /tmp/api.json --write-out '%{http_code}' \
             -H "apikey: $KYXOS_SUPABASE_ANON_KEY" \
             "$function_base/kyxos-api/projects")
           public_status=$(curl --silent --output /tmp/public.json --write-out '%{http_code}' \
             "$function_base/public-scene")
 
-          [[ "$auth_status" == '200' ]] || {
-            cat /tmp/auth.json
-            echo "Supabase Auth is unavailable (HTTP $auth_status)." >&2
-            exit 1
-          }
-          [[ "$api_status" == '401' || "$api_status" == '403' ]] || {
-            cat /tmp/api.json
-            echo "kyxos-api is missing or misconfigured (HTTP $api_status)." >&2
-            exit 1
-          }
-          [[ "$public_status" == '400' ]] || {
-            cat /tmp/public.json
-            echo "public-scene is missing or misconfigured (HTTP $public_status)." >&2
-            exit 1
-          }
+          echo "Auth: HTTP $auth_status"
+          echo "projects table: HTTP $projects_status"
+          echo "public_slugs table: HTTP $slugs_status"
+          echo "kyxos-api: HTTP $api_status"
+          echo "public-scene: HTTP $public_status"
 
-          echo 'Supabase Auth, kyxos-api and public-scene are reachable.'
+          failed=0
+          if [[ "$auth_status" != '200' ]]; then
+            cat /tmp/auth.json
+            echo 'Supabase Auth is unavailable.' >&2
+            failed=1
+          fi
+          if [[ "$projects_status" != '200' ]]; then
+            cat /tmp/projects.json
+            echo 'The projects table or its REST schema is unavailable; apply backend migrations.' >&2
+            failed=1
+          fi
+          if [[ "$slugs_status" != '200' ]]; then
+            cat /tmp/slugs.json
+            echo 'The public_slugs table or its REST schema is unavailable; apply backend migrations.' >&2
+            failed=1
+          fi
+          if [[ "$api_status" != '401' && "$api_status" != '403' ]]; then
+            cat /tmp/api.json
+            echo 'kyxos-api is missing or misconfigured; deploy the Edge Function.' >&2
+            failed=1
+          fi
+          if [[ "$public_status" != '400' ]]; then
+            cat /tmp/public.json
+            echo 'public-scene is missing or misconfigured; deploy the Edge Function.' >&2
+            failed=1
+          fi
+          if (( failed )); then
+            exit 1
+          fi
+
+          echo 'Supabase database, Auth, kyxos-api and public-scene are ready.'
