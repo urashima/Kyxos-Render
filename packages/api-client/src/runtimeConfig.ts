@@ -26,6 +26,19 @@ function appendPath(base: string, path: string): string {
   return `${base.replace(/\/$/, '')}/${path.replace(/^\//, '')}`;
 }
 
+function edgeFunctionsGateway(base: string): string {
+  const normalized = base.replace(/\/+$/, '');
+  const marker = '/functions/v1';
+  const markerIndex = normalized.indexOf(marker);
+  return markerIndex >= 0
+    ? normalized.slice(0, markerIndex + marker.length)
+    : appendPath(normalized, marker);
+}
+
+function edgeFunctionUrl(base: string, functionName: string): string {
+  return appendPath(edgeFunctionsGateway(base), functionName);
+}
+
 export function resolveKyxosRuntimeBackendConfig(
   environment: KyxosRuntimeEnvironment,
 ): KyxosRuntimeBackendConfig {
@@ -33,10 +46,12 @@ export function resolveKyxosRuntimeBackendConfig(
   const supabaseAnonKey = value(environment.VITE_SUPABASE_ANON_KEY);
   const requireRemote = environment.VITE_KYXOS_REQUIRE_REMOTE === '1';
   const provider = supabaseUrl && supabaseAnonKey ? 'supabase' : 'local';
-  const functionsUrl = value(environment.VITE_KYXOS_FUNCTIONS_URL)
-    ?? (supabaseUrl ? appendPath(supabaseUrl, 'functions/v1') : undefined);
+  const functionsBase = value(environment.VITE_KYXOS_FUNCTIONS_URL) ?? supabaseUrl;
+  const functionsUrl = functionsBase
+    ? edgeFunctionUrl(functionsBase, 'kyxos-api')
+    : undefined;
   const publicFunctionUrl = value(environment.VITE_KYXOS_PUBLIC_FUNCTION_URL)
-    ?? (functionsUrl ? appendPath(functionsUrl, 'public-scene') : undefined);
+    ?? (functionsBase ? edgeFunctionUrl(functionsBase, 'public-scene') : undefined);
 
   let error: string | undefined;
   if (requireRemote && provider !== 'supabase') {
