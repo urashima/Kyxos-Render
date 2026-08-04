@@ -13,7 +13,7 @@ permissions:
 jobs:
   patch:
     runs-on: ubuntu-22.04
-    timeout-minutes: 15
+    timeout-minutes: 5
     steps:
       - name: Checkout acceptance branch
         uses: actions/checkout@v4
@@ -28,7 +28,6 @@ jobs:
 
           public_path = Path('apps/public-viewer/src/main.ts')
           public = public_path.read_text()
-
           helper_marker = "async function resolvePublishedScene(): Promise<{\n"
           helper = """function requiresPublishedAsset(asset: any): boolean {
             const metadata = asset?.metadata ?? {};
@@ -107,35 +106,12 @@ jobs:
               raise SystemExit('embedded texture resolution block was not found')
           material_path.write_text(material)
 
-      - name: Verify source patch
+      - name: Verify and commit source fix
         shell: bash
         run: |
           grep -Fq 'function requiresPublishedAsset(asset: any)' apps/public-viewer/src/main.ts
           grep -Fq '.filter(requiresPublishedAsset)' apps/public-viewer/src/main.ts
           grep -Fq 'embeddedTextureFallbackBlocked' packages/viewer/src/materialCompleteApi.ts
-
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10.14.0
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Install workspace
-        run: pnpm install --frozen-lockfile
-
-      - name: Typecheck and build
-        run: |
-          pnpm --filter @kyxos/viewer typecheck
-          pnpm --filter @kyxos/public-viewer typecheck
-          pnpm --filter @kyxos/public-viewer build
-
-      - name: Commit source fix
-        shell: bash
-        run: |
           if ! git diff --quiet; then
             git config user.name 'github-actions[bot]'
             git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
