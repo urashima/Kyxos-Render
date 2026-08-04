@@ -1,3 +1,5 @@
+export {};
+
 const completeMaterialSectionIds = new Set([
   'material-advanced-complete',
   'material-extension-textures',
