@@ -165,6 +165,7 @@ Deno.serve(async (request) => {
     if (assetsError) throw assetsError;
 
     const manifest: Record<string, string> = {};
+    const signedByAssetId: Record<string, string> = {};
     for (const row of publishedAssets ?? []) {
       const asset = Array.isArray(row.assets) ? row.assets[0] : row.assets;
       if (!asset || asset.metadata_json?.completed !== true) continue;
@@ -175,13 +176,32 @@ Deno.serve(async (request) => {
         throw signedError ?? new Error('Unable to sign a published asset.');
       }
       manifest[`asset://${asset.content_hash}`] = signed.signedUrl;
+      signedByAssetId[String(row.asset_id)] = signed.signedUrl;
+    }
+
+    // Older Public Viewer builds validate every Contract asset URI before the
+    // Viewer can restore native textures from the parent GLB. Provide aliases
+    // for embedded glTF child assets while keeping only the parent asset in
+    // published_assets. The runtime never downloads these aliases as images.
+    for (const snapshotAsset of Object.values(version.scene_snapshot?.assets ?? {}) as any[]) {
+      const metadata = snapshotAsset?.metadata ?? {};
+      const parentAssetId = String(metadata.embeddedInAssetId ?? '');
+      const uri = String(snapshotAsset?.uri ?? '');
+      if (
+        (metadata.embedded === true || parentAssetId) &&
+        parentAssetId &&
+        uri.startsWith('asset://') &&
+        signedByAssetId[parentAssetId]
+      ) {
+        manifest[uri] = signedByAssetId[parentAssetId];
+      }
     }
 
     const expected = expectedAssetHashes(version.scene_snapshot);
     const resolved = new Set(
       Object.keys(manifest).map((uri) => uri.slice('asset://'.length)),
     );
-    if (expected.size !== resolved.size || [...expected].some((hash) => !resolved.has(hash))) {
+    if ([...expected].some((hash) => !resolved.has(hash))) {
       return response(
         request,
         { error: 'published asset manifest is incomplete' },
