@@ -8,7 +8,6 @@ import {
   MeshPhysicalMaterial,
   MeshStandardMaterial,
   PerspectiveCamera,
-  PlaneGeometry,
   Scene,
   SphereGeometry,
   TorusKnotGeometry,
@@ -80,22 +79,6 @@ export function createDefaultScene(): DefaultSceneBundle {
   box.castShadow = true;
   box.receiveShadow = true;
   modelRoot.add(box);
-
-  const floorMaterial = new MeshPhysicalMaterial({
-    color: '#20262f',
-    metalness: 0.15,
-    roughness: 0.32,
-    clearcoat: 0.6,
-    clearcoatRoughness: 0.28,
-  });
-  const floor = markDefaultAdornment(
-    new Mesh(new PlaneGeometry(18, 18, 1, 1), floorMaterial),
-    'Kyxos.DefaultFloor',
-  );
-  floor.rotation.x = -Math.PI / 2;
-  floor.position.y = 0;
-  floor.receiveShadow = true;
-  scene.add(floor);
 
   const hemi = markDefaultAdornment(
     new HemisphereLight(0xdbeafe, 0x111827, 1.35),
