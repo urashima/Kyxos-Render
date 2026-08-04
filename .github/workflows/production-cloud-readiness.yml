@@ -139,13 +139,13 @@ jobs:
             echo 'public-scene is missing or misconfigured; deploy the Edge Function.' >&2
             failed=1
           fi
-          if [[ "$api_cors_status" != '204' ]] || ! grep -Eqi "^access-control-allow-origin: ${KYXOS_BROWSER_ORIGIN}\r?$" /tmp/api-cors.headers; then
+          if [[ "$api_cors_status" != '204' ]] || ! tr -d '\r' < /tmp/api-cors.headers | grep -Fqi "access-control-allow-origin: ${KYXOS_BROWSER_ORIGIN}"; then
             cat /tmp/api-cors.headers
             cat /tmp/api-cors.body
             echo 'kyxos-api browser CORS preflight failed.' >&2
             failed=1
           fi
-          if [[ "$public_cors_status" != '204' ]] || ! grep -Eqi "^access-control-allow-origin: ${KYXOS_BROWSER_ORIGIN}\r?$" /tmp/public-cors.headers; then
+          if [[ "$public_cors_status" != '204' ]] || ! tr -d '\r' < /tmp/public-cors.headers | grep -Fqi "access-control-allow-origin: ${KYXOS_BROWSER_ORIGIN}"; then
             cat /tmp/public-cors.headers
             cat /tmp/public-cors.body
             echo 'public-scene browser CORS preflight failed.' >&2
