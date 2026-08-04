@@ -51,9 +51,9 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 5
     env:
-      KYXOS_SUPABASE_URL: ${{ vars.KYXOS_SUPABASE_URL || secrets.KYXOS_SUPABASE_URL }}
-      KYXOS_SUPABASE_ANON_KEY: ${{ vars.KYXOS_SUPABASE_ANON_KEY || secrets.KYXOS_SUPABASE_ANON_KEY }}
-      KYXOS_FUNCTIONS_URL: ${{ vars.KYXOS_FUNCTIONS_URL }}
+      KYXOS_SUPABASE_URL: ${{ vars.KYXOS_SUPABASE_URL || secrets.KYXOS_SUPABASE_URL || 'https://nmifubpreaanbndgmiee.supabase.co' }}
+      KYXOS_SUPABASE_ANON_KEY: ${{ vars.KYXOS_SUPABASE_ANON_KEY || secrets.KYXOS_SUPABASE_ANON_KEY || 'sb_publishable_n3-QCQTDrxydochYLA_81Q_d51HUenv' }}
+      KYXOS_FUNCTIONS_URL: ${{ vars.KYXOS_FUNCTIONS_URL || 'https://nmifubpreaanbndgmiee.supabase.co/functions/v1' }}
     steps:
       - name: Require production browser credentials
         shell: bash
