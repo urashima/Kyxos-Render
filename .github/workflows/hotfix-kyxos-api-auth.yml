@@ -1,4 +1,4 @@
-name: Hotfix Kyxos API auth
+name: Hotfix Kyxos API authenticated database client
 
 on:
   push:
@@ -29,63 +29,52 @@ jobs:
           ref: main
           fetch-depth: 0
 
-      - name: Patch request JWT handling and restore static entrypoint
+      - name: Force the validated JWT onto every Supabase data request
         shell: python
         run: |
           from pathlib import Path
 
           source_path = Path('services/backend/functions/kyxos-api/index.ts')
           source = source_path.read_text()
-
-          if 'auth.getUser(accessToken)' not in source:
-              anchor = "  const authHeader = request.headers.get('authorization') ?? '';"
-              if anchor not in source:
-                  raise SystemExit('Authorization header anchor was not found.')
-              source = source.replace(
-                  anchor,
-                  anchor + "\n  const accessToken = authHeader.replace(/^Bearer\\s+/i, '').trim();",
-                  1,
-              )
-              old_header = 'global: { headers: { authorization: authHeader } },'
-              if old_header not in source:
-                  raise SystemExit('Supabase global authorization header was not found.')
-              source = source.replace(
-                  old_header,
-                  'global: { headers: { Authorization: authHeader } },',
-                  1,
-              )
-              old_get_user = "    data: { user },\n  } = await userClient.auth.getUser();"
-              if old_get_user not in source:
-                  raise SystemExit('Supabase getUser call was not found.')
-              source = source.replace(
-                  old_get_user,
-                  "    data: { user },\n    error: authError,\n  } = await userClient.auth.getUser(accessToken);",
-                  1,
-              )
-              old_boundary = "    if (!user) return json(request, { error: 'authentication required' }, 401);"
-              if old_boundary not in source:
-                  raise SystemExit('Authentication boundary was not found.')
-              source = source.replace(
-                  old_boundary,
-                  "    if (authError || !user) return json(request, { error: 'authentication required' }, 401);",
-                  1,
-              )
+          old = """  const userClient = createClient(SUPABASE_URL, ANON_KEY, {
+            global: { headers: { Authorization: authHeader } },
+          });
+          """
+          new = """  const userClient = createClient(SUPABASE_URL, ANON_KEY, {
+            global: {
+              fetch: (input, init = {}) => {
+                const headers = new Headers(init.headers);
+                headers.set('Authorization', `Bearer ${accessToken}`);
+                headers.set('apikey', ANON_KEY);
+                return fetch(input, { ...init, headers });
+              },
+            },
+            auth: {
+              persistSession: false,
+              autoRefreshToken: false,
+              detectSessionInUrl: false,
+            },
+          });
+          """
+          if old in source:
+              source = source.replace(old, new, 1)
               source_path.write_text(source)
+          elif "headers.set('Authorization', `Bearer ${accessToken}`);" not in source:
+              raise SystemExit('Authenticated Supabase client block was not found.')
 
           config_path = Path('services/backend/config.toml')
-          config = config_path.read_text()
-          config = config.replace(
+          config = config_path.read_text().replace(
               'entrypoint = "./functions/kyxos-api/entrypoint.ts"',
               'entrypoint = "./functions/kyxos-api/index.ts"',
           )
           config_path.write_text(config)
 
-      - name: Verify static authentication patch
+      - name: Verify authenticated data client
         shell: bash
         run: |
-          grep -q 'auth.getUser(accessToken)' services/backend/functions/kyxos-api/index.ts
-          grep -q 'authError || !user' services/backend/functions/kyxos-api/index.ts
-          grep -q 'entrypoint = "./functions/kyxos-api/index.ts"' services/backend/config.toml
+          grep -Fq 'auth.getUser(accessToken)' services/backend/functions/kyxos-api/index.ts
+          grep -Fq 'headers.set('\''Authorization'\'', `Bearer ${accessToken}`);' services/backend/functions/kyxos-api/index.ts
+          grep -Fq 'entrypoint = "./functions/kyxos-api/index.ts"' services/backend/config.toml
 
       - name: Commit patched source
         shell: bash
@@ -94,7 +83,7 @@ jobs:
             git config user.name 'github-actions[bot]'
             git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
             git add services/backend/functions/kyxos-api/index.ts services/backend/config.toml
-            git commit -m 'fix(backend): validate request JWT explicitly'
+            git commit -m 'fix(backend): propagate request JWT to PostgREST'
             git push origin HEAD:main
           fi
 
@@ -118,11 +107,15 @@ jobs:
           --project-ref "$SUPABASE_PROJECT_REF"
           --use-api
 
-      - name: Verify anonymous requests remain blocked
+      - name: Verify anonymous boundary and CORS
         shell: bash
         run: |
+          base="https://${SUPABASE_PROJECT_REF}.supabase.co/functions/v1/kyxos-api/projects"
           status=$(curl --silent --output /tmp/api.json --write-out '%{http_code}' \
-            -H 'apikey: sb_publishable_n3-QCQTDrxydochYLA_81Q_d51HUenv' \
-            "https://${SUPABASE_PROJECT_REF}.supabase.co/functions/v1/kyxos-api/projects")
+            -H 'apikey: sb_publishable_n3-QCQTDrxydochYLA_81Q_d51HUenv' "$base")
+          cors_status=$(curl --silent --output /tmp/cors.json --write-out '%{http_code}' \
+            -X OPTIONS -H 'Origin: https://urashima.github.io' \
+            -H 'Access-Control-Request-Method: POST' "$base")
           cat /tmp/api.json
           test "$status" = '401'
+          test "$cors_status" = '204'
