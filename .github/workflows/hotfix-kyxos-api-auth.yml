@@ -1,4 +1,4 @@
-name: Hotfix Kyxos API authenticated project writes
+name: Hotfix Kyxos API stable project routes
 
 on:
   push:
@@ -30,7 +30,7 @@ jobs:
           ref: main
           fetch-depth: 0
 
-      - name: Patch authenticated data client and atomic project creation
+      - name: Patch stable authenticated client and project routes
         shell: python
         run: |
           from pathlib import Path
@@ -46,7 +46,6 @@ jobs:
               client_start,
           )
           client = """  const userClient = createClient(SUPABASE_URL, ANON_KEY, {
-            accessToken: async () => accessToken,
             global: {
               headers: { Authorization: `Bearer ${accessToken}` },
               fetch: (input, init = {}) => {
@@ -69,6 +68,52 @@ jobs:
           });
           """
           source = source[:client_start] + client + source[client_end:]
+
+          get_start = source.index(
+              "    if (path === 'projects' && request.method === 'GET') {"
+          )
+          get_end = source.index(
+              "\n    if (path === 'projects' && request.method === 'POST') {",
+              get_start,
+          )
+          get_block = """    if (path === 'projects' && request.method === 'GET') {
+            const ownedResult = await admin
+              .from('projects')
+              .select('*')
+              .eq('owner_id', user.id)
+              .eq('status', 'active');
+            if (ownedResult.error) throw ownedResult.error;
+
+            const membershipResult = await admin
+              .from('project_members')
+              .select('project_id')
+              .eq('user_id', user.id);
+            if (membershipResult.error) throw membershipResult.error;
+
+            const memberIds = [...new Set(
+              (membershipResult.data ?? []).map((row) => row.project_id),
+            )];
+            let sharedRows = [];
+            if (memberIds.length) {
+              const sharedResult = await admin
+                .from('projects')
+                .select('*')
+                .in('id', memberIds)
+                .eq('status', 'active');
+              if (sharedResult.error) throw sharedResult.error;
+              sharedRows = sharedResult.data ?? [];
+            }
+
+            const projects = [...new Map(
+              [...(ownedResult.data ?? []), ...sharedRows]
+                .map((row) => [row.id, row]),
+            ).values()].sort(
+              (a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at),
+            );
+            return json(request, projects.map(normalizeProject));
+          }
+          """
+          source = source[:get_start] + get_block + source[get_end:]
 
           post_start = source.index(
               "    if (path === 'projects' && request.method === 'POST') {"
@@ -97,8 +142,9 @@ jobs:
       - name: Verify source patch
         shell: bash
         run: |
-          grep -Fq 'accessToken: async () => accessToken' services/backend/functions/kyxos-api/index.ts
+          ! grep -Fq 'accessToken: async () => accessToken' services/backend/functions/kyxos-api/index.ts
           grep -Fq "input instanceof Request ? input.headers : undefined" services/backend/functions/kyxos-api/index.ts
+          grep -Fq ".eq('owner_id', user.id)" services/backend/functions/kyxos-api/index.ts
           grep -Fq "admin.rpc('create_project_for_user'" services/backend/functions/kyxos-api/index.ts
           grep -Fq 'entrypoint = "./functions/kyxos-api/index.ts"' services/backend/config.toml
 
@@ -109,7 +155,7 @@ jobs:
             git config user.name 'github-actions[bot]'
             git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
             git add services/backend/functions/kyxos-api/index.ts services/backend/config.toml
-            git commit -m 'fix(backend): authenticate data requests and create projects atomically'
+            git commit -m 'fix(backend): use verified user id for project routes'
             git push origin HEAD:main
           fi
 
