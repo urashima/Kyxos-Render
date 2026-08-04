@@ -250,13 +250,15 @@ Deno.serve(async (request) => {
   const url = new URL(request.url);
   const path = url.pathname.replace(/^.*\/kyxos-api\/?/, '');
   const authHeader = request.headers.get('authorization') ?? '';
+  const accessToken = authHeader.replace(/^Bearer\s+/i, '').trim();
   const userClient = createClient(SUPABASE_URL, ANON_KEY, {
-    global: { headers: { authorization: authHeader } },
+    global: { headers: { Authorization: authHeader } },
   });
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
   const {
     data: { user },
-  } = await userClient.auth.getUser();
+    error: authError,
+  } = await userClient.auth.getUser(accessToken);
 
   try {
     // Compatibility public reads. Production Public Viewer uses public-scene,
@@ -308,7 +310,7 @@ Deno.serve(async (request) => {
       );
     }
 
-    if (!user) return json(request, { error: 'authentication required' }, 401);
+    if (authError || !user) return json(request, { error: 'authentication required' }, 401);
 
     if (path === 'projects' && request.method === 'GET') {
       const { data, error } = await userClient
