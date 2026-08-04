@@ -19,6 +19,12 @@ jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      VITE_SUPABASE_URL: ${{ vars.KYXOS_SUPABASE_URL || secrets.KYXOS_SUPABASE_URL }}
+      VITE_SUPABASE_ANON_KEY: ${{ vars.KYXOS_SUPABASE_ANON_KEY || secrets.KYXOS_SUPABASE_ANON_KEY }}
+      VITE_KYXOS_FUNCTIONS_URL: ${{ vars.KYXOS_FUNCTIONS_URL }}
+      VITE_KYXOS_PUBLIC_FUNCTION_URL: ${{ vars.KYXOS_PUBLIC_FUNCTION_URL }}
+      VITE_KYXOS_REQUIRE_REMOTE: '1'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -29,7 +35,7 @@ jobs:
           script: |
             const marker = '<!-- kyxos-main-pages -->';
             const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            const body = `${marker}\n### Main Pages deployment\n\n- Status: **Running**\n- Commit: \`${context.sha}\`\n- Run: ${runUrl}\n\nBuilding and validating the production Pages artifact.`;
+            const body = `${marker}\n### Main Pages deployment\n\n- Status: **Running**\n- Commit: \`${context.sha}\`\n- Run: ${runUrl}\n\nChecking the production cloud backend before building and validating Pages.`;
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -55,6 +61,41 @@ jobs:
 
       - name: Checkout main
         uses: actions/checkout@v4
+
+      - name: Require production cloud backend
+        shell: bash
+        run: |
+          missing=()
+          [[ -n "$VITE_SUPABASE_URL" ]] || missing+=(KYXOS_SUPABASE_URL)
+          [[ -n "$VITE_SUPABASE_ANON_KEY" ]] || missing+=(KYXOS_SUPABASE_ANON_KEY)
+          if (( ${#missing[@]} )); then
+            echo "Production Pages cannot use browser-local persistence. Missing repository variables/secrets: ${missing[*]}" >&2
+            exit 1
+          fi
+          case "$VITE_SUPABASE_URL" in
+            https://*.supabase.co|https://*.supabase.net) ;;
+            *) echo 'KYXOS_SUPABASE_URL must be an HTTPS Supabase project URL.' >&2; exit 1 ;;
+          esac
+
+      - name: Verify deployed Supabase functions
+        shell: bash
+        run: |
+          function_base="${VITE_KYXOS_FUNCTIONS_URL:-${VITE_SUPABASE_URL%/}/functions/v1}"
+          api_status=$(curl --silent --output /tmp/kyxos-api.json --write-out '%{http_code}' \
+            -H "apikey: $VITE_SUPABASE_ANON_KEY" \
+            "${function_base%/}/kyxos-api/projects")
+          public_status=$(curl --silent --output /tmp/public-scene.json --write-out '%{http_code}' \
+            "${function_base%/}/public-scene")
+          [[ "$api_status" == '401' || "$api_status" == '403' ]] || {
+            cat /tmp/kyxos-api.json
+            echo "kyxos-api is unavailable (HTTP $api_status)." >&2
+            exit 1
+          }
+          [[ "$public_status" == '400' ]] || {
+            cat /tmp/public-scene.json
+            echo "public-scene is unavailable (HTTP $public_status)." >&2
+            exit 1
+          }
 
       - uses: pnpm/action-setup@v4
         with:
@@ -84,6 +125,7 @@ jobs:
             sha: process.env.GITHUB_SHA,
             runId: process.env.GITHUB_RUN_ID,
             runNumber: process.env.GITHUB_RUN_NUMBER,
+            backend: 'supabase',
             deployedAt: new Date().toISOString(),
           };
           const json = `${JSON.stringify(metadata, null, 2)}\n`;
@@ -108,6 +150,7 @@ jobs:
           grep -q 'Kyxos Studio' site/studio/index.html
           grep -q 'Kyxos UI Lab' site/studio/ui-lab/index.html
           grep -q 'Kyxos Public Viewer' site/public/index.html
+          grep -q '"backend": "supabase"' site/deployment.json
           grep -q "${GITHUB_SHA}" site/deployment.json
 
       - name: Configure GitHub Pages
@@ -132,6 +175,7 @@ jobs:
             cache_bust="?sha=${GITHUB_SHA}&attempt=${attempt}"
             if curl --fail --silent --show-error --location -H 'Cache-Control: no-cache' "${ROOT_URL}deployment.json${cache_bust}" --output deployment.json && \
                grep -q "${GITHUB_SHA}" deployment.json && \
+               grep -q '"backend": "supabase"' deployment.json && \
                curl --fail --silent --show-error --location -H 'Cache-Control: no-cache' "${ROOT_URL}${cache_bust}" --output root.html && \
                curl --fail --silent --show-error --location -H 'Cache-Control: no-cache' "${ROOT_URL}latest/${cache_bust}" --output latest.html && \
                curl --fail --silent --show-error --location -H 'Cache-Control: no-cache' "${ROOT_URL}studio/${cache_bust}" --output studio.html && \
@@ -145,6 +189,7 @@ jobs:
           done
           test -s deployment.json
           grep -q "${GITHUB_SHA}" deployment.json
+          grep -q '"backend": "supabase"' deployment.json
           grep -q 'Kyxos WebGPU Realism Lab' latest.html
           grep -q 'Kyxos Studio' studio.html
           grep -q 'Kyxos UI Lab' ui-lab.html
@@ -162,8 +207,8 @@ jobs:
             const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
             const success = process.env.JOB_STATUS === 'success';
             const body = success
-              ? `${marker}\n### Main Pages deployment\n\n- Status: **Success**\n- Commit: \`${context.sha}\`\n- Run: ${runUrl}\n- Studio: https://urashima.github.io/Kyxos-Render/studio/\n- UI Lab: https://urashima.github.io/Kyxos-Render/studio/ui-lab/\n- Viewer: https://urashima.github.io/Kyxos-Render/latest/\n- Public Viewer: https://urashima.github.io/Kyxos-Render/public/\n- Deployment identity: https://urashima.github.io/Kyxos-Render/deployment.json\n\nThe production artifact, deployment identity, and all online product routes passed verification.`
-              : `${marker}\n### Main Pages deployment\n\n- Status: **${process.env.JOB_STATUS}**\n- Commit: \`${context.sha}\`\n- Run: ${runUrl}\n\nThe production deployment did not pass all required checks. Inspect the linked Actions run before treating the site as updated.`;
+              ? `${marker}\n### Main Pages deployment\n\n- Status: **Success**\n- Backend: **Supabase**\n- Commit: \`${context.sha}\`\n- Run: ${runUrl}\n- Studio: https://urashima.github.io/Kyxos-Render/studio/\n- UI Lab: https://urashima.github.io/Kyxos-Render/studio/ui-lab/\n- Viewer: https://urashima.github.io/Kyxos-Render/latest/\n- Public Viewer: https://urashima.github.io/Kyxos-Render/public/\n- Deployment identity: https://urashima.github.io/Kyxos-Render/deployment.json\n\nThe Supabase preflight, production artifact, deployment identity, and all online product routes passed verification.`
+              : `${marker}\n### Main Pages deployment\n\n- Status: **${process.env.JOB_STATUS}**\n- Commit: \`${context.sha}\`\n- Run: ${runUrl}\n\nProduction deployment was blocked because the cloud backend or required checks were unavailable. The previous stable site remains active; do not treat this commit as deployed.`;
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
