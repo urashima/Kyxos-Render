@@ -12,3 +12,7 @@ Use the preview Studio to verify:
 6. Open the generated Public Viewer link on another device.
 
 Closed pull-request preview paths are not durable acceptance URLs. The stable production route is `/studio/`; an open PR preview may be used temporarily for isolated validation.
+
+## Authentication hotfix checkpoint
+
+The production `kyxos-api` Edge Function is deployed as version 6 with explicit request-JWT validation. This checkpoint retriggers the cloud readiness and preview workflows so their live function probes execute against version 6.
