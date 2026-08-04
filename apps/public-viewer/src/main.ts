@@ -112,6 +112,18 @@ function createPublicUiFixture(): { release: ReleaseRecord; manifest: AssetManif
   };
 }
 
+function requiresPublishedAsset(asset: any): boolean {
+  const metadata = asset?.metadata ?? {};
+  const id = String(asset?.id ?? '');
+  return (
+    metadata.embedded !== true &&
+    !metadata.embeddedInAssetId &&
+    asset?.storageType !== 'virtual' &&
+    asset?.runtimeOnly !== true &&
+    !id.startsWith('embedded-gltf-')
+  );
+}
+
 async function resolvePublishedScene(): Promise<{
   release: ReleaseRecord;
   manifest: AssetManifest;
@@ -146,12 +158,17 @@ async function resolvePublishedScene(): Promise<{
   const release = versionId
     ? await client.publicScenes.getVersion(versionId)
     : await client.publicScenes.resolveSlug(slug!);
-  const manifest = await client.assets.getManifest(Object.keys(release.sceneSnapshot.assets));
+  const manifest = await client.assets.getManifest(
+    Object.values(release.sceneSnapshot.assets)
+      .filter(requiresPublishedAsset)
+      .map((asset) => asset.id),
+  );
   return { release, manifest, allowedEmbedOrigins: [] };
 }
 
 function verifyManifest(contract: KyxosSceneContract, manifest: AssetManifest): void {
   const missing = Object.values(contract.assets)
+    .filter(requiresPublishedAsset)
     .filter((asset) => !manifest.assets[asset.uri])
     .map((asset) => `${asset.name ?? asset.id} (${asset.uri})`);
   if (missing.length) {
@@ -272,6 +289,7 @@ function showError(error: unknown): void {
   ready = false;
   delete document.documentElement.dataset.publicViewerReady;
   const message = error instanceof Error ? error.message : String(error);
+  console.error('Kyxos Public Viewer load failed', error);
   document.documentElement.dataset.publicViewerStage = 'error';
   document.documentElement.dataset.publicViewerError = message;
   loading.className = 'error';
@@ -280,6 +298,7 @@ function showError(error: unknown): void {
   title.textContent = 'Scene unavailable';
   const description = document.createElement('span');
   description.textContent = publicError(message);
+  description.title = message;
   const retry = control('Retry', () => location.reload());
   loading.append(title, description, retry);
 }
