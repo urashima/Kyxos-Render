@@ -2,17 +2,40 @@ import { describe, expect, it } from 'vitest';
 import { resolveKyxosRuntimeBackendConfig } from '../../packages/api-client/src/runtimeConfig';
 
 describe('runtime backend configuration', () => {
-  it('uses Supabase and derives both Edge Function URLs', () => {
+  it('uses Supabase and derives both named Edge Function URLs', () => {
     expect(resolveKyxosRuntimeBackendConfig({
       VITE_SUPABASE_URL: 'https://example.supabase.co/',
       VITE_SUPABASE_ANON_KEY: 'public-anon-key',
       VITE_KYXOS_REQUIRE_REMOTE: '1',
     })).toMatchObject({
       provider: 'supabase',
-      functionsUrl: 'https://example.supabase.co/functions/v1',
+      functionsUrl: 'https://example.supabase.co/functions/v1/kyxos-api',
       publicFunctionUrl: 'https://example.supabase.co/functions/v1/public-scene',
       requireRemote: true,
       error: undefined,
+    });
+  });
+
+  it('normalizes an explicit Edge Functions gateway to kyxos-api', () => {
+    expect(resolveKyxosRuntimeBackendConfig({
+      VITE_SUPABASE_URL: 'https://example.supabase.co',
+      VITE_SUPABASE_ANON_KEY: 'public-anon-key',
+      VITE_KYXOS_FUNCTIONS_URL: 'https://example.supabase.co/functions/v1',
+    })).toMatchObject({
+      functionsUrl: 'https://example.supabase.co/functions/v1/kyxos-api',
+      publicFunctionUrl: 'https://example.supabase.co/functions/v1/public-scene',
+    });
+  });
+
+  it('does not duplicate a function name in an explicit API URL', () => {
+    expect(resolveKyxosRuntimeBackendConfig({
+      VITE_SUPABASE_URL: 'https://example.supabase.co',
+      VITE_SUPABASE_ANON_KEY: 'public-anon-key',
+      VITE_KYXOS_FUNCTIONS_URL: 'https://example.supabase.co/functions/v1/kyxos-api/',
+      VITE_KYXOS_PUBLIC_FUNCTION_URL: 'https://example.supabase.co/functions/v1/public-scene',
+    })).toMatchObject({
+      functionsUrl: 'https://example.supabase.co/functions/v1/kyxos-api',
+      publicFunctionUrl: 'https://example.supabase.co/functions/v1/public-scene',
     });
   });
 
