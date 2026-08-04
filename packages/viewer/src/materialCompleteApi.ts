@@ -340,6 +340,20 @@ async function resolveTexture(
     return texture;
   }
 
+  // Embedded glTF textures are bytes inside the parent GLB. They are never
+  // independently downloadable assets. If the association registry does not
+  // expose one, keep the map already created by GLTFLoader rather than asking
+  // TextureLoader to decode the parent GLB URL as an image.
+  if (nativeIndex != null) {
+    viewer.canvas.dataset.embeddedTextureFallbackBlocked = reference.assetId;
+    viewer.dispatchEvent(new CustomEvent('warning', {
+      detail: {
+        message: `Embedded glTF texture ${reference.assetId} was not available in the native texture registry; the GLTFLoader material texture was retained.`,
+      },
+    }));
+    return null;
+  }
+
   const resolver = resolverByViewer.get(viewer);
   const scene = viewer.getLoadedSceneContract();
   const asset = scene?.assets[reference.assetId];
