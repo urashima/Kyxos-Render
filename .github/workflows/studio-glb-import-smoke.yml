@@ -23,46 +23,22 @@ on:
       - 'tests/e2e/studio-gltf-fidelity.spec.ts'
       - 'tests/e2e/studio-material-fidelity.spec.ts'
       - 'tests/e2e/studio-render-settings-parity.spec.ts'
+      - 'tests/unit/runtime-backend-config.spec.ts'
       - 'tests/unit/gltf-authoring-parity.spec.ts'
       - 'tests/unit/gltf-material-complete.spec.ts'
       - 'tests/unit/render-settings-parity.spec.ts'
       - 'tests/unit/studio-glb-report.spec.ts'
-      - '.github/scripts/pr32_remote_business_patch.py'
       - 'playwright.config.ts'
       - '.github/workflows/studio-glb-import-smoke.yml'
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: studio-glb-import-smoke-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
-  patch-cloud-backend:
-    if: github.head_ref == 'agent/fix-save-publish-public-loading-v2'
-    runs-on: ubuntu-22.04
-    timeout-minutes: 8
-    steps:
-      - name: Checkout pull request head
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.ref }}
-          fetch-depth: 0
-      - name: Apply production cloud persistence source patch
-        run: |
-          if [ ! -f .github/scripts/pr32_remote_business_patch.py ]; then
-            echo 'Cloud persistence source patch already consumed.'
-            exit 0
-          fi
-          python .github/scripts/pr32_remote_business_patch.py
-          rm .github/scripts/pr32_remote_business_patch.py
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add apps/studio/src/main.ts apps/public-viewer/src/main.ts packages/api-client/src/index.ts docs/DEPLOYMENT.md tests/unit/runtime-backend-config.spec.ts .github/scripts/pr32_remote_business_patch.py
-          git commit -m 'fix: require cloud persistence for production publishing'
-          git push origin HEAD:${{ github.event.pull_request.head.ref }}
-
   gltf-unit:
     runs-on: ubuntu-22.04
     timeout-minutes: 8
@@ -82,6 +58,7 @@ jobs:
       - name: Verify glTF authoring and render parity unit coverage
         run: >-
           pnpm exec vitest run
+          tests/unit/runtime-backend-config.spec.ts
           tests/unit/studio-import-lifecycle.spec.ts
           tests/unit/studio-glb-report.spec.ts
           tests/unit/gltf-bundler.spec.ts
