@@ -319,3 +319,4 @@ export * from './workspace';
 export * from './animation-graph';
 export * from './collaboration';
 export * from './advanced';
+export * from './scene-systems';
