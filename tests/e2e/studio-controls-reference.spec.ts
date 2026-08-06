@@ -14,8 +14,8 @@ test('opens searchable controls and maps N to hierarchy rename', async ({ page }
   const controls = page.getByRole('dialog', { name: 'Editor controls and shortcuts' });
   await expect(controls).toBeVisible();
   await expect(controls.locator('[data-kx-controls-count]')).toContainText('controls');
-  await controls.getByLabel('Search editor controls').fill('reparent');
-  await expect(controls.locator('.kx-control-entry')).toHaveCount(0);
+  await controls.getByLabel('Search editor controls').fill('camera position');
+  await expect(controls.locator('.kx-control-entry')).toContainText('Camera information');
   await controls.getByLabel('Search editor controls').fill('local world');
   await expect(controls.locator('.kx-control-entry')).toContainText('Local / World');
   await controls.getByRole('button', { name: 'Close controls' }).click();
