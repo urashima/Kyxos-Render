@@ -22,18 +22,26 @@ test('selects Cameras and Lights from projected viewport icons', async ({ page }
         api?: {
           getScene(): {
             nodes: Array<{ id: string; cameraId?: string; lightId?: string }>;
+            cameras: Array<{
+              id: string;
+              transform: { position: { x: number; y: number; z: number } };
+            }>;
           };
         };
       };
     }).kyxosStudio;
-    const nodes = studio?.api?.getScene().nodes ?? [];
+    const scene = studio?.api?.getScene();
+    const cameraNode = scene?.nodes.find((node) => node.cameraId);
+    const camera = scene?.cameras.find((entry) => entry.id === cameraNode?.cameraId);
     return {
-      camera: nodes.find((node) => node.cameraId)?.id,
-      light: nodes.find((node) => node.lightId)?.id,
+      camera: cameraNode?.id,
+      light: scene?.nodes.find((node) => node.lightId)?.id,
+      cameraPosition: camera?.transform.position,
     };
   });
   expect(ids.camera).toBeTruthy();
   expect(ids.light).toBeTruthy();
+  expect(ids.cameraPosition).toBeTruthy();
 
   const cameraIcon = page.locator(`.kx-viewport-entity-icon[data-node-id="${ids.camera}"]`);
   const lightIcon = page.locator(`.kx-viewport-entity-icon[data-node-id="${ids.light}"]`);
@@ -65,7 +73,28 @@ test('selects Cameras and Lights from projected viewport icons', async ({ page }
   await expect(cameraIcon).toBeVisible();
 
   await cameraIcon.dblclick();
-  await expect.poll(() => page.locator('#studio-canvas').evaluate((canvas) =>
-    canvas.dataset.editorView ?? canvas.dataset.sceneCameraId ?? '',
-  )).not.toBe('');
+  const editorPosition = await page.locator('#studio-canvas').evaluate(
+    (canvas: HTMLCanvasElement) => new Promise<{ x: number; y: number; z: number }>((resolve, reject) => {
+      const requestId = crypto.randomUUID();
+      const timeout = window.setTimeout(() => {
+        canvas.removeEventListener('kyxos:editor-camera-bookmark-state', onState);
+        reject(new Error('Editor camera capture timed out.'));
+      }, 2_000);
+      const onState = (event: Event) => {
+        const detail = (event as CustomEvent<{
+          requestId: string;
+          state: { camera: { transform: { position: { x: number; y: number; z: number } } } };
+        }>).detail;
+        if (detail.requestId !== requestId) return;
+        window.clearTimeout(timeout);
+        canvas.removeEventListener('kyxos:editor-camera-bookmark-state', onState);
+        resolve(detail.state.camera.transform.position);
+      };
+      canvas.addEventListener('kyxos:editor-camera-bookmark-state', onState);
+      canvas.dispatchEvent(new CustomEvent('kyxos:editor-viewport-command', {
+        detail: { command: 'capture-bookmark', requestId },
+      }));
+    }),
+  );
+  expect(editorPosition).toEqual(ids.cameraPosition);
 });
