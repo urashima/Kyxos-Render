@@ -1,0 +1,231 @@
+.kx-controls-dialog {
+  width: min(860px, calc(100vw - 28px));
+  height: min(720px, calc(100dvh - 48px));
+  max-width: none;
+  max-height: none;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  padding: 0;
+  border: 1px solid var(--kx-border-strong);
+  border-radius: 15px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--kx-surface-0) 93%, transparent);
+  color: var(--kx-text-primary);
+  box-shadow: 0 26px 80px rgb(0 0 0 / 42%);
+  backdrop-filter: blur(var(--kx-panel-blur)) saturate(1.08);
+}
+
+.kx-controls-dialog[open] {
+  display: grid;
+}
+
+.kx-controls-dialog::backdrop {
+  background: rgb(5 7 10 / 62%);
+  backdrop-filter: blur(6px);
+}
+
+.kx-controls-header {
+  min-height: 52px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px 8px 15px;
+  border-bottom: 1px solid var(--kx-border);
+  background: color-mix(in srgb, var(--kx-surface-0) 88%, transparent);
+}
+
+.kx-controls-header > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.kx-controls-header strong {
+  font-size: 12px;
+}
+
+.kx-controls-header small {
+  color: var(--kx-text-muted);
+  font-size: 9px;
+}
+
+.kx-controls-header button {
+  margin-left: auto;
+  width: 34px;
+  min-width: 34px;
+  min-height: 34px;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  font-size: 17px;
+}
+
+.kx-controls-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--kx-border);
+}
+
+.kx-controls-toolbar input {
+  width: 100%;
+  min-height: 38px;
+  font-size: 11px;
+}
+
+.kx-controls-toolbar span {
+  color: var(--kx-text-muted);
+  font: 600 9px var(--kx-font-mono);
+  white-space: nowrap;
+}
+
+.kx-controls-groups {
+  display: flex;
+  gap: 5px;
+  padding: 8px 12px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--kx-border);
+  scrollbar-width: none;
+}
+
+.kx-controls-groups::-webkit-scrollbar {
+  display: none;
+}
+
+.kx-controls-groups button {
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: var(--kx-radius-pill);
+  background: transparent;
+  white-space: nowrap;
+}
+
+.kx-controls-groups button.active {
+  border-color: color-mix(in srgb, var(--kx-accent) 62%, var(--kx-border));
+  background: var(--kx-accent-soft);
+  color: var(--kx-accent);
+}
+
+.kx-controls-list {
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  padding: 10px 12px 16px;
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--kx-border-strong) transparent;
+}
+
+.kx-control-entry {
+  min-width: 0;
+  min-height: 66px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 11px;
+  border: 1px solid var(--kx-border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--kx-surface-1) 76%, transparent);
+}
+
+.kx-control-entry:hover {
+  border-color: var(--kx-border-strong);
+  background: var(--kx-surface-hover);
+}
+
+.kx-control-entry > span {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.kx-control-entry strong {
+  font-size: 10px;
+}
+
+.kx-control-entry small {
+  color: var(--kx-text-muted);
+  font-size: 8px;
+  line-height: 1.45;
+}
+
+.kx-control-entry kbd,
+.kx-controls-dialog footer kbd {
+  padding: 4px 7px;
+  border: 1px solid var(--kx-border-strong);
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  background: var(--kx-surface-0);
+  color: var(--kx-text-secondary);
+  font: 650 8px var(--kx-font-mono);
+  white-space: nowrap;
+}
+
+.kx-control-entry[data-group='Viewport'] kbd {
+  color: var(--kx-info);
+}
+
+.kx-control-entry[data-group='Camera & Light'] kbd {
+  color: var(--kx-warning);
+}
+
+.kx-control-entry[data-group='Transform'] kbd {
+  color: var(--kx-accent);
+}
+
+.kx-controls-empty {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 48px 18px;
+  color: var(--kx-text-muted);
+  text-align: center;
+}
+
+.kx-controls-dialog footer {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-top: 1px solid var(--kx-border);
+  color: var(--kx-text-muted);
+  font-size: 8px;
+}
+
+.kx-controls-dialog footer kbd {
+  margin-left: auto;
+}
+
+.kx-controls-button {
+  white-space: nowrap;
+}
+
+@media (max-width: 760px) {
+  .kx-controls-dialog {
+    inset: 8px !important;
+    width: calc(100vw - 16px);
+    height: calc(100dvh - 16px);
+    margin: 0;
+    border-radius: 12px;
+  }
+
+  .kx-controls-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .kx-controls-button {
+    display: none;
+  }
+}
+
+@media (pointer: coarse) {
+  .kx-controls-header button,
+  .kx-controls-groups button,
+  .kx-controls-toolbar input {
+    min-height: var(--kx-detail-touch-target, 48px);
+  }
+}

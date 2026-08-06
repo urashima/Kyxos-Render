@@ -1,0 +1,32 @@
+.kx-reparent-mode-hint {
+  position: fixed;
+  z-index: 10020;
+  min-width: 216px;
+  display: none;
+  gap: 3px;
+  padding: 8px 10px;
+  border: 1px solid var(--kx-border-strong);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--kx-surface-0) 92%, transparent);
+  box-shadow: 0 12px 30px rgb(0 0 0 / 28%);
+  backdrop-filter: blur(var(--kx-panel-blur));
+  pointer-events: none;
+}
+
+.kx-reparent-mode-hint.visible {
+  display: grid;
+}
+
+.kx-reparent-mode-hint strong {
+  color: var(--kx-accent);
+  font-size: 9px;
+}
+
+.kx-reparent-mode-hint[data-preserve='false'] strong {
+  color: var(--kx-warning);
+}
+
+.kx-reparent-mode-hint span {
+  color: var(--kx-text-muted);
+  font-size: 8px;
+}
