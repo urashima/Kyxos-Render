@@ -1,0 +1,557 @@
+/* Product-detail pass layered over the existing PCUI/Kyxos shell without changing canonical editor state. */
+html[data-kx-panel-blur='off'] {
+  --kx-panel-blur: 0px;
+}
+
+html[data-kx-motion='reduced'] *,
+html[data-kx-motion='reduced'] *::before,
+html[data-kx-motion='reduced'] *::after {
+  scroll-behavior: auto !important;
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+}
+
+.kyxos-studio-shell.kx-detail-ready:not(.focus-mode) {
+  grid-template-columns: var(--kx-detail-hierarchy-width, 248px) minmax(0, 1fr) var(--kx-detail-inspector-width, 318px);
+  grid-template-rows: 48px minmax(0, 1fr) var(--kx-detail-assets-height, 178px) 24px;
+}
+
+.kyxos-studio-shell.kx-detail-ready .studio-left-rail {
+  left: calc(var(--kx-detail-hierarchy-width, 248px) + 14px);
+}
+
+html[data-kx-density='compact'] {
+  --kx-control-height: 28px;
+}
+
+html[data-kx-density='compact'] .kx-panel-surface > .pcui-panel-header {
+  height: 31px !important;
+  min-height: 31px !important;
+}
+
+html[data-kx-density='compact'] .kx-panel-surface > .pcui-panel-content {
+  height: calc(100% - 31px);
+}
+
+html[data-kx-density='compact'] .field-row,
+html[data-kx-density='compact'] .schema-field {
+  min-height: 31px;
+}
+
+html[data-kx-density='compact'] .hierarchy-row {
+  height: 25px;
+}
+
+.kx-detail-icon-button {
+  width: 30px;
+  min-width: 30px;
+  min-height: 28px;
+  padding: 0;
+  border-radius: var(--kx-radius-pill);
+  background: transparent;
+  font-size: 15px;
+}
+
+/* Generated fallbacks are only used when no uploaded or captured thumbnail exists. */
+.project-thumb .kx-thumbnail-canvas,
+.asset-thumbnail .kx-thumbnail-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+.project-thumb .kx-thumbnail-canvas {
+  min-height: 156px;
+}
+
+.asset-workspace-items.grid {
+  grid-template-columns: repeat(auto-fill, minmax(max(176px, calc(var(--kx-detail-thumbnail-size, 72px) + 104px)), 1fr));
+}
+
+.asset-thumbnail {
+  width: var(--kx-detail-thumbnail-size, 72px);
+  height: var(--kx-detail-thumbnail-size, 72px);
+}
+
+.asset-workspace-item {
+  grid-template-columns: var(--kx-detail-thumbnail-size, 72px) minmax(0, 1fr);
+}
+
+.asset-workspace-items.list .asset-thumbnail {
+  width: 42px;
+  height: 42px;
+}
+
+.asset-workspace-items.list .asset-workspace-item {
+  grid-template-columns: 42px minmax(160px, 1fr) minmax(250px, auto);
+}
+
+.kx-generated-thumbnail {
+  overflow: hidden;
+}
+
+/* Complete local editor-preference surface. */
+.kx-settings-dialog,
+.kx-input-dialog {
+  width: min(780px, calc(100vw - 32px));
+  max-height: min(860px, calc(100dvh - 32px));
+  padding: 0;
+  border: 1px solid var(--kx-border-strong);
+  border-radius: var(--kx-radius-lg);
+  background: var(--kx-surface-0);
+  color: var(--kx-text-primary);
+  box-shadow: var(--kx-shadow-popover);
+  overflow: auto;
+}
+
+.kx-settings-dialog::backdrop,
+.kx-input-dialog::backdrop {
+  background: rgb(4 6 4 / 72%);
+  backdrop-filter: blur(6px);
+}
+
+.kx-settings-header > div:first-child {
+  min-width: 0;
+}
+
+.kx-settings-eyebrow {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--kx-accent);
+  font: 700 9px var(--kx-font-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.kx-settings-form {
+  display: grid;
+}
+
+.kx-settings-section {
+  display: grid;
+  gap: 2px;
+  padding: 18px;
+  border-bottom: 1px solid var(--kx-border);
+}
+
+.kx-settings-section-copy {
+  margin-bottom: 8px;
+}
+
+.kx-settings-section h3 {
+  margin: 0 0 4px;
+  font-size: 13px;
+}
+
+.kx-settings-section p,
+.kx-settings-footer > span {
+  margin: 0;
+  color: var(--kx-text-muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.kx-setting-row {
+  min-height: 54px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(170px, 0.65fr);
+  align-items: center;
+  gap: 18px;
+  padding: 7px 9px;
+  border-radius: var(--kx-radius-sm);
+}
+
+.kx-setting-row:hover {
+  background: var(--kx-surface-hover);
+}
+
+.kx-setting-row > span:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.kx-setting-row strong {
+  font-size: 11px;
+}
+
+.kx-setting-row small {
+  color: var(--kx-text-muted);
+  font-size: 9px;
+  line-height: 1.4;
+}
+
+.kx-setting-row > input[type='checkbox'] {
+  width: 34px;
+  height: 18px;
+  justify-self: end;
+}
+
+.kx-range-control {
+  display: grid;
+  grid-template-columns: minmax(100px, 1fr) 54px;
+  align-items: center;
+  gap: 9px;
+}
+
+.kx-range-control input {
+  width: 100%;
+}
+
+.kx-range-control output {
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--kx-border);
+  border-radius: var(--kx-radius-xs);
+  background: var(--kx-surface-0);
+  color: var(--kx-accent);
+  font: 600 9px var(--kx-font-mono);
+}
+
+.kx-shortcut-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px 18px;
+  padding: 10px;
+  border: 1px solid var(--kx-border);
+  border-radius: var(--kx-radius-sm);
+  color: var(--kx-text-secondary);
+  font-size: 10px;
+}
+
+.kx-shortcut-list kbd {
+  padding: 4px 7px;
+  border: 1px solid var(--kx-border);
+  border-radius: var(--kx-radius-xs);
+  background: var(--kx-surface-2);
+  color: var(--kx-text-primary);
+  font: 600 9px var(--kx-font-mono);
+}
+
+.kx-settings-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 18px;
+  background: color-mix(in srgb, var(--kx-surface-0) 94%, transparent);
+  border-top: 1px solid var(--kx-border);
+  backdrop-filter: blur(var(--kx-panel-blur));
+}
+
+/* Replace prompt-driven secondary project actions with a keyboard-friendly popover. */
+.kx-project-menu {
+  position: fixed;
+  z-index: 2000;
+  width: 188px;
+  display: grid;
+  gap: 3px;
+  padding: 6px;
+  border: 1px solid var(--kx-border-strong);
+  border-radius: var(--kx-radius-md);
+  background: var(--kx-surface-0);
+  box-shadow: var(--kx-shadow-popover);
+}
+
+.kx-project-menu[hidden] {
+  display: none;
+}
+
+.kx-project-menu button {
+  justify-content: flex-start;
+  border-color: transparent;
+  background: transparent;
+}
+
+.kx-project-menu button:hover {
+  background: var(--kx-surface-hover);
+}
+
+.kx-input-dialog {
+  width: min(480px, calc(100vw - 28px));
+}
+
+.kx-input-dialog form {
+  display: grid;
+}
+
+.kx-input-dialog header,
+.kx-input-dialog footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 13px 15px;
+}
+
+.kx-input-dialog header {
+  border-bottom: 1px solid var(--kx-border);
+}
+
+.kx-input-dialog footer {
+  justify-content: flex-end;
+  border-top: 1px solid var(--kx-border);
+}
+
+.kx-input-dialog h2 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.kx-input-dialog label {
+  display: grid;
+  gap: 7px;
+  padding: 18px 15px;
+  color: var(--kx-text-secondary);
+  font-size: 10px;
+}
+
+.kx-input-dialog label input {
+  height: 38px !important;
+}
+
+.kx-confirm-dialog p {
+  margin: 0;
+  padding: 18px 15px;
+  color: var(--kx-text-secondary);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+/* Desktop editor windows can move, resize, maximize and restore their geometry. */
+dialog.kx-detail-window {
+  min-width: 360px;
+  min-height: 220px;
+  resize: both;
+  overscroll-behavior: contain;
+}
+
+.kx-window-drag-handle {
+  cursor: grab;
+  user-select: none;
+}
+
+.kx-window-dragging .kx-window-drag-handle {
+  cursor: grabbing;
+}
+
+.kx-window-controls {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+}
+
+.kx-window-controls button {
+  min-height: 26px;
+  padding: 0 8px;
+  font-size: 9px;
+}
+
+dialog.kx-window-maximized {
+  position: fixed !important;
+  inset: 8px !important;
+  width: auto !important;
+  height: auto !important;
+  max-width: none !important;
+  max-height: none !important;
+  margin: 0 !important;
+  resize: none;
+}
+
+/* Safe-area-aware command reach for phones and tablets. */
+.kx-mobile-dock {
+  display: none;
+}
+
+@media (pointer: coarse) {
+  .kyxos-studio-shell button,
+  .kyxos-studio-shell input:not([type='range']):not([type='checkbox']),
+  .kyxos-studio-shell select {
+    min-height: var(--kx-detail-touch-target, 48px);
+  }
+
+  .hierarchy-row {
+    height: var(--kx-detail-touch-target, 48px);
+  }
+
+  .hierarchy-row button {
+    min-width: var(--kx-detail-touch-target, 48px);
+    min-height: var(--kx-detail-touch-target, 48px);
+  }
+}
+
+@media (max-width: 900px) {
+  .kyxos-studio-shell.kx-detail-ready {
+    padding-bottom: calc(58px + env(safe-area-inset-bottom));
+  }
+
+  .studio-topbar {
+    grid-template-columns: minmax(0, 1fr) auto;
+    padding-top: max(6px, env(safe-area-inset-top));
+  }
+
+  .studio-topbar-start {
+    display: none;
+  }
+
+  .studio-topbar-slot {
+    grid-column: 1;
+  }
+
+  .studio-topbar-end {
+    grid-column: 2;
+  }
+
+  .studio-topbar-slot > strong,
+  .studio-topbar-slot .role-badge,
+  .studio-topbar-slot .presence-strip,
+  .studio-topbar-slot .tool-group,
+  .studio-topbar-slot select,
+  .studio-topbar-slot > button:not(.primary):not(.preview-toggle) {
+    display: none;
+  }
+
+  html[data-kx-mobile-dock='on'] .kx-mobile-dock {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 90;
+    min-height: calc(58px + env(safe-area-inset-bottom));
+    display: flex;
+    align-items: flex-start;
+    gap: 5px;
+    padding: 5px 6px calc(5px + env(safe-area-inset-bottom));
+    border-top: 1px solid var(--kx-border-strong);
+    background: color-mix(in srgb, var(--kx-surface-0) 95%, transparent);
+    box-shadow: 0 -12px 28px rgb(0 0 0 / 24%);
+    backdrop-filter: blur(var(--kx-panel-blur));
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+  }
+
+  .kx-mobile-dock::-webkit-scrollbar {
+    display: none;
+  }
+
+  .kx-mobile-dock button {
+    flex: 0 0 auto;
+    min-width: var(--kx-detail-touch-target, 48px);
+    min-height: var(--kx-detail-touch-target, 48px);
+    padding: 0 10px;
+    border-radius: var(--kx-radius-md);
+    background: var(--kx-surface-1);
+    font-size: 9px;
+  }
+
+  .studio-performance-capsule {
+    top: 56px;
+    max-width: calc(100vw - 20px);
+  }
+
+  .studio-left-rail {
+    display: none !important;
+  }
+
+  .kyxos-studio-shell.kx-mobile-assets-open .studio-assets {
+    position: absolute !important;
+    right: 8px;
+    bottom: calc(66px + env(safe-area-inset-bottom));
+    left: 8px;
+    z-index: 70;
+    height: min(48dvh, 440px);
+    display: block !important;
+    border: 1px solid var(--kx-border-strong) !important;
+    border-radius: var(--kx-radius-lg) !important;
+    box-shadow: var(--kx-shadow-popover);
+  }
+
+  dialog.kx-detail-window,
+  dialog.kx-settings-dialog {
+    position: fixed !important;
+    inset: max(6px, env(safe-area-inset-top)) 6px calc(64px + env(safe-area-inset-bottom)) !important;
+    width: auto !important;
+    height: auto !important;
+    min-width: 0;
+    min-height: 0;
+    max-width: none !important;
+    max-height: none !important;
+    margin: 0 !important;
+    resize: none;
+    border-radius: var(--kx-radius-md);
+  }
+
+  .kx-window-controls {
+    display: none;
+  }
+
+  .code-editor-layout,
+  .animation-graph-layout {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .code-editor-sidebar,
+  .animation-graph-inspector {
+    max-height: 34dvh;
+    border-right: 0;
+    border-left: 0;
+    border-bottom: 1px solid var(--kx-border);
+  }
+}
+
+@media (max-width: 640px) {
+  .projects-screen {
+    padding-right: 14px;
+    padding-left: 14px;
+  }
+
+  .projects-header {
+    height: 62px;
+  }
+
+  .projects-title {
+    margin-top: 26px;
+    font-size: 24px;
+  }
+
+  .project-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .project-card {
+    min-height: 208px;
+  }
+
+  .project-thumb,
+  .project-thumb .kx-thumbnail-canvas {
+    height: 132px;
+    min-height: 132px;
+  }
+
+  .kx-setting-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .kx-setting-row > input[type='checkbox'] {
+    justify-self: start;
+  }
+
+  .kx-settings-footer {
+    grid-template-columns: 1fr auto;
+  }
+
+  .kx-settings-footer > span {
+    grid-column: 1 / -1;
+    grid-row: 1;
+  }
+}
