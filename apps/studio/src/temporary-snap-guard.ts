@@ -55,16 +55,19 @@ const guardShift = (event: KeyboardEvent): void => {
   event.stopImmediatePropagation();
 };
 
-document.addEventListener('kyxos:viewport-adapter-ready', onAdapterReady);
-window.addEventListener('keydown', guardShift, true);
-window.addEventListener('keyup', guardShift, true);
-window.addEventListener('blur', () => {
+const onWindowBlur = (): void => {
   shiftHeld = false;
   if (transforming) syntheticShift('keyup');
-});
+};
+
+document.addEventListener('kyxos:viewport-adapter-ready', onAdapterReady, true);
+window.addEventListener('keydown', guardShift, true);
+window.addEventListener('keyup', guardShift, true);
+window.addEventListener('blur', onWindowBlur);
 window.addEventListener('pagehide', () => {
   detach();
-  document.removeEventListener('kyxos:viewport-adapter-ready', onAdapterReady);
+  document.removeEventListener('kyxos:viewport-adapter-ready', onAdapterReady, true);
   window.removeEventListener('keydown', guardShift, true);
   window.removeEventListener('keyup', guardShift, true);
+  window.removeEventListener('blur', onWindowBlur);
 }, { once: true });
