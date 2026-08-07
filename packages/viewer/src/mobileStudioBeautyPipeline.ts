@@ -27,6 +27,7 @@ type ViewerInternals = {
 
 type ViewerPrototype = {
   buildPipeline(reason: string): void;
+  resetTemporal(reason?: string): void;
   [installKey]?: boolean;
 };
 
@@ -38,6 +39,7 @@ function usesMobileStudioBeautyPipeline(viewer: ViewerInternals): boolean {
 const prototype = KyxosViewer.prototype as unknown as ViewerPrototype;
 if (!prototype[installKey]) {
   const originalBuildPipeline = prototype.buildPipeline;
+  const originalResetTemporal = prototype.resetTemporal;
 
   prototype.buildPipeline = function buildPipelineWithMobileBeautyOnly(
     this: KyxosViewer,
@@ -92,6 +94,26 @@ if (!prototype[installKey]) {
     this.dispatchEvent(new CustomEvent('pipeline-rebuilt', {
       detail: { reason: `mobile-beauty:${reason}` },
     }));
+  };
+
+  prototype.resetTemporal = function resetTemporalWithMobileBeautyGuard(
+    this: KyxosViewer,
+    reason = 'manual',
+  ): void {
+    const internal = this as unknown as ViewerInternals;
+    if (!usesMobileStudioBeautyPipeline(internal)) {
+      originalResetTemporal.call(this, reason);
+      return;
+    }
+
+    // Beauty-only Mobile Studio has no TRAA, SSGI, temporal reprojection or
+    // denoiser history to clear. Rebuilding the RenderPipeline here only
+    // destroys and reallocates the sole beauty target precisely when a freshly
+    // decoded GLB has just uploaded its textures. Keep resize/debug rebuilds on
+    // their explicit paths, but make temporal resets allocation-free on iOS.
+    internal.canvas.dataset.studioRuntimeTemporalReset = 'skipped';
+    internal.canvas.dataset.studioRuntimeTemporalResetReason = reason;
+    document.documentElement.dataset.studioRuntimeTemporalReset = 'skipped';
   };
 
   prototype[installKey] = true;
