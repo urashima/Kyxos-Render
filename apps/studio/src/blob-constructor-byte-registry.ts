@@ -37,13 +37,12 @@ if (!runtime[installKey] && typeof Blob !== 'undefined') {
     },
   });
 
-  Object.defineProperty(RegisteredBlob, Symbol.hasInstance, {
-    configurable: true,
-    value(instance: unknown) {
-      return instance instanceof NativeBlob;
-    },
-  });
-
+  // Do not override Symbol.hasInstance. A Proxy over the native Blob constructor
+  // already exposes Blob.prototype, so Function.prototype@@hasInstance preserves
+  // the browser's native prototype-chain test. Defining @@hasInstance on this
+  // proxy forwards the property to NativeBlob itself in WebKit; calling
+  // `instance instanceof NativeBlob` from that hook then recursively calls the
+  // same hook until the stack overflows.
   Object.defineProperty(globalThis, 'Blob', {
     configurable: true,
     writable: true,
