@@ -1,4 +1,4 @@
-.release-card {
+.release-card[data-has-release-thumbnail='true'] {
   display: grid;
   grid-template-columns: 148px minmax(0, 1fr);
   grid-template-areas:
@@ -9,15 +9,15 @@
   align-items: start;
 }
 
-.release-card > strong {
+.release-card[data-has-release-thumbnail='true'] > strong {
   grid-area: title;
 }
 
-.release-card > span {
+.release-card[data-has-release-thumbnail='true'] > span {
   grid-area: date;
 }
 
-.release-card > .inline-actions {
+.release-card[data-has-release-thumbnail='true'] > .inline-actions {
   grid-area: actions;
 }
 
@@ -61,7 +61,7 @@
 }
 
 @media (max-width: 680px) {
-  .release-card {
+  .release-card[data-has-release-thumbnail='true'] {
     grid-template-columns: 112px minmax(0, 1fr);
     column-gap: 10px;
   }
