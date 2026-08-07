@@ -109,8 +109,19 @@ function rangeControl(
   return wrapper;
 }
 
-function applyAssetViewMode(root: HTMLElement): void {
-  const mode = studioSettings.value.assetViewMode;
+function requestAssetViewMode(root: HTMLElement, mode: 'grid' | 'list'): void {
+  const assets = root.querySelector<HTMLElement>('.studio-assets');
+  if (!assets) return;
+  const desired = mode === 'grid' ? 'Grid' : 'List';
+  const control = [...assets.querySelectorAll<HTMLButtonElement>('button')]
+    .find((button) => button.textContent?.trim() === desired);
+  if (control && !control.disabled) {
+    control.click();
+    return;
+  }
+
+  // Fallback for the short interval before the asset toolbar is mounted. Do
+  // not observe/re-apply this state: the Asset Workspace owns live view mode.
   root.querySelectorAll<HTMLElement>('.asset-workspace-items').forEach((items) => {
     items.classList.toggle('grid', mode === 'grid');
     items.classList.toggle('list', mode === 'list');
@@ -175,7 +186,7 @@ function createSettingsDialog(root: HTMLElement): HTMLDialogElement {
           { label: 'Compact List', value: 'list' },
         ], (value) => {
           studioSettings.update({ assetViewMode: value });
-          applyAssetViewMode(root);
+          requestAssetViewMode(root, value);
         }),
       ),
     );
@@ -256,7 +267,6 @@ function createSettingsDialog(root: HTMLElement): HTMLDialogElement {
 
   studioSettings.addEventListener('change', render);
   window.addEventListener('kyxos:workspace-preferences-change', render);
-  dialog.addEventListener('close', () => applyAssetViewMode(root));
   render();
 
   const footer = document.createElement('footer');
@@ -292,16 +302,8 @@ function mountSettings(root: HTMLElement): void {
   topbarEnd.prepend(button);
   root.append(dialog);
 
-  const applyWorkspace = () => {
-    const prefs = readWorkspacePreferences();
-    root.classList.toggle('kx-touch-friendly', prefs.touchFriendly);
-    applyAssetViewMode(root);
-  };
-  applyWorkspace();
-
-  const observer = new MutationObserver(applyAssetViewMode.bind(null, root));
-  const assets = root.querySelector<HTMLElement>('.studio-assets');
-  if (assets) observer.observe(assets, { childList: true, subtree: true });
+  const prefs = readWorkspacePreferences();
+  root.classList.toggle('kx-touch-friendly', prefs.touchFriendly);
 }
 
 function scan(): void {
