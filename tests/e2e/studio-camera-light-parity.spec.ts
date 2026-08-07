@@ -9,6 +9,7 @@ async function createStudioProject(page: import('@playwright/test').Page): Promi
   page.once('dialog', (dialog) => dialog.accept('Camera Light Parity Fixture'));
   await page.getByRole('button', { name: 'New project' }).click();
   await expect(page.locator('#studio-canvas')).toBeVisible({ timeout: 60_000 });
+  await expect(page.locator('#studio-canvas')).toHaveAttribute('data-authoring-camera', 'editor');
 }
 
 async function addHierarchyComponent(
@@ -85,11 +86,14 @@ test('Studio camera and light selection, inspector edits and transforms stay syn
 
   await cameraInspector.getByLabel('FOV').fill('58');
   await expect(cameraInspector.getByLabel('FOV')).toBeFocused();
-  await cameraInspector.getByLabel('Position X').fill('0.6');
+  // Put the authored camera clearly inside the independent authoring camera's
+  // view so the test exercises a real visible helper rather than an offscreen
+  // tolerance path.
+  await cameraInspector.getByLabel('Position X').fill('0');
   await expect(cameraInspector.getByLabel('Position X')).toBeFocused();
-  await cameraInspector.getByLabel('Position Y').fill('1.4');
+  await cameraInspector.getByLabel('Position Y').fill('2');
   await expect(cameraInspector.getByLabel('Position Y')).toBeFocused();
-  await cameraInspector.getByLabel('Position Z').fill('4.5');
+  await cameraInspector.getByLabel('Position Z').fill('0.5');
   await expect(cameraInspector.getByLabel('Position Z')).toBeFocused();
 
   await expect.poll(() => page.evaluate(() => {
@@ -108,12 +112,12 @@ test('Studio camera and light selection, inspector edits and transforms stay syn
     };
   })).toEqual({
     fov: 58,
-    nodeX: 0.6,
-    nodeY: 1.4,
-    nodeZ: 4.5,
-    cameraX: 0.6,
-    cameraY: 1.4,
-    cameraZ: 4.5,
+    nodeX: 0,
+    nodeY: 2,
+    nodeZ: 0.5,
+    cameraX: 0,
+    cameraY: 2,
+    cameraZ: 0.5,
   });
 
   await clickComponentHelper(page, cameraState.nodeId as string, 'camera');
@@ -125,6 +129,12 @@ test('Studio camera and light selection, inspector edits and transforms stay syn
     const node = scene?.nodes?.find((entry: any) => entry.id === selected);
     return scene?.activeCameraId === node?.cameraId;
   })).toBe(true);
+  // Runtime active-camera state must not take over the Studio authoring view.
+  await expect(page.locator('#studio-canvas')).toHaveAttribute('data-authoring-camera', 'editor');
+  await expect(page.locator('#studio-canvas')).toHaveAttribute(
+    'data-authored-scene-camera',
+    cameraState.cameraId as string,
+  );
 
   await addHierarchyComponent(page, 'Add Spot Light');
   const lightInspector = page.locator('.kx-component-inspector').filter({ hasText: 'Light ·' });
