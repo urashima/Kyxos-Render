@@ -1,6 +1,6 @@
 import './mobile-actions-menu.css';
 
-const EXCLUDED_LABELS = new Set(['Preview', 'Publish']);
+const EXCLUDED_LABELS = new Set(['Publish']);
 
 function visibleLabel(button: HTMLButtonElement): string {
   return (button.getAttribute('aria-label') ?? button.textContent ?? '').trim().replace(/\s+/g, ' ');
@@ -17,7 +17,6 @@ function actionableButtons(root: HTMLElement): HTMLButtonElement[] {
     const label = visibleLabel(button);
     return label
       && !EXCLUDED_LABELS.has(label)
-      && !button.classList.contains('preview-toggle')
       && !button.classList.contains('kx-topbar-overflow-trigger');
   });
 }
