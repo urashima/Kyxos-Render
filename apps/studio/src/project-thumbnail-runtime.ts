@@ -2,7 +2,10 @@ import { hashBlob } from '@kyxos/api-client';
 import { createDurableApiClient } from '@kyxos/api-client/durable';
 import { resolveKyxosRuntimeBackendConfig } from '@kyxos/api-client/runtime-config';
 import type { ProjectSession } from '@kyxos/editor-core';
-import { BrowserKyxosViewportAdapter } from '@kyxos/viewer-adapter';
+import {
+  BrowserKyxosViewportAdapter,
+  isConstrainedMobileRuntime,
+} from '@kyxos/viewer-adapter';
 
 const LOCAL_KEY = 'kyxos-studio-local-v1';
 const THUMBNAIL_WIDTH = 512;
@@ -169,6 +172,21 @@ BrowserKyxosViewportAdapter.prototype.bindSession = function bindSessionWithProj
   const root = document.querySelector<HTMLElement>('.kyxos-studio-shell');
   if (root) root.dataset.projectId = session.projectId;
   document.documentElement.dataset.kxActiveProjectId = session.projectId;
+
+  // On constrained mobile hardware a cover capture is not worth a second image
+  // allocation/readback while the editor is holding decoded GLB geometry and
+  // textures. Mobile consumes project covers generated on desktop, but never
+  // captures one in the background or as a pre-Publish gate.
+  if (isConstrainedMobileRuntime()) {
+    document.documentElement.dataset.projectThumbnailState = 'mobile-deferred';
+    return () => {
+      if (document.documentElement.dataset.kxActiveProjectId === session.projectId) {
+        delete document.documentElement.dataset.kxActiveProjectId;
+      }
+      delete document.documentElement.dataset.projectThumbnailPublishGate;
+      disposeOriginal();
+    };
+  }
 
   let timer = 0;
   let disposed = false;
