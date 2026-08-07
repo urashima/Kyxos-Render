@@ -103,10 +103,6 @@ async function loadRegisteredBlob(
   const sourceKind = blob instanceof File ? 'picker-file' : 'registered-blob';
   markLoadStage(`${sourceKind}-native-read-start`);
   progress(onProgress, 0, blob.size);
-  // File.prototype.arrayBuffer is intentionally guarded by Studio for upload /
-  // recovery behavior. Viewer loading must not re-enter that chain. Read the
-  // exact Blob backing the ObjectURL through the native Blob method instead;
-  // this is one allocation, has no cache, and works for File subclasses too.
   const buffer = await nativeBlobArrayBuffer.call(blob);
   markLoadStage(`${sourceKind}-native-read-complete`);
   progress(onProgress, blob.size, blob.size);
@@ -154,17 +150,10 @@ export function createConfiguredGltfLoader(
   _options: ConfiguredGltfLoaderOptions = {},
 ): GLTFLoader {
   const loader = new GLTFLoader();
-  // Two simultaneous decoder workers are a useful desktop throughput default,
-  // but on iPhone each worker can temporarily retain compressed and decoded
-  // buffers at the same time. Serial decoding trades a little import latency for
-  // a much lower peak resident set and avoids Safari page-process termination.
   dracoLoader.setWorkerLimit(decoderWorkerLimit());
   loader.setDRACOLoader(dracoLoader);
   loader.setMeshoptDecoder(MeshoptDecoder);
 
-  // KTX2Loader uses its official import.meta-relative Basis transcoder assets.
-  // Keeping it attached is cheap; the worker/WASM is loaded only when a KTX2
-  // texture is encountered. This also handles assets that omit extensionsUsed.
   if (renderer) {
     let ktx2Loader = ktx2Loaders.get(renderer);
     if (!ktx2Loader) {
@@ -179,6 +168,26 @@ export function createConfiguredGltfLoader(
   loader.loadAsync = async (url, onProgress) => {
     const protocol = urlProtocol(url);
     markLoadStage(`load-url-${protocol}`);
+
+    // Safari/WebKit already has a native blob: URL loader path inside Three's
+    // FileLoader. Re-reading the Blob ourselves before parse created a second
+    // JS-visible ArrayBuffer boundary and, more importantly, repeatedly caused
+    // Chromium iPhone-context and WebKit WebProcess termination even for a tiny
+    // GLB. On constrained Apple mobile hardware leave the top-level blob URL to
+    // the browser + Three loader exactly as PlayCanvas-style runtime loading
+    // would, while keeping desktop recovery fallbacks below.
+    if (url.startsWith('blob:') && constrainedMobileDecode()) {
+      markLoadStage('mobile-native-blob-start');
+      try {
+        const result = await nativeLoadAsync(url, onProgress);
+        markLoadStage('mobile-native-blob-complete');
+        return result;
+      } catch (error) {
+        markLoadStage('mobile-native-blob-error');
+        throw error;
+      }
+    }
+
     if (!url.startsWith('blob:')) {
       try {
         const result = await nativeLoadAsync(url, onProgress);
