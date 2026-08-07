@@ -1,5 +1,6 @@
 import * as THREE from 'three/webgpu';
-import { fxaa, pass, renderOutput } from 'three/tsl';
+import { pass, renderOutput } from 'three/tsl';
+import { fxaa } from 'three/addons/tsl/display/FXAANode.js';
 
 import { KyxosViewer } from './KyxosViewer';
 
