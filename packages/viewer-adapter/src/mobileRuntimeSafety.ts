@@ -92,6 +92,14 @@ export function createMobileSafeRenderSettings(
 function createMobileSafeScene(authored: KyxosSceneContract): KyxosSceneContract {
   const scene = structuredClone(authored);
   scene.renderSettings = createMobileSafeRenderSettings(authored.renderSettings);
+  scene.lights = (scene.lights ?? []).map((light) => ({
+    ...light,
+    // Mobile Studio is an authoring viewport, not the published runtime. Shadow
+    // maps are among the largest avoidable GPU allocations during GLB texture
+    // upload, so keep authored shadow state in the authoritative document while
+    // the transient mobile runtime renders lights without shadow targets.
+    castShadow: false,
+  }));
   return scene;
 }
 
@@ -100,10 +108,12 @@ function markMobileProfile(canvas?: HTMLCanvasElement | null): void {
   document.documentElement.dataset.studioRuntimeBackend = 'webgl2';
   document.documentElement.dataset.studioRuntimeQuality = 'low';
   document.documentElement.dataset.studioRuntimePixelRatio = '1';
+  document.documentElement.dataset.studioRuntimeShadows = 'disabled';
   if (canvas) {
     canvas.dataset.studioRuntimeProfile = 'mobile-safe';
     canvas.dataset.studioRuntimeBackend = 'webgl2';
     canvas.dataset.studioRuntimeQuality = 'low';
+    canvas.dataset.studioRuntimeShadows = 'disabled';
   }
 }
 
@@ -116,6 +126,17 @@ function applyPixelRatioCap(adapter: BrowserKyxosViewportAdapter): void {
   if (viewer.metrics) viewer.metrics.pixelRatio = 1;
   viewer.resizeToCanvas?.();
   viewer.queuePipelineRebuild?.('mobile-safe-pixel-ratio');
+}
+
+function sanitizeMobilePatch(patch: ScenePatch): ScenePatch {
+  return patch.flatMap((operation) => {
+    if (operation.path.startsWith('/renderSettings')) return [];
+    if (/^\/lights\/\d+\/castShadow$/.test(operation.path)) {
+      if (operation.op === 'remove' || operation.op === 'test') return [];
+      return [{ ...operation, value: false }];
+    }
+    return [operation];
+  }) as ScenePatch;
 }
 
 function installMobileAdapterSafety(): void {
@@ -175,9 +196,9 @@ function installMobileAdapterSafety(): void {
     patch: ScenePatch,
   ): Promise<void> {
     if (!isConstrainedMobileRuntime()) return originalApplyPatch.call(this, patch);
-    const runtimePatch = patch.filter((operation) => !operation.path.startsWith('/renderSettings'));
+    const runtimePatch = sanitizeMobilePatch(patch);
     if (runtimePatch.length) await originalApplyPatch.call(this, runtimePatch);
-    if (runtimePatch.length !== patch.length) {
+    if (runtimePatch.length !== patch.length || patch.some((entry) => entry.path.startsWith('/renderSettings'))) {
       const internals = this as unknown as AdapterInternals;
       const authored = internals.document?.value.renderSettings;
       if (authored && internals.viewer) {
