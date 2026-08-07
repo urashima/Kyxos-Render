@@ -15,6 +15,11 @@ const assetClient = createDurableApiClient({
   functionsUrl: backendConfig.functionsUrl,
 });
 
+async function ensureCloudSession(): Promise<boolean> {
+  if (backendConfig.provider !== 'supabase') return true;
+  return Boolean(await assetClient.auth.getSession());
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
@@ -178,6 +183,10 @@ BrowserKyxosViewportAdapter.prototype.bindSession = function bindSessionWithAsse
     running = true;
     try {
       decorateCards(session);
+      if (!(await ensureCloudSession())) {
+        document.documentElement.dataset.assetThumbnailState = 'auth-required';
+        return;
+      }
       const snapshot = session.document.value;
       const pending = Object.values(snapshot.assets).filter((asset) =>
         ['model', 'texture', 'environment'].includes(asset.kind)
