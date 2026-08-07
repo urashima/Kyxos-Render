@@ -20,6 +20,7 @@ on:
       - 'tests/e2e/studio-camera-light-parity.spec.ts'
       - 'tests/e2e/studio-camera-viewport-parity.spec.ts'
       - 'tests/e2e/studio-source-workspace-parity.spec.ts'
+      - 'tests/e2e/studio-topbar-thumbnail-parity.spec.ts'
       - 'tests/e2e/studio-save-publish-public.spec.ts'
       - 'tests/e2e/studio-asset-virtualization.spec.ts'
       - 'tests/e2e/studio-camera-bookmarks.spec.ts'
@@ -133,6 +134,9 @@ jobs:
           - id: source-workspace-parity
             spec: tests/e2e/studio-source-workspace-parity.spec.ts
             grep: Studio source workspace supports create edit save rename duplicate refresh delete and dirty close protection
+          - id: topbar-thumbnail-parity
+            spec: tests/e2e/studio-topbar-thumbnail-parity.spec.ts
+            grep: Studio groups topbar actions and generates reusable project and asset thumbnails
           - id: durable-publish
             spec: tests/e2e/studio-save-publish-public.spec.ts
             grep: imported scene saves durably, publishes, opens and reloads from the public link
