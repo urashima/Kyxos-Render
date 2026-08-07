@@ -70,12 +70,13 @@ async function blobToDataUrl(blob: Blob): Promise<string> {
 function persistLocalThumbnail(projectId: string, thumbnail: string): void {
   try {
     const state = JSON.parse(localStorage.getItem(LOCAL_KEY) ?? '{}') as {
-      projects?: Array<{ id: string; thumbnail?: string; updatedAt?: string }>;
+      projects?: Array<{ id: string; thumbnail?: string }>;
     };
     const project = state.projects?.find((entry) => entry.id === projectId);
     if (!project) return;
+    // A generated cover is presentation metadata, not authoring activity. Draft
+    // saves already own updatedAt; simply opening a project must not reorder it.
     project.thumbnail = thumbnail;
-    project.updatedAt = new Date().toISOString();
     localStorage.setItem(LOCAL_KEY, JSON.stringify(state));
   } catch (error) {
     console.warn('[Kyxos] Local project thumbnail persistence failed.', error);
@@ -137,10 +138,7 @@ async function persistCloudThumbnail(projectId: string, blob: Blob): Promise<str
       'content-type': 'application/json',
       Prefer: 'return=minimal',
     },
-    body: JSON.stringify({
-      thumbnail_asset_id: ticket.assetId,
-      updated_at: new Date().toISOString(),
-    }),
+    body: JSON.stringify({ thumbnail_asset_id: ticket.assetId }),
   });
   return ticket.assetId;
 }
