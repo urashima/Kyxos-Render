@@ -1,0 +1,120 @@
+.kx-viewport-entity-overlay-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 16;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.kx-viewport-entity-icon {
+  --kx-icon-accent: var(--kx-info);
+  position: absolute;
+  min-width: 28px;
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px;
+  border: 1px solid color-mix(in srgb, var(--kx-icon-accent) 58%, var(--kx-border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--kx-surface-0) 88%, transparent);
+  box-shadow: 0 6px 16px rgb(0 0 0 / 24%);
+  backdrop-filter: blur(7px);
+  color: var(--kx-text-primary);
+  transform: translate(-50%, -50%);
+  transform-origin: center;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.kx-viewport-entity-icon.light {
+  --kx-icon-accent: var(--kx-warning);
+}
+
+.kx-viewport-entity-icon:hover,
+.kx-viewport-entity-icon:focus-visible {
+  z-index: 2;
+  border-color: var(--kx-icon-accent);
+  background: color-mix(in srgb, var(--kx-surface-hover) 91%, transparent);
+  transform: translate(-50%, -50%) scale(1.06);
+  outline: none;
+}
+
+.kx-viewport-entity-icon.selected {
+  border-color: var(--kx-icon-accent);
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--kx-icon-accent) 25%, transparent),
+    0 8px 20px rgb(0 0 0 / 28%);
+}
+
+.kx-viewport-entity-glyph {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 22px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--kx-icon-accent) 18%, var(--kx-surface-1));
+  color: var(--kx-icon-accent);
+  font: 800 9px var(--kx-font-mono);
+}
+
+.kx-viewport-entity-label {
+  max-width: 0;
+  display: grid;
+  gap: 1px;
+  overflow: hidden;
+  opacity: 0;
+  transition:
+    max-width var(--kx-motion-fast) var(--kx-ease-standard),
+    opacity var(--kx-motion-fast) var(--kx-ease-standard);
+}
+
+.kx-viewport-entity-icon:hover .kx-viewport-entity-label,
+.kx-viewport-entity-icon:focus-visible .kx-viewport-entity-label,
+.kx-viewport-entity-icon.selected .kx-viewport-entity-label {
+  max-width: 150px;
+  padding-right: 5px;
+  opacity: 1;
+}
+
+.kx-viewport-entity-label strong,
+.kx-viewport-entity-label small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kx-viewport-entity-label strong {
+  font-size: 9px;
+}
+
+.kx-viewport-entity-label small {
+  color: var(--kx-text-muted);
+  font: 500 7px var(--kx-font-mono);
+  text-transform: capitalize;
+}
+
+.kyxos-studio-shell.kx-panels-hidden .kx-viewport-entity-overlay-layer {
+  z-index: 20;
+}
+
+@media (pointer: coarse) {
+  .kx-viewport-entity-icon {
+    min-width: var(--kx-detail-touch-target, 48px);
+    min-height: var(--kx-detail-touch-target, 48px);
+    padding: 6px;
+  }
+
+  .kx-viewport-entity-glyph {
+    width: 30px;
+    height: 30px;
+    flex-basis: 30px;
+  }
+}
+
+@media (max-width: 760px) {
+  .kx-viewport-entity-label {
+    display: none;
+  }
+}

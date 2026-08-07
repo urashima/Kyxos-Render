@@ -83,7 +83,7 @@ observer.observe(document.documentElement, {
   attributeFilter: ['class'],
 });
 
-document.addEventListener('kyxos:viewport-adapter-ready', (event) => {
+const onAdapterReady = (event: Event) => {
   const custom = event as CustomEvent<{ adapter?: BrowserKyxosViewportAdapter }>;
   const canvas = event.target instanceof HTMLCanvasElement ? event.target : null;
   if (!custom.detail?.adapter || !canvas) return;
@@ -91,13 +91,15 @@ document.addEventListener('kyxos:viewport-adapter-ready', (event) => {
   activeCanvas = canvas;
   attachControl();
   requestAnimationFrame(attachControl);
-});
+};
+
+document.addEventListener('kyxos:viewport-adapter-ready', onAdapterReady, true);
 
 document.addEventListener('kyxos:editor-viewport-helper-change', (event) => {
   if (event.target !== activeCanvas) return;
   const detail = (event as CustomEvent<{ settings?: ViewportHelperSettings }>).detail;
   if (detail?.settings) syncInputs(detail.settings);
-});
+}, true);
 
 document.addEventListener('kyxos:viewport-adapter-dispose', (event) => {
   const custom = event as CustomEvent<{ adapter?: BrowserKyxosViewportAdapter }>;
@@ -105,11 +107,14 @@ document.addEventListener('kyxos:viewport-adapter-dispose', (event) => {
   activeAdapter = null;
   activeCanvas = null;
   menu.remove();
-});
+}, true);
 
 document.addEventListener('pointerdown', (event) => {
   if (!menu.open || menu.contains(event.target as Node)) return;
   menu.open = false;
 });
 
-window.addEventListener('pagehide', () => observer.disconnect(), { once: true });
+window.addEventListener('pagehide', () => {
+  observer.disconnect();
+  document.removeEventListener('kyxos:viewport-adapter-ready', onAdapterReady, true);
+}, { once: true });

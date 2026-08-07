@@ -1,0 +1,205 @@
+/* Independent dock / float workspace layer. Canonical scene state remains untouched. */
+.kx-panel-window-controls {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding-left: 8px;
+}
+
+.kx-panel-window-button {
+  width: 24px;
+  min-width: 24px;
+  min-height: 22px;
+  height: 22px;
+  padding: 0;
+  border-color: transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--kx-text-muted);
+  font: 700 11px var(--kx-font-mono);
+}
+
+.kx-panel-window-button:hover {
+  border-color: var(--kx-border);
+  background: var(--kx-surface-hover);
+  color: var(--kx-text-primary);
+}
+
+.kx-panel-workspace-toggle,
+.kx-panel-workspace-reset {
+  white-space: nowrap;
+}
+
+.kx-panel-workspace-toggle[aria-pressed='true'] {
+  border-color: var(--kx-accent);
+  background: var(--kx-accent-soft);
+  color: var(--kx-accent);
+}
+
+.kx-panel-floating {
+  grid-area: auto !important;
+  min-width: 240px !important;
+  min-height: 36px !important;
+  max-width: calc(100vw - 12px) !important;
+  max-height: calc(100dvh - 58px) !important;
+  border: 1px solid var(--kx-border-strong) !important;
+  border-radius: 13px !important;
+  overflow: hidden !important;
+  resize: both;
+  background: color-mix(in srgb, var(--kx-surface-0) 89%, transparent) !important;
+  box-shadow:
+    0 18px 48px rgb(0 0 0 / 30%),
+    0 2px 8px rgb(0 0 0 / 18%),
+    inset 0 1px rgb(255 255 255 / 4%);
+  backdrop-filter: blur(var(--kx-panel-blur)) saturate(1.08);
+  isolation: isolate;
+}
+
+.kx-panel-floating > .pcui-panel-header {
+  cursor: grab;
+  border-bottom-color: color-mix(in srgb, var(--kx-border) 74%, transparent) !important;
+  background: color-mix(in srgb, var(--kx-surface-0) 82%, transparent) !important;
+  backdrop-filter: blur(var(--kx-panel-blur));
+  user-select: none;
+}
+
+.kx-panel-floating.kx-panel-dragging > .pcui-panel-header {
+  cursor: grabbing;
+}
+
+.kx-panel-floating > .pcui-panel-content {
+  height: calc(100% - 36px) !important;
+  background: color-mix(in srgb, var(--kx-surface-1) 78%, transparent) !important;
+}
+
+.kx-panel-floating .studio-panel-content {
+  background: transparent;
+}
+
+.kx-panel-floating.kx-panel-collapsed {
+  min-height: 36px !important;
+  max-height: 36px !important;
+  height: 36px !important;
+  resize: horizontal;
+}
+
+.kx-panel-floating.kx-panel-collapsed > .pcui-panel-header {
+  border-bottom: 0 !important;
+}
+
+.kx-panel-floating.kx-panel-maximized {
+  inset: 54px 8px 28px !important;
+  width: auto !important;
+  height: auto !important;
+  max-width: none !important;
+  max-height: none !important;
+  resize: none;
+  border-radius: 10px !important;
+}
+
+.kx-panel-floating.kx-panel-unpinned:not(:focus-within) {
+  opacity: 0.82;
+}
+
+.kx-panel-floating.kx-panel-unpinned.kx-panel-collapsed {
+  opacity: 0.66;
+}
+
+/* Floating bottom shelf: panel content stays glassy while the outside gutters remain true viewport transparency. */
+.kx-floating-assets-active .studio-assets.kx-panel-floating {
+  overflow: visible !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none;
+  backdrop-filter: none;
+  resize: both;
+}
+
+.kx-floating-assets-active .studio-assets.kx-panel-floating::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border: 1px solid var(--kx-border-strong);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--kx-surface-0) 86%, transparent);
+  box-shadow:
+    0 20px 50px rgb(0 0 0 / 28%),
+    0 2px 7px rgb(0 0 0 / 18%);
+  backdrop-filter: blur(var(--kx-panel-blur)) saturate(1.08);
+}
+
+.kx-floating-assets-active .studio-assets.kx-panel-floating > .pcui-panel-header,
+.kx-floating-assets-active .studio-assets.kx-panel-floating > .pcui-panel-content {
+  position: relative;
+  border-radius: inherit;
+  overflow: hidden;
+}
+
+.kx-floating-assets-active .studio-assets.kx-panel-floating > .pcui-panel-content {
+  background: color-mix(in srgb, var(--kx-surface-1) 72%, transparent) !important;
+}
+
+.kx-floating-assets-active .studio-assets.kx-panel-floating .asset-tabs {
+  top: 0;
+  margin-top: 0;
+  background: color-mix(in srgb, var(--kx-surface-0) 84%, transparent);
+  backdrop-filter: blur(var(--kx-panel-blur));
+}
+
+.kx-has-floating-panels .studio-viewport {
+  isolation: isolate;
+}
+
+.kx-has-floating-panels .studio-left-rail,
+.kx-has-floating-panels .studio-performance-capsule {
+  z-index: 70;
+}
+
+.kx-panel-floating .studio-panel-content::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 10px;
+  background-clip: padding-box;
+}
+
+@media (max-width: 1099px) {
+  .kx-panel-workspace-toggle,
+  .kx-panel-workspace-reset {
+    display: none;
+  }
+
+  .kx-panel-floating {
+    position: absolute !important;
+    inset: 54px 8px calc(66px + env(safe-area-inset-bottom)) !important;
+    width: auto !important;
+    height: auto !important;
+    max-width: none !important;
+    max-height: none !important;
+    border-radius: 12px !important;
+    resize: none;
+  }
+
+  .kx-panel-floating.kx-panel-collapsed {
+    inset: auto 8px calc(66px + env(safe-area-inset-bottom)) 8px !important;
+    height: 38px !important;
+  }
+
+  .kx-panel-floating .kx-panel-window-button[data-kx-panel-pin],
+  .kx-panel-floating .kx-panel-window-button[data-kx-panel-mode] {
+    display: none;
+  }
+
+  .kx-floating-assets-active .studio-assets.kx-panel-floating {
+    inset: auto 8px calc(66px + env(safe-area-inset-bottom)) 8px !important;
+    height: min(48dvh, 440px) !important;
+  }
+}
+
+@media (pointer: coarse) {
+  .kx-panel-window-button {
+    width: max(32px, var(--kx-detail-touch-target, 48px));
+    min-width: max(32px, var(--kx-detail-touch-target, 48px));
+    min-height: max(32px, var(--kx-detail-touch-target, 48px));
+  }
+}

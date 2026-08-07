@@ -1,0 +1,117 @@
+/* PlayCanvas-compatible viewport interaction state remains editor-only. */
+#studio-canvas {
+  touch-action: none;
+}
+
+#studio-canvas:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--kx-accent) 68%, transparent);
+  outline-offset: -2px;
+}
+
+#studio-canvas.kx-camera-dragging {
+  cursor: grabbing;
+}
+
+.kyxos-studio-shell.kx-panels-hidden {
+  grid-template-columns: minmax(0, 1fr) !important;
+  grid-template-rows: 48px minmax(0, 1fr) 24px !important;
+  grid-template-areas:
+    'top'
+    'viewport'
+    'status' !important;
+}
+
+.kyxos-studio-shell.kx-panels-hidden .studio-hierarchy,
+.kyxos-studio-shell.kx-panels-hidden .studio-inspector,
+.kyxos-studio-shell.kx-panels-hidden .studio-assets,
+.kyxos-studio-shell.kx-panels-hidden .kx-viewport-entity-tools,
+.kyxos-studio-shell.kx-panels-hidden .kx-mobile-dock {
+  display: none !important;
+}
+
+.kyxos-studio-shell.kx-panels-hidden .studio-left-rail {
+  left: 14px !important;
+}
+
+.kyxos-studio-shell.kx-panels-hidden .studio-performance-capsule {
+  max-width: calc(100vw - 80px);
+}
+
+.kx-camera-info {
+  position: absolute;
+  left: 14px;
+  bottom: 14px;
+  z-index: 18;
+  width: min(340px, calc(100% - 28px));
+  display: none;
+  gap: 5px;
+  padding: 7px;
+  border: 1px solid var(--kx-border-strong);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--kx-surface-0) 84%, transparent);
+  box-shadow: var(--kx-shadow-panel);
+  backdrop-filter: blur(var(--kx-panel-blur));
+}
+
+.kx-camera-info.visible {
+  display: grid;
+}
+
+.kx-camera-info label {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: center;
+  gap: 5px;
+}
+
+.kx-camera-info b {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--kx-border);
+  border-radius: 5px;
+  color: var(--kx-accent);
+  font: 750 9px var(--kx-font-mono);
+}
+
+.kx-camera-info input {
+  width: 100%;
+  height: 27px !important;
+  padding: 0 7px !important;
+  font: 600 9px var(--kx-font-mono) !important;
+}
+
+.kx-camera-info input.valid {
+  border-color: var(--kx-success);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--kx-success) 50%, transparent);
+}
+
+.kx-camera-info input.invalid {
+  border-color: var(--kx-danger);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--kx-danger) 50%, transparent);
+}
+
+.kx-camera-info-projection {
+  padding-left: 25px;
+  color: var(--kx-text-muted);
+  font: 500 8px var(--kx-font-mono);
+  text-transform: capitalize;
+}
+
+@media (max-width: 900px) {
+  .kx-camera-info {
+    bottom: calc(70px + env(safe-area-inset-bottom));
+  }
+
+  .kyxos-studio-shell.kx-panels-hidden {
+    padding-bottom: 0 !important;
+  }
+}
+
+@media (pointer: coarse) {
+  .kx-camera-info input {
+    min-height: var(--kx-detail-touch-target, 48px) !important;
+  }
+}
