@@ -2,7 +2,7 @@ import { ImportTaskQueue } from '@kyxos/editor-core';
 
 const installed = Symbol.for('kyxos.importTaskChangeDeferral.installed');
 
-type QueuePrototype = ImportTaskQueue & Record<symbol, boolean | undefined>;
+type QueuePrototype = Record<symbol, boolean | undefined>;
 
 /**
  * Legacy compatibility shim.
