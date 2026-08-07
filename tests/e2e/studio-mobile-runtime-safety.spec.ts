@@ -50,7 +50,7 @@ test('iPhone Studio loads GLB with one low-memory runtime and preserves authored
       buffer: glb,
     });
     await expect(html).toHaveAttribute('data-import-core-complete', 'true', { timeout: 90_000 });
-    await expect(html).toHaveAttribute('data-mobile-import-concurrency', '1');
+    await expect(html).toHaveAttribute('data-picker-blob-read-mode', 'uncached-large');
 
     const metadataBytes = Number(await html.getAttribute('data-glb-metadata-bytes'));
     const sourceBytes = Number(await html.getAttribute('data-glb-source-bytes'));
