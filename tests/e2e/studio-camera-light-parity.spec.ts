@@ -24,7 +24,12 @@ async function selectedIds(page: import('@playwright/test').Page) {
     const scene = (globalThis as any).kyxosStudio?.api?.getScene();
     const id = document.querySelector<HTMLElement>('.hierarchy-row.selected')?.dataset.node;
     const node = scene?.nodes?.find((entry: any) => entry.id === id);
-    return { nodeId: node?.id as string, cameraId: node?.cameraId as string | undefined, lightId: node?.lightId as string | undefined };
+    return {
+      nodeId: node?.id as string,
+      parentId: node?.parentId as string | null,
+      cameraId: node?.cameraId as string | undefined,
+      lightId: node?.lightId as string | undefined,
+    };
   });
 }
 
@@ -53,6 +58,61 @@ async function clickHelper(
   await page.mouse.click(target.x, target.y);
   await expect(page.locator(`.hierarchy-row.selected[data-node="${nodeId}"]`)).toBeVisible();
   await expect(canvas).toHaveAttribute('data-editor-helper-last-hit', nodeId);
+}
+
+async function expectedHierarchyDirection(
+  page: import('@playwright/test').Page,
+  nodeId: string,
+): Promise<[number, number, number]> {
+  return page.evaluate((id) => {
+    const scene = (globalThis as any).kyxosStudio?.api?.getScene();
+    const byId = new Map(scene.nodes.map((node: any) => [node.id, node]));
+    const chain: any[] = [];
+    const visited = new Set<string>();
+    let current = byId.get(id) as any;
+    while (current && !visited.has(current.id)) {
+      visited.add(current.id);
+      chain.unshift(current);
+      current = current.parentId ? byId.get(current.parentId) : null;
+    }
+
+    type Q = [number, number, number, number];
+    const fromEuler = (rotation: { x: number; y: number; z: number }): Q => {
+      const c1 = Math.cos(rotation.x / 2);
+      const c2 = Math.cos(rotation.y / 2);
+      const c3 = Math.cos(rotation.z / 2);
+      const s1 = Math.sin(rotation.x / 2);
+      const s2 = Math.sin(rotation.y / 2);
+      const s3 = Math.sin(rotation.z / 2);
+      return [
+        s1 * c2 * c3 + c1 * s2 * s3,
+        c1 * s2 * c3 - s1 * c2 * s3,
+        c1 * c2 * s3 + s1 * s2 * c3,
+        c1 * c2 * c3 - s1 * s2 * s3,
+      ];
+    };
+    const multiply = (a: Q, b: Q): Q => [
+      a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1],
+      a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0],
+      a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3],
+      a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2],
+    ];
+    let q: Q = [0, 0, 0, 1];
+    for (const node of chain) q = multiply(q, fromEuler(node.transform.rotation));
+
+    const [qx, qy, qz, qw] = q;
+    const vx = 0;
+    const vy = 0;
+    const vz = -1;
+    const tx = 2 * (qy * vz - qz * vy);
+    const ty = 2 * (qz * vx - qx * vz);
+    const tz = 2 * (qx * vy - qy * vx);
+    const x = vx + qw * tx + (qy * tz - qz * ty);
+    const y = vy + qw * ty + (qz * tx - qx * tz);
+    const z = vz + qw * tz + (qx * ty - qy * tx);
+    const length = Math.hypot(x, y, z) || 1;
+    return [x / length, y / length, z / length] as [number, number, number];
+  }, nodeId);
 }
 
 test('Studio camera and light selection, inspector edits and transforms stay synchronized', async ({ page }) => {
@@ -88,12 +148,16 @@ test('Studio camera and light selection, inspector edits and transforms stay syn
   await expect(page.locator('#studio-canvas')).toHaveAttribute('data-authoring-camera', 'editor');
   await expect(page.locator('#studio-canvas')).toHaveAttribute('data-authored-scene-camera', camera.cameraId!);
 
+  // Hierarchy Add mirrors PlayCanvas behavior: adding while Camera is selected
+  // creates the Light below that Camera. This intentionally exercises parent
+  // rotation in the runtime direction instead of only root-node transforms.
   await addComponent(page, 'Add Spot Light');
   const lightInspector = page.locator('.kx-component-inspector').filter({ hasText: 'Light ·' });
   await expect(lightInspector).toBeVisible();
   await expect(page.locator('.hierarchy-row.selected .kx-component-badge')).toHaveText('LGT');
   const light = await selectedIds(page);
   expect(light.lightId).toBeTruthy();
+  expect(light.parentId).toBe(camera.nodeId);
 
   await lightInspector.getByLabel('Intensity').fill('7.5');
   await lightInspector.getByLabel('Range').fill('18');
@@ -148,11 +212,12 @@ test('Studio camera and light selection, inspector edits and transforms stay syn
     const values = JSON.parse((element as HTMLCanvasElement).dataset.managedLightDirections ?? '[]') as Array<any>;
     return values.find((value) => value.id === lightId)?.direction as [number, number, number] | null;
   }, light.lightId));
+  const expectedDirection = await expectedHierarchyDirection(page, light.nodeId);
   expect(direction).not.toBeNull();
   if (direction) {
-    expect(direction[0]).toBeCloseTo(-Math.sin(0.6), 4);
-    expect(direction[1]).toBeCloseTo(0, 4);
-    expect(direction[2]).toBeCloseTo(-Math.cos(0.6), 4);
+    expect(direction[0]).toBeCloseTo(expectedDirection[0], 4);
+    expect(direction[1]).toBeCloseTo(expectedDirection[1], 4);
+    expect(direction[2]).toBeCloseTo(expectedDirection[2], 4);
   }
 
   await clickHelper(page, light.nodeId, 'light');
