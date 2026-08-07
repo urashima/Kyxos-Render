@@ -13,6 +13,11 @@ const client = backendConfig.error
 
 let generation = 0;
 
+async function refreshClientSession(): Promise<boolean> {
+  if (!client || backendConfig.provider !== 'supabase') return Boolean(client);
+  return Boolean(await client.auth.getSession());
+}
+
 function cloudHeaders(): Headers {
   const headers = new Headers();
   const token = sessionStorage.getItem('kyxos-token');
@@ -86,6 +91,10 @@ async function hydrateProjectThumbnails(screen: HTMLElement, force = false): Pro
   screen.dataset.kxProjectThumbnails = 'loading';
   const currentGeneration = ++generation;
   try {
+    if (!(await refreshClientSession())) {
+      screen.dataset.kxProjectThumbnails = 'auth-required';
+      return;
+    }
     const projects = await client.projects.list();
     const cloudUrls = await cloudThumbnailUrls(projects.map((project) => project.id));
     if (!screen.isConnected || currentGeneration !== generation) return;
