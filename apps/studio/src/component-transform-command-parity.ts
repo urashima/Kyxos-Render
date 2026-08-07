@@ -7,17 +7,41 @@ import type {
   ScenePatch,
 } from '@kyxos/scene-contract';
 
+import { shiftCameraTarget, targetFromRotation } from './camera-orientation-math';
+
 interface CommandBusPrototype {
   execute(command: EditorCommand): void;
   __kyxosComponentTransformParityInstalled?: boolean;
 }
 
+interface CameraDraft {
+  cameraIndex: number;
+  camera: SceneCamera;
+  positionChanged: boolean;
+  rotationChanged: boolean;
+}
+
 const TRANSFORM_PATH = /^\/nodes\/(\d+)\/transform\/(position|rotation)\/(x|y|z)$/;
 const COMPONENT_ADD_LABEL = /^Add (Camera|Directional Light|Point Light|Spot Light)$/;
 
+function changedNumber(previous: number, next: unknown): boolean {
+  return typeof next === 'number' && Math.abs(previous - next) > 1e-9;
+}
+
+function appendReplace(next: ScenePatch, seen: Set<string>, path: string, value: unknown): void {
+  if (seen.has(path)) return;
+  next.push({ op: 'replace', path, value });
+  seen.add(path);
+}
+
 function augmentComponentTransforms(scene: KyxosSceneContract, patch: ScenePatch): ScenePatch {
   const next: ScenePatch = [...patch];
-  const seen = new Set<string>();
+  const seen = new Set(
+    patch
+      .filter((operation) => operation.op === 'replace' || operation.op === 'add')
+      .map((operation) => operation.path),
+  );
+  const cameraDrafts = new Map<number, CameraDraft>();
 
   for (const operation of patch) {
     if (operation.op !== 'replace' && operation.op !== 'add') continue;
@@ -33,23 +57,52 @@ function augmentComponentTransforms(scene: KyxosSceneContract, patch: ScenePatch
     if (node.cameraId) {
       const cameraIndex = scene.cameras.findIndex((camera) => camera.id === node.cameraId);
       if (cameraIndex >= 0) {
-        const path = `/cameras/${cameraIndex}/transform/${group}/${axis}`;
-        if (!seen.has(path)) {
-          next.push({ op: 'replace', path, value: operation.value });
-          seen.add(path);
-        }
+        const camera = scene.cameras[cameraIndex];
+        const draft = cameraDrafts.get(cameraIndex) ?? {
+          cameraIndex,
+          camera: structuredClone(camera),
+          positionChanged: false,
+          rotationChanged: false,
+        };
+        const previous = camera.transform[group][axis];
+        const value = Number(operation.value);
+        draft.camera.transform[group][axis] = value;
+        if (group === 'position' && changedNumber(previous, operation.value)) draft.positionChanged = true;
+        if (group === 'rotation' && changedNumber(previous, operation.value)) draft.rotationChanged = true;
+        cameraDrafts.set(cameraIndex, draft);
+        appendReplace(
+          next,
+          seen,
+          `/cameras/${cameraIndex}/transform/${group}/${axis}`,
+          operation.value,
+        );
       }
     }
 
     if (node.lightId && scene.lights) {
       const lightIndex = scene.lights.findIndex((light) => light.id === node.lightId);
       if (lightIndex >= 0) {
-        const path = `/lights/${lightIndex}/transform/${group}/${axis}`;
-        if (!seen.has(path)) {
-          next.push({ op: 'replace', path, value: operation.value });
-          seen.add(path);
-        }
+        appendReplace(
+          next,
+          seen,
+          `/lights/${lightIndex}/transform/${group}/${axis}`,
+          operation.value,
+        );
       }
+    }
+  }
+
+  for (const draft of cameraDrafts.values()) {
+    const original = scene.cameras[draft.cameraIndex];
+    if (!original) continue;
+    const target = draft.rotationChanged
+      ? targetFromRotation(draft.camera.transform, original.transform.position, original.target)
+      : draft.positionChanged
+        ? shiftCameraTarget(original.transform.position, draft.camera.transform.position, original.target)
+        : null;
+    if (!target) continue;
+    for (const axis of ['x', 'y', 'z'] as const) {
+      appendReplace(next, seen, `/cameras/${draft.cameraIndex}/target/${axis}`, target[axis]);
     }
   }
 
