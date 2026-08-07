@@ -71,9 +71,15 @@ test('iPhone Studio loads GLB with one low-memory runtime and preserves authored
     await expect(html).toHaveAttribute('data-studio-runtime-backend', 'webgl2');
     await expect(html).toHaveAttribute('data-studio-runtime-quality', 'low');
     await expect(html).toHaveAttribute('data-studio-runtime-pixel-ratio', '1');
+    await expect(html).toHaveAttribute('data-studio-runtime-shadows', 'disabled');
+    await expect(html).toHaveAttribute('data-studio-runtime-pipeline', 'beauty-only');
+    await expect(html).toHaveAttribute('data-studio-runtime-mrt', 'disabled');
     await expect(canvas).toHaveAttribute('data-studio-runtime-profile', 'mobile-safe');
     await expect(canvas).toHaveAttribute('data-studio-runtime-backend', 'webgl2');
     await expect(canvas).toHaveAttribute('data-studio-runtime-quality', 'low');
+    await expect(canvas).toHaveAttribute('data-studio-runtime-shadows', 'disabled');
+    await expect(canvas).toHaveAttribute('data-studio-runtime-pipeline', 'beauty-only');
+    await expect(canvas).toHaveAttribute('data-studio-runtime-mrt', 'disabled');
 
     const authoredQualityBefore = await page.evaluate(() =>
       (globalThis as any).kyxosStudio?.api?.getScene()?.renderSettings?.qualityPreset as string,
@@ -124,6 +130,7 @@ test('iPhone Studio loads GLB with one low-memory runtime and preserves authored
     );
     expect(authoredQualityAfter).toBe(authoredQualityBefore);
     await expect(canvas).toHaveAttribute('data-studio-runtime-quality', 'low');
+    await expect(canvas).toHaveAttribute('data-studio-runtime-pipeline', 'beauty-only');
 
     const modelAssetId = await page.evaluate(() => {
       const scene = (globalThis as any).kyxosStudio?.api?.getScene();
