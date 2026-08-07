@@ -5,7 +5,6 @@ import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 
 const dracoLoader = new DRACOLoader().setWorkerLimit(2);
 const ktx2Loaders = new WeakMap<object, KTX2Loader>();
-const nativeBlobArrayBuffer = Blob.prototype.arrayBuffer;
 const objectUrlBlobRegistryKey = Symbol.for('kyxos.objectUrlBlobRegistry');
 const localBlobBytesRegistryKey = Symbol.for('kyxos.localBlobBytesRegistry');
 const LOCAL_BLOB_TIMEOUT_MS = 30_000;
@@ -101,10 +100,13 @@ async function loadRegisteredBlob(
   }
 
   const sourceKind = blob instanceof File ? 'picker-file' : 'registered-blob';
-  markLoadStage(`${sourceKind}-recovery-read-start`);
+  markLoadStage(`${sourceKind}-read-start`);
   progress(onProgress, 0, blob.size);
-  const buffer = await nativeBlobArrayBuffer.call(blob);
-  markLoadStage(`${sourceKind}-recovery-read-complete`);
+  // Desktop keeps the established File/Blob read path. File.arrayBuffer may be
+  // guarded by Studio for small picker assets; persisted Blob uses its native
+  // implementation. Do not bypass those semantics with Blob.prototype.call().
+  const buffer = await blob.arrayBuffer();
+  markLoadStage(`${sourceKind}-read-complete`);
   progress(onProgress, blob.size, blob.size);
   return buffer;
 }
@@ -113,7 +115,7 @@ function loadLocalBlob(
   url: string,
   onProgress?: ProgressCallback,
 ): Promise<ArrayBuffer> {
-  markLoadStage('blob-xhr-recovery-start');
+  markLoadStage('blob-xhr-start');
   return new Promise<ArrayBuffer>((resolve, reject) => {
     const request = new XMLHttpRequest();
     request.open('GET', url, true);
@@ -129,7 +131,7 @@ function loadLocalBlob(
         reject(new Error('GLB Blob request returned an unexpected response.'));
         return;
       }
-      markLoadStage('blob-xhr-recovery-complete');
+      markLoadStage('blob-xhr-complete');
       resolve(request.response);
     };
     request.onerror = () => reject(new Error('GLB Blob request failed.'));
@@ -180,41 +182,36 @@ export function createConfiguredGltfLoader(
       }
     }
 
-    // Blob URLs are already a native browser capability and Three's FileLoader
-    // knows how to consume them. Always use that path first. The old Kyxos path
-    // eagerly resolved blob: -> registry -> picker File -> ArrayBuffer before
-    // GLTFLoader could run. CI traces showed that path hanging on desktop
-    // fidelity/KTX2 fixtures and terminating iPhone/WebKit browser targets even
-    // for tiny GLBs. It also manufactured another large JS-visible allocation.
-    markLoadStage(constrainedMobileDecode() ? 'mobile-native-blob-start' : 'native-blob-start');
-    try {
-      const result = await nativeLoadAsync(url, onProgress);
-      markLoadStage(constrainedMobileDecode() ? 'mobile-native-blob-complete' : 'native-blob-complete');
-      return result;
-    } catch (nativeError) {
-      markLoadStage(constrainedMobileDecode() ? 'mobile-native-blob-error' : 'native-blob-error');
-
-      // Never re-enter manual whole-Blob reads on constrained Apple mobile
-      // hardware. If the browser cannot load its own blob URL, propagating the
-      // error is safer than a second allocation/recovery path that can kill the
-      // WebProcess.
-      if (constrainedMobileDecode()) throw nativeError;
-
-      // Desktop recovery remains available for stale/quirky object URL cases.
-      // It is fallback-only, so healthy imports retain Three/browser semantics.
-      const progressCallback = onProgress as ProgressCallback | undefined;
+    if (constrainedMobileDecode()) {
+      // Apple mobile gets the browser/Three blob URL path and never a second
+      // manual whole-file recovery allocation. Cloud Studio normally resolves
+      // assets to HTTPS signed URLs; this branch covers local/reload fixtures.
+      markLoadStage('mobile-native-blob-start');
       try {
-        const buffer =
-          (await loadRegisteredBlob(url, progressCallback))
-          ?? (await loadLocalBlob(url, progressCallback));
-        markLoadStage('desktop-blob-recovery-parse-start');
-        const result = await loader.parseAsync(buffer, '');
-        markLoadStage('desktop-blob-recovery-parse-complete');
+        const result = await nativeLoadAsync(url, onProgress);
+        markLoadStage('mobile-native-blob-complete');
         return result;
-      } catch (recoveryError) {
-        markLoadStage('desktop-blob-recovery-error');
-        throw recoveryError instanceof Error ? recoveryError : nativeError;
+      } catch (error) {
+        markLoadStage('mobile-native-blob-error');
+        throw error;
       }
+    }
+
+    // Local desktop/editor tests historically use object URL registry recovery
+    // because their Blob is reconstructed from IndexedDB. Keep that proven path
+    // deterministic instead of awaiting FileLoader's blob fetch indefinitely.
+    const progressCallback = onProgress as ProgressCallback | undefined;
+    const buffer =
+      (await loadRegisteredBlob(url, progressCallback))
+      ?? (await loadLocalBlob(url, progressCallback));
+    markLoadStage('desktop-blob-parse-start');
+    try {
+      const result = await loader.parseAsync(buffer, '');
+      markLoadStage('desktop-blob-parse-complete');
+      return result;
+    } catch (error) {
+      markLoadStage('desktop-blob-parse-error');
+      throw error;
     }
   };
 
