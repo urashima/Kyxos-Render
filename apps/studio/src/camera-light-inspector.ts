@@ -4,7 +4,6 @@ import type {
   SceneCamera,
   SceneLight,
   ScenePatch,
-  Transform,
 } from '@kyxos/scene-contract';
 import { BrowserKyxosViewportAdapter } from '@kyxos/viewer-adapter';
 
@@ -54,6 +53,19 @@ function field(label: string, control: HTMLElement): HTMLElement {
   row.className = 'kx-component-field';
   const caption = document.createElement('span');
   caption.textContent = label;
+
+  const interactive = control.matches('input,select,textarea,button')
+    ? [control]
+    : [...control.querySelectorAll<HTMLElement>('input,select,textarea,button')];
+  if (interactive.length === 1 && !interactive[0].getAttribute('aria-label')) {
+    interactive[0].setAttribute('aria-label', label);
+  } else {
+    interactive.forEach((item) => {
+      const current = item.getAttribute('aria-label');
+      if (current && /^[XYZ]$/.test(current)) item.setAttribute('aria-label', `${label} ${current}`);
+    });
+  }
+
   row.append(caption, control);
   return row;
 }
@@ -392,17 +404,21 @@ function buildLightInspector(
   }
 
   if (light.castShadow) {
-    const shadow = light.shadow ?? {};
     const shadowNumber = (label: string, key: string, fallback: number, step: number) => {
-      grid.append(field(label, numberInput(Number(shadow[key] ?? fallback), (value) => execute(
+      const displayed = Number(light.shadow?.[key] ?? fallback);
+      grid.append(field(label, numberInput(displayed, (value) => execute(
         session,
         `light-shadow-${key}`,
         `Light shadow ${key}`,
-        () => [{
-          op: light.shadow == null ? 'add' : 'replace',
-          path: `${base}/shadow`,
-          value: { ...(light.shadow ?? {}), [key]: value },
-        }],
+        (current) => {
+          const currentLight = current.lights?.[lightIndex];
+          const currentShadow = currentLight?.shadow ?? {};
+          return [{
+            op: currentLight?.shadow == null ? 'add' : 'replace',
+            path: `${base}/shadow`,
+            value: { ...currentShadow, [key]: value },
+          }];
+        },
         `light:shadow:${key}`,
       ), { step })));
     };
@@ -420,6 +436,13 @@ function buildLightInspector(
   return details;
 }
 
+function isEditingComponentControl(): boolean {
+  const active = document.activeElement;
+  return active instanceof HTMLElement
+    && Boolean(active.closest('.kx-component-inspector'))
+    && active.matches('input,select,textarea,button,[contenteditable="true"],[role="slider"]');
+}
+
 function installComponentInspector(
   adapter: BrowserKyxosViewportAdapter,
   session: ProjectSession,
@@ -427,6 +450,24 @@ function installComponentInspector(
   let frame = 0;
   let pointerState: SelectionPointerState | null = null;
   const canvas = document.querySelector<HTMLCanvasElement>('#studio-canvas');
+
+  const refreshHierarchyBadges = (scene: KyxosSceneContract) => {
+    const nodes = new Map(scene.nodes.map((node) => [node.id, node]));
+    document.querySelectorAll<HTMLElement>('.hierarchy-row[data-node]').forEach((row) => {
+      const node = nodes.get(row.dataset.node ?? '');
+      const kind: ComponentKind | null = node?.cameraId ? 'camera' : node?.lightId ? 'light' : null;
+      const existing = row.querySelector<HTMLElement>('.kx-component-badge');
+      if (!kind) {
+        existing?.remove();
+        return;
+      }
+      const badge = existing ?? document.createElement('span');
+      badge.className = 'kx-component-badge';
+      badge.textContent = kind === 'camera' ? 'CAM' : 'LGT';
+      badge.title = kind === 'camera' ? 'Camera component' : 'Light component';
+      if (!existing) row.append(badge);
+    });
+  };
 
   const render = () => {
     cancelAnimationFrame(frame);
@@ -449,33 +490,29 @@ function installComponentInspector(
         if (cameraIndex >= 0) component = buildCameraInspector(adapter, session, scene, nodeIndex, cameraIndex, scene.cameras[cameraIndex]);
       } else if (node.lightId) {
         const lightIndex = (scene.lights ?? []).findIndex((entry) => entry.id === node.lightId);
-        if (lightIndex >= 0) component = buildLightInspector(adapter, session, scene, nodeIndex, lightIndex, scene.lights[lightIndex]);
+        const light = lightIndex >= 0 ? scene.lights?.[lightIndex] : undefined;
+        if (light) component = buildLightInspector(adapter, session, scene, nodeIndex, lightIndex, light);
       }
-      if (component) inspector.prepend(component);
+      if (component) {
+        component.addEventListener('change', () => queueMicrotask(render));
+        component.addEventListener('focusout', (event) => {
+          const next = event.relatedTarget;
+          if (!(next instanceof Node) || !component?.contains(next)) queueMicrotask(render);
+        });
+        inspector.prepend(component);
+      }
       refreshHierarchyBadges(scene);
     });
   };
 
-  const refreshHierarchyBadges = (scene: KyxosSceneContract) => {
-    const nodes = new Map(scene.nodes.map((node) => [node.id, node]));
-    document.querySelectorAll<HTMLElement>('.hierarchy-row[data-node]').forEach((row) => {
-      const node = nodes.get(row.dataset.node ?? '');
-      const kind: ComponentKind | null = node?.cameraId ? 'camera' : node?.lightId ? 'light' : null;
-      const existing = row.querySelector<HTMLElement>('.kx-component-badge');
-      if (!kind) {
-        existing?.remove();
-        return;
-      }
-      const badge = existing ?? document.createElement('span');
-      badge.className = 'kx-component-badge';
-      badge.textContent = kind === 'camera' ? 'CAM' : 'LGT';
-      badge.title = kind === 'camera' ? 'Camera component' : 'Light component';
-      if (!existing) row.append(badge);
-    });
-  };
-
   const onSelection = () => render();
-  const onDocument = () => render();
+  const onDocument = () => {
+    if (isEditingComponentControl()) {
+      refreshHierarchyBadges(session.document.value);
+      return;
+    }
+    render();
+  };
   session.selection.addEventListener('change', onSelection);
   session.document.addEventListener('change', onDocument);
 
