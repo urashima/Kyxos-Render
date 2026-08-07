@@ -28,6 +28,7 @@ interface AdapterPrototype {
 }
 
 const previewStates = new WeakMap<BrowserKyxosViewportAdapter, PreviewState>();
+const previewMountTokens = new WeakMap<BrowserKyxosViewportAdapter, number>();
 let previewGeneration = 0;
 
 function internals(adapter: BrowserKyxosViewportAdapter): AdapterInternals {
@@ -80,7 +81,14 @@ function enqueuePreview(
   return result;
 }
 
+function invalidatePendingMount(adapter: BrowserKyxosViewportAdapter): number {
+  const token = ++previewGeneration;
+  previewMountTokens.set(adapter, token);
+  return token;
+}
+
 function disposePreview(adapter: BrowserKyxosViewportAdapter): void {
+  invalidatePendingMount(adapter);
   const state = previewStates.get(adapter);
   if (!state) return;
   previewStates.delete(adapter);
@@ -98,35 +106,47 @@ export async function mountCameraPreview(
 ): Promise<void> {
   disposePreview(this);
   const internal = internals(this);
-  const generation = ++previewGeneration;
+  const mountToken = invalidatePendingMount(this);
   canvas.dataset.sceneCameraPreview = 'true';
   canvas.dataset.cameraPreviewStatus = 'loading';
+  let viewer: KyxosViewer | null = null;
 
   try {
-    const viewer = await KyxosViewer.create({
+    viewer = await KyxosViewer.create({
       canvas,
       backend: internal.createOptions.backend ?? 'auto',
       quality: 'low',
       pixelRatio: 1,
       autoStart: true,
     });
+    if (previewMountTokens.get(this) !== mountToken) {
+      viewer.dispose();
+      return;
+    }
+
     const state: PreviewState = {
       canvas,
       viewer,
       cameraId,
-      generation,
+      generation: mountToken,
       operationQueue: Promise.resolve(),
     };
     previewStates.set(this, state);
     const document = internal.document;
     if (document) {
-      await enqueuePreview(this, state, () => viewer.loadScene(document.value, internal.assetResolver));
+      await enqueuePreview(this, state, () => viewer!.loadScene(document.value, internal.assetResolver));
     }
-    if (previewStates.get(this) !== state) return;
+    if (previewMountTokens.get(this) !== mountToken || previewStates.get(this) !== state) return;
+    if (!applyPreviewCamera(this, state)) {
+      throw new Error('Preview camera is unavailable.');
+    }
     canvas.dataset.cameraPreviewStatus = 'ready';
-    applyPreviewCamera(this, state);
     dispatchPreviewState(this, state, 'ready');
   } catch (error) {
+    if (previewMountTokens.get(this) !== mountToken) {
+      viewer?.dispose();
+      return;
+    }
     canvas.dataset.cameraPreviewStatus = 'error';
     dispatchPreviewState(this, previewStates.get(this) ?? null, 'error', error);
     disposePreview(this);
