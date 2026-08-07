@@ -45,7 +45,6 @@ const MOBILE_MEMORY_YIELD_STEPS = new Set([
   'upload-source',
   'register-source',
   'parse-source',
-  'activate-asset',
 ]);
 
 function isConstrainedMobileImport(): boolean {
@@ -69,8 +68,10 @@ async function yieldMobileImportMemory(stepId: string): Promise<void> {
   }
   // A task boundary after full-file hashing / upload / parser work lets WebKit
   // release no-longer-referenced ArrayBuffers before the next heavyweight stage.
-  // requestAnimationFrame is intentionally avoided here because background tabs
-  // can throttle it indefinitely.
+  // Do not yield after Viewer activation: once the render loop owns the freshly
+  // uploaded scene, iOS/WebKit can indefinitely defer a zero-delay timer under
+  // GPU pressure. Core completion must be committed synchronously after the
+  // successful activation instead.
   await new Promise<void>((resolve) => setTimeout(resolve, 0));
 }
 
