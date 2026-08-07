@@ -1,4 +1,4 @@
-import { ImportTaskQueue, SceneDocument } from '@kyxos/editor-core';
+import { SceneDocument } from '@kyxos/editor-core';
 import type {
   KyxosSceneContract,
   ScenePatch,
@@ -9,7 +9,6 @@ import type { QualityPresetName } from '@kyxos/viewer';
 import { BrowserKyxosViewportAdapter } from './index';
 
 const installKey = Symbol.for('kyxos.viewer-adapter.mobile-runtime-safety');
-const importInstallKey = Symbol.for('kyxos.viewer-adapter.mobile-import-serialization');
 
 interface NavigatorWithMemory extends Navigator {
   deviceMemory?: number;
@@ -37,13 +36,6 @@ interface AdapterPrototype {
   applyPatch(patch: ScenePatch): Promise<void>;
   setQualityPreset(name: QualityPresetName | 'ultra'): void;
   mountCameraPreview?: (canvas: HTMLCanvasElement, cameraId: string) => Promise<void>;
-}
-
-interface ImportQueuePrototype {
-  enqueue(
-    name: string,
-    worker: (context: unknown) => Promise<unknown>,
-  ): string;
 }
 
 function isiPadDesktopMode(): boolean {
@@ -233,40 +225,12 @@ function installMobileAdapterSafety(): void {
   prototype[installKey] = true;
 }
 
-function installMobileImportSerialization(): void {
-  const prototype = ImportTaskQueue.prototype as unknown as ImportQueuePrototype
-    & Record<symbol, boolean | undefined>;
-  if (prototype[importInstallKey]) return;
-  const originalEnqueue = prototype.enqueue;
-  let tail: Promise<void> = Promise.resolve();
-
-  prototype.enqueue = function enqueueWithMobileSerialization(
-    name: string,
-    worker: (context: unknown) => Promise<unknown>,
-  ): string {
-    if (!isConstrainedMobileRuntime()) return originalEnqueue.call(this, name, worker);
-    return originalEnqueue.call(this, name, async (context: unknown) => {
-      const previous = tail.catch(() => undefined);
-      let release!: () => void;
-      tail = new Promise<void>((resolve) => {
-        release = resolve;
-      });
-      await previous;
-      document.documentElement.dataset.mobileImportConcurrency = '1';
-      try {
-        return await worker(context);
-      } finally {
-        release();
-      }
-    });
-  };
-
-  prototype[importInstallKey] = true;
-}
-
 export function installMobileRuntimeSafety(): void {
   if (typeof window === 'undefined' || typeof document === 'undefined') return;
   if (isConstrainedMobileRuntime()) markMobileProfile();
+  // Keep import scheduling inside Studio's own queue. A global ImportTaskQueue
+  // monkey patch can serialize nested persistence/recovery tasks behind the
+  // very import that is awaiting them. Mobile safety owns GPU/runtime policy,
+  // not editor transaction ordering.
   installMobileAdapterSafety();
-  installMobileImportSerialization();
 }
