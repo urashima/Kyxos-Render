@@ -1,4 +1,4 @@
-import type { AssetResolver, KyxosSceneContract } from '@kyxos/scene-contract';
+import type { AssetResolver, KyxosSceneContract, SceneCamera } from '@kyxos/scene-contract';
 import {
   type Group,
   type Material,
@@ -16,6 +16,7 @@ type LoadScene = (
 
 type RenderFrame = (this: KyxosViewer, time: number) => void;
 type DisposeViewer = (this: KyxosViewer) => void;
+type SetCameraState = (this: KyxosViewer, camera?: SceneCamera | Record<string, any>) => void;
 type MeshLike = Object3D & {
   isMesh?: boolean;
   material?: Material | Material[];
@@ -38,12 +39,15 @@ interface ViewerInternals {
   editorImportListener?: EventListener;
   editorOriginalMaterials?: Map<MeshLike, Material | Material[]>;
   editorProxyMaterials?: Set<Material>;
+  editorAuthoringCameraDetached?: boolean;
+  editorAuthoredSceneCamera?: SceneCamera | Record<string, any>;
 }
 
 interface ViewerPrototypeInternals {
   loadScene?: LoadScene;
   renderFrame?: RenderFrame;
   dispose?: DisposeViewer;
+  setCameraState?: SetCameraState;
   resetTemporal?(reason?: string): void;
   __kyxosEditorSceneModeInstalled?: boolean;
 }
@@ -181,14 +185,43 @@ function bindStudioMode(viewer: KyxosViewer): void {
   const internal = internals(viewer);
   const shell = viewer.canvas.closest<HTMLElement>('.kyxos-studio-shell');
   internal.editorStudioPipeline = Boolean(shell);
+  internal.editorAuthoringCameraDetached = Boolean(shell);
   if (!shell) {
     internal.editorRenderSuspended = false;
+    internal.editorAuthoredSceneCamera = undefined;
+    delete viewer.canvas.dataset.authoringCamera;
+    delete viewer.canvas.dataset.authoredSceneCamera;
     return;
   }
 
   bindImportLifecycle(viewer);
   viewer.canvas.dataset.authoringRender = 'pipeline';
   viewer.canvas.dataset.authoringPipeline = 'playground';
+  viewer.canvas.dataset.authoringCamera = 'editor';
+}
+
+function isEditorCameraState(camera?: SceneCamera | Record<string, any>): boolean {
+  const id = typeof camera?.id === 'string' ? camera.id : '';
+  return id.startsWith('editor-');
+}
+
+/**
+ * PlayCanvas keeps the authoring camera independent from user scene cameras.
+ * Scene Contract activeCameraId is runtime state; it must not move the Studio
+ * viewport every time a camera is added, edited or made active. Editor presets
+ * and bookmarks deliberately use `editor-*` IDs and are allowed through.
+ */
+function shouldDetachSceneCamera(
+  viewer: KyxosViewer,
+  camera?: SceneCamera | Record<string, any>,
+): boolean {
+  const internal = internals(viewer);
+  return Boolean(
+    internal.editorStudioPipeline &&
+    internal.editorAuthoringCameraDetached &&
+    camera &&
+    !isEditorCameraState(camera),
+  );
 }
 
 /**
@@ -204,9 +237,36 @@ export function installEditorSceneModeExtension(ViewerClass: typeof KyxosViewer)
   const originalLoadScene = prototype.loadScene;
   const originalRenderFrame = prototype.renderFrame;
   const originalDispose = prototype.dispose;
-  if (typeof originalLoadScene !== 'function' || typeof originalRenderFrame !== 'function') {
+  const originalSetCameraState = prototype.setCameraState;
+  if (
+    typeof originalLoadScene !== 'function' ||
+    typeof originalRenderFrame !== 'function' ||
+    typeof originalSetCameraState !== 'function'
+  ) {
     throw new Error('Scene API and Viewer render loop must be installed before editor scene mode.');
   }
+
+  prototype.setCameraState = function setAuthoringOrSceneCamera(
+    camera?: SceneCamera | Record<string, any>,
+  ): void {
+    if (shouldDetachSceneCamera(this, camera)) {
+      const internal = internals(this);
+      internal.editorAuthoredSceneCamera = camera ? structuredClone(camera) : undefined;
+      this.canvas.dataset.authoringCamera = 'editor';
+      this.canvas.dataset.authoredSceneCamera = typeof camera?.id === 'string' ? camera.id : '';
+      this.dispatchEvent(new CustomEvent('editor-scene-camera-state', {
+        detail: {
+          camera: camera ? structuredClone(camera) : null,
+          detached: true,
+        },
+      }));
+      return;
+    }
+    originalSetCameraState.call(this, camera);
+    if (internals(this).editorStudioPipeline) {
+      this.canvas.dataset.authoringCamera = isEditorCameraState(camera) ? 'editor' : 'scene';
+    }
+  };
 
   prototype.renderFrame = function renderEditorFrame(time: number): void {
     const internal = internals(this);
@@ -257,6 +317,10 @@ export function installEditorSceneModeExtension(ViewerClass: typeof KyxosViewer)
     internal.editorRenderSuspended = undefined;
     internal.editorImportActive = undefined;
     internal.editorSceneLoading = undefined;
+    internal.editorAuthoringCameraDetached = undefined;
+    internal.editorAuthoredSceneCamera = undefined;
+    delete this.canvas.dataset.authoringCamera;
+    delete this.canvas.dataset.authoredSceneCamera;
     originalDispose?.call(this);
   };
 
