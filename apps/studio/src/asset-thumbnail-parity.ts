@@ -20,6 +20,12 @@ async function ensureCloudSession(): Promise<boolean> {
   return Boolean(await assetClient.auth.getSession());
 }
 
+function thumbnailIsCurrent(asset: SceneAsset): boolean {
+  return asset.metadata?.thumbnailRenderer === RENDERER_VERSION
+    && asset.metadata?.thumbnailSourceHash === asset.contentHash
+    && typeof asset.metadata?.thumbnailDataUrl === 'string';
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
@@ -158,7 +164,7 @@ function decorateCards(session: ProjectSession): void {
     const asset = assetId ? scene.assets[assetId] : undefined;
     if (!asset) return;
     card.dataset.thumbnailKind = asset.kind;
-    card.classList.toggle('has-generated-thumbnail', asset.metadata?.thumbnailRenderer === RENDERER_VERSION);
+    card.classList.toggle('has-generated-thumbnail', thumbnailIsCurrent(asset));
     let badge = card.querySelector<HTMLElement>('.kx-asset-kind-badge');
     if (!badge) {
       badge = document.createElement('span');
@@ -190,7 +196,7 @@ BrowserKyxosViewportAdapter.prototype.bindSession = function bindSessionWithAsse
       const snapshot = session.document.value;
       const pending = Object.values(snapshot.assets).filter((asset) =>
         ['model', 'texture', 'environment'].includes(asset.kind)
-        && asset.metadata?.thumbnailRenderer !== RENDERER_VERSION,
+        && !thumbnailIsCurrent(asset),
       );
       for (const asset of pending) {
         if (disposed) break;
@@ -200,11 +206,12 @@ BrowserKyxosViewportAdapter.prototype.bindSession = function bindSessionWithAsse
           if (!thumbnailDataUrl) continue;
           const fresh = session.document.value;
           const current = fresh.assets[asset.id];
-          if (!current) continue;
+          if (!current || current.contentHash !== asset.contentHash) continue;
           current.metadata = {
             ...(current.metadata ?? {}),
             thumbnailDataUrl,
             thumbnailRenderer: RENDERER_VERSION,
+            thumbnailSourceHash: current.contentHash,
             thumbnailGeneratedAt: new Date().toISOString(),
             thumbnailWidth: WIDTH,
             thumbnailHeight: HEIGHT,
