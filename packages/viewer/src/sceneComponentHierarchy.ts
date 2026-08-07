@@ -3,6 +3,7 @@ import type {
   KyxosSceneContract,
   SceneCamera,
   SceneNode,
+  ScenePatch,
   Transform,
   Vec3,
 } from '@kyxos/scene-contract';
@@ -19,6 +20,7 @@ export interface ResolvedSceneTransform {
 
 interface ViewerPrototypeInternals {
   setCameraState(camera?: SceneCamera | CameraState): void;
+  applyScenePatch(patch: ScenePatch): Promise<void>;
   __kyxosSceneComponentHierarchyInstalled?: boolean;
 }
 
@@ -112,6 +114,9 @@ export function resolveSceneCameraWorldState(
   const resolved = resolveSceneNodeWorldTransform(contract, node.id, camera.transform);
   const rotation = new THREE.Euler().setFromQuaternion(resolved.quaternion, 'XYZ');
   const parentWorld = resolveSceneNodeParentWorldMatrix(contract, node.id);
+  // Camera.target is authored in the same parent space as the camera position.
+  // Transform it by ancestors only (not the camera's own local matrix) so an
+  // authored rig can be translated/rotated as one hierarchy branch.
   const target = new THREE.Vector3(camera.target.x, camera.target.y, camera.target.z)
     .applyMatrix4(parentWorld);
   return {
@@ -144,6 +149,8 @@ function cameraDiagnostic(camera: SceneCamera): {
 const prototype = KyxosViewer.prototype as unknown as ViewerPrototypeInternals;
 if (!prototype.__kyxosSceneComponentHierarchyInstalled) {
   const originalSetCameraState = prototype.setCameraState;
+  const originalApplyScenePatch = prototype.applyScenePatch;
+
   prototype.setCameraState = function setHierarchyAwareCameraState(
     this: KyxosViewer,
     camera?: SceneCamera | CameraState,
@@ -157,5 +164,18 @@ if (!prototype.__kyxosSceneComponentHierarchyInstalled) {
     originalSetCameraState.call(this, resolved);
     this.canvas.dataset.managedCameraWorld = JSON.stringify(cameraDiagnostic(resolved));
   };
+
+  prototype.applyScenePatch = async function applyHierarchyAwareScenePatch(
+    this: KyxosViewer,
+    patch: ScenePatch,
+  ): Promise<void> {
+    await originalApplyScenePatch.call(this, patch);
+    if (!patch.some((operation) => operation.path.startsWith('/nodes'))) return;
+    const contract = this.getLoadedSceneContract();
+    const camera = contract?.cameras.find((entry) => entry.id === contract.activeCameraId)
+      ?? contract?.cameras[0];
+    if (camera) this.setCameraState(camera);
+  };
+
   prototype.__kyxosSceneComponentHierarchyInstalled = true;
 }
