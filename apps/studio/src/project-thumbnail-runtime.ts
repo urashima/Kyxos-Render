@@ -17,6 +17,15 @@ const thumbnailClient = createDurableApiClient({
   functionsUrl: backendConfig.functionsUrl,
 });
 
+async function ensureCloudSession(): Promise<void> {
+  if (backendConfig.provider !== 'supabase') return;
+  // This module is evaluated before the login screen completes, so its client
+  // may have been constructed without the token. Refresh from sessionStorage at
+  // the moment a cloud thumbnail is actually persisted.
+  const session = await thumbnailClient.auth.getSession();
+  if (!session) throw new Error('Authentication is required to persist a project thumbnail.');
+}
+
 async function normalizedThumbnail(blob: Blob): Promise<Blob> {
   const bitmap = await createImageBitmap(blob);
   try {
@@ -93,6 +102,7 @@ async function postgrest(path: string, init: RequestInit): Promise<void> {
 }
 
 async function persistCloudThumbnail(projectId: string, blob: Blob): Promise<string> {
+  await ensureCloudSession();
   const hash = await hashBlob(blob);
   const ticket = await thumbnailClient.assets.createUpload({
     hash,
