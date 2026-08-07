@@ -181,6 +181,7 @@ function clearCoreImportCompletion(): void {
   delete document.documentElement.dataset.importCompletedAt;
   delete document.documentElement.dataset.importDurabilityState;
   delete document.documentElement.dataset.importDurabilityError;
+  delete document.documentElement.dataset.importDurabilitySchedule;
 }
 
 function commitCoreImportCompletion(state: unknown): void {
@@ -197,6 +198,12 @@ function commitCoreImportCompletion(state: unknown): void {
   }
 }
 
+function runPostprocess(options: ImportPostprocessOptions): void {
+  Promise.resolve()
+    .then(() => options.run())
+    .catch((error) => options.onWarning(options.label, error));
+}
+
 function scheduleDurability<TState>(
   step: ImportJobStep<TState>,
   state: TState,
@@ -206,7 +213,7 @@ function scheduleDurability<TState>(
   if (typeof document !== 'undefined') {
     document.documentElement.dataset.importDurabilityState = 'pending';
   }
-  scheduleImportPostprocess({
+  const options: ImportPostprocessOptions = {
     label: step.id,
     async run() {
       let slowTimer: ReturnType<typeof setTimeout> | null = null;
@@ -252,7 +259,25 @@ function scheduleDurability<TState>(
       });
       reportPostprocessFailure(label, error);
     },
-  });
+  };
+
+  if (isConstrainedMobileImport() && typeof queueMicrotask === 'function') {
+    // Core Complete synchronously tells EditorSceneMode to resume after its short
+    // stabilization delay. Use that still-suspended window to persist the draft
+    // before the 30fps mobile render loop restarts. WebKit can postpone nested
+    // rAF/timer callbacks for a long time immediately after GPU texture upload;
+    // a microtask is deterministic and does not add another whole-frame wait.
+    if (typeof document !== 'undefined') {
+      document.documentElement.dataset.importDurabilitySchedule = 'microtask';
+    }
+    queueMicrotask(() => runPostprocess(options));
+    return;
+  }
+
+  if (typeof document !== 'undefined') {
+    document.documentElement.dataset.importDurabilitySchedule = 'after-paint';
+  }
+  scheduleImportPostprocess(options);
 }
 
 export async function runImportJob<TState>(
@@ -385,9 +410,6 @@ export function scheduleImportPostprocess(
       console.info(`[studio-import] ${options.label} · deferred-fallback`);
       return;
     }
-
-    Promise.resolve()
-      .then(() => options.run())
-      .catch((error) => options.onWarning(options.label, error));
+    runPostprocess(options);
   });
 }
