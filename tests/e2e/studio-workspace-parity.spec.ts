@@ -89,8 +89,16 @@ test('Studio workspace matches dock, float, collapse, settings and mobile reacha
     return value.viewportMultiSelect;
   })).toBe(false);
   await multiSelect.check();
+  await settings.getByRole('button', { name: 'Done' }).click();
+  await expect(settings).not.toBeVisible();
 
+  // Restore-default must be exercised against a genuinely floating panel, but
+  // native <dialog> modality correctly blocks clicks on the workspace behind it.
+  // Float first, then reopen Settings and restore from inside the modal.
   await hierarchy.getByRole('button', { name: 'Float Hierarchy' }).click();
+  await expect(hierarchy).toHaveClass(/kx-panel-floating/);
+  await page.getByRole('button', { name: 'Studio Settings' }).click();
+  await expect(settings).toBeVisible();
   await settings.getByRole('button', { name: 'Restore default workspace' }).click();
   await expect(hierarchy).not.toHaveClass(/kx-panel-floating|kx-panel-collapsed/);
   await expect.poll(() => page.evaluate(() => localStorage.getItem('kyxos-studio-workspace-layout-v4'))).toBeNull();
