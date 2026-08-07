@@ -101,10 +101,10 @@ async function loadRegisteredBlob(
   }
 
   const sourceKind = blob instanceof File ? 'picker-file' : 'registered-blob';
-  markLoadStage(`${sourceKind}-native-read-start`);
+  markLoadStage(`${sourceKind}-recovery-read-start`);
   progress(onProgress, 0, blob.size);
   const buffer = await nativeBlobArrayBuffer.call(blob);
-  markLoadStage(`${sourceKind}-native-read-complete`);
+  markLoadStage(`${sourceKind}-recovery-read-complete`);
   progress(onProgress, blob.size, blob.size);
   return buffer;
 }
@@ -113,7 +113,7 @@ function loadLocalBlob(
   url: string,
   onProgress?: ProgressCallback,
 ): Promise<ArrayBuffer> {
-  markLoadStage('blob-xhr-start');
+  markLoadStage('blob-xhr-recovery-start');
   return new Promise<ArrayBuffer>((resolve, reject) => {
     const request = new XMLHttpRequest();
     request.open('GET', url, true);
@@ -129,7 +129,7 @@ function loadLocalBlob(
         reject(new Error('GLB Blob request returned an unexpected response.'));
         return;
       }
-      markLoadStage('blob-xhr-complete');
+      markLoadStage('blob-xhr-recovery-complete');
       resolve(request.response);
     };
     request.onerror = () => reject(new Error('GLB Blob request failed.'));
@@ -140,7 +140,7 @@ function loadLocalBlob(
 }
 
 export interface ConfiguredGltfLoaderOptions {
-  /** Kept for API compatibility; KTX2 is now always configured when a renderer exists. */
+  /** Kept for API compatibility; KTX2 is always configured when a renderer exists. */
   ktx2?: boolean;
 }
 
@@ -169,25 +169,6 @@ export function createConfiguredGltfLoader(
     const protocol = urlProtocol(url);
     markLoadStage(`load-url-${protocol}`);
 
-    // Safari/WebKit already has a native blob: URL loader path inside Three's
-    // FileLoader. Re-reading the Blob ourselves before parse created a second
-    // JS-visible ArrayBuffer boundary and, more importantly, repeatedly caused
-    // Chromium iPhone-context and WebKit WebProcess termination even for a tiny
-    // GLB. On constrained Apple mobile hardware leave the top-level blob URL to
-    // the browser + Three loader exactly as PlayCanvas-style runtime loading
-    // would, while keeping desktop recovery fallbacks below.
-    if (url.startsWith('blob:') && constrainedMobileDecode()) {
-      markLoadStage('mobile-native-blob-start');
-      try {
-        const result = await nativeLoadAsync(url, onProgress);
-        markLoadStage('mobile-native-blob-complete');
-        return result;
-      } catch (error) {
-        markLoadStage('mobile-native-blob-error');
-        throw error;
-      }
-    }
-
     if (!url.startsWith('blob:')) {
       try {
         const result = await nativeLoadAsync(url, onProgress);
@@ -199,18 +180,41 @@ export function createConfiguredGltfLoader(
       }
     }
 
-    const progressCallback = onProgress as ProgressCallback | undefined;
-    const buffer =
-      (await loadRegisteredBlob(url, progressCallback))
-      ?? (await loadLocalBlob(url, progressCallback));
-    markLoadStage('gltf-parse-start');
+    // Blob URLs are already a native browser capability and Three's FileLoader
+    // knows how to consume them. Always use that path first. The old Kyxos path
+    // eagerly resolved blob: -> registry -> picker File -> ArrayBuffer before
+    // GLTFLoader could run. CI traces showed that path hanging on desktop
+    // fidelity/KTX2 fixtures and terminating iPhone/WebKit browser targets even
+    // for tiny GLBs. It also manufactured another large JS-visible allocation.
+    markLoadStage(constrainedMobileDecode() ? 'mobile-native-blob-start' : 'native-blob-start');
     try {
-      const result = await loader.parseAsync(buffer, '');
-      markLoadStage('gltf-parse-complete');
+      const result = await nativeLoadAsync(url, onProgress);
+      markLoadStage(constrainedMobileDecode() ? 'mobile-native-blob-complete' : 'native-blob-complete');
       return result;
-    } catch (error) {
-      markLoadStage('gltf-parse-error');
-      throw error;
+    } catch (nativeError) {
+      markLoadStage(constrainedMobileDecode() ? 'mobile-native-blob-error' : 'native-blob-error');
+
+      // Never re-enter manual whole-Blob reads on constrained Apple mobile
+      // hardware. If the browser cannot load its own blob URL, propagating the
+      // error is safer than a second allocation/recovery path that can kill the
+      // WebProcess.
+      if (constrainedMobileDecode()) throw nativeError;
+
+      // Desktop recovery remains available for stale/quirky object URL cases.
+      // It is fallback-only, so healthy imports retain Three/browser semantics.
+      const progressCallback = onProgress as ProgressCallback | undefined;
+      try {
+        const buffer =
+          (await loadRegisteredBlob(url, progressCallback))
+          ?? (await loadLocalBlob(url, progressCallback));
+        markLoadStage('desktop-blob-recovery-parse-start');
+        const result = await loader.parseAsync(buffer, '');
+        markLoadStage('desktop-blob-recovery-parse-complete');
+        return result;
+      } catch (recoveryError) {
+        markLoadStage('desktop-blob-recovery-error');
+        throw recoveryError instanceof Error ? recoveryError : nativeError;
+      }
     }
   };
 
