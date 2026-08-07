@@ -19,7 +19,7 @@ async function addHierarchyComponent(
   await hierarchy.getByRole('button', { name: 'Add', exact: true }).click();
   const menu = page.locator('.studio-context-menu');
   await expect(menu).toBeVisible();
-  await menu.getByRole('button', { name: label, exact: true }).click();
+  await menu.getByRole('menuitem', { name: label, exact: true }).click();
 }
 
 test('Studio camera and light selection, inspector edits and transforms stay synchronized', async ({ page }) => {
@@ -70,9 +70,6 @@ test('Studio camera and light selection, inspector edits and transforms stay syn
     return scene?.activeCameraId === node?.cameraId;
   })).toBe(true);
 
-  // Adding a component while a Camera is selected intentionally parents it to the Camera,
-  // matching the editor hierarchy behavior. The created Light must still start at its real
-  // component transform rather than an identity node transform.
   await addHierarchyComponent(page, 'Add Spot Light');
   const lightInspector = page.locator('.kx-component-inspector').filter({ hasText: 'Light ·' });
   await expect(lightInspector).toBeVisible();
@@ -117,7 +114,6 @@ test('Studio camera and light selection, inspector edits and transforms stay syn
     normalBias: 0.035,
   });
 
-  // The last live field edit is a normal command and remains reversible.
   await page.getByRole('button', { name: 'Undo', exact: true }).click();
   await expect.poll(() => page.evaluate(() => {
     const scene = (globalThis as any).kyxosStudio?.api?.getScene();
