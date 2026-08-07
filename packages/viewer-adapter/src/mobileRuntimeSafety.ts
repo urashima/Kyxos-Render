@@ -37,7 +37,6 @@ interface AdapterPrototype {
   applyPatch(patch: ScenePatch): Promise<void>;
   setQualityPreset(name: QualityPresetName | 'ultra'): void;
   mountCameraPreview?: (canvas: HTMLCanvasElement, cameraId: string) => Promise<void>;
-  [installKey]?: boolean;
 }
 
 interface ImportQueuePrototype {
@@ -45,7 +44,6 @@ interface ImportQueuePrototype {
     name: string,
     worker: (context: unknown) => Promise<unknown>,
   ): string;
-  [importInstallKey]?: boolean;
 }
 
 function isiPadDesktopMode(): boolean {
@@ -129,7 +127,8 @@ function applyPixelRatioCap(adapter: BrowserKyxosViewportAdapter): void {
 }
 
 function installMobileAdapterSafety(): void {
-  const prototype = BrowserKyxosViewportAdapter.prototype as unknown as AdapterPrototype;
+  const prototype = BrowserKyxosViewportAdapter.prototype as unknown as AdapterPrototype
+    & Record<symbol, boolean | undefined>;
   if (prototype[installKey]) return;
 
   const originalMount = prototype.mount;
@@ -235,7 +234,8 @@ function installMobileAdapterSafety(): void {
 }
 
 function installMobileImportSerialization(): void {
-  const prototype = ImportTaskQueue.prototype as unknown as ImportQueuePrototype;
+  const prototype = ImportTaskQueue.prototype as unknown as ImportQueuePrototype
+    & Record<symbol, boolean | undefined>;
   if (prototype[importInstallKey]) return;
   const originalEnqueue = prototype.enqueue;
   let tail: Promise<void> = Promise.resolve();
