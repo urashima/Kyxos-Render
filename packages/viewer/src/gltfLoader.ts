@@ -5,6 +5,7 @@ import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 
 const dracoLoader = new DRACOLoader().setWorkerLimit(2);
 const ktx2Loaders = new WeakMap<object, KTX2Loader>();
+const nativeBlobArrayBuffer = Blob.prototype.arrayBuffer;
 const objectUrlBlobRegistryKey = Symbol.for('kyxos.objectUrlBlobRegistry');
 const localBlobBytesRegistryKey = Symbol.for('kyxos.localBlobBytesRegistry');
 const LOCAL_BLOB_TIMEOUT_MS = 30_000;
@@ -99,10 +100,15 @@ async function loadRegisteredBlob(
     return buffer;
   }
 
-  markLoadStage(blob instanceof File ? 'picker-file-read-start' : 'registered-blob-read-start');
+  const sourceKind = blob instanceof File ? 'picker-file' : 'registered-blob';
+  markLoadStage(`${sourceKind}-native-read-start`);
   progress(onProgress, 0, blob.size);
-  const buffer = await blob.arrayBuffer();
-  markLoadStage(blob instanceof File ? 'picker-file-read-complete' : 'registered-blob-read-complete');
+  // File.prototype.arrayBuffer is intentionally guarded by Studio for upload /
+  // recovery behavior. Viewer loading must not re-enter that chain. Read the
+  // exact Blob backing the ObjectURL through the native Blob method instead;
+  // this is one allocation, has no cache, and works for File subclasses too.
+  const buffer = await nativeBlobArrayBuffer.call(blob);
+  markLoadStage(`${sourceKind}-native-read-complete`);
   progress(onProgress, blob.size, blob.size);
   return buffer;
 }
