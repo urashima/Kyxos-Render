@@ -42,7 +42,11 @@ function install(session: ProjectSession): () => void {
       details.className = 'kx-component-inspector kx-camera-runtime';
       details.open = true;
       const summary = document.createElement('summary');
-      summary.textContent = 'Camera · Runtime';
+      // Keep the runtime extension visually adjacent to the Camera component,
+      // but give it a distinct semantic heading so selectors, accessibility
+      // tools and future inspector sections never confuse it with the base
+      // "Camera · <name>" component editor.
+      summary.textContent = 'Camera Runtime';
       const grid = document.createElement('div');
       grid.className = 'kx-component-inspector-grid';
       const row = document.createElement('div');
