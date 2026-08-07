@@ -53,6 +53,54 @@ function configureShadow(light: THREE.Light & { castShadow?: boolean; shadow?: a
   }
 }
 
+function configureTransform(light: THREE.Light, source: SceneLight): void {
+  light.position.set(
+    source.transform.position.x,
+    source.transform.position.y,
+    source.transform.position.z,
+  );
+  light.rotation.set(
+    source.transform.rotation.x,
+    source.transform.rotation.y,
+    source.transform.rotation.z,
+  );
+  light.scale.set(
+    source.transform.scale.x,
+    source.transform.scale.y,
+    source.transform.scale.z,
+  );
+  light.updateMatrixWorld(true);
+}
+
+function configureDirectionalTarget(
+  scene: THREE.Scene,
+  light: THREE.DirectionalLight | THREE.SpotLight,
+  source: SceneLight,
+): THREE.Object3D {
+  // Camera and Light components in the Scene Contract share the conventional
+  // local -Z forward axis. Three.js DirectionalLight / SpotLight derive their
+  // direction from `position -> target`, so rotation alone does not affect the
+  // rendered direction. Convert the authored Euler rotation into a target point
+  // every time the Scene Contract is applied so Inspector and gizmo rotation are
+  // visually and physically identical.
+  const quaternion = new THREE.Quaternion().setFromEuler(new THREE.Euler(
+    source.transform.rotation.x,
+    source.transform.rotation.y,
+    source.transform.rotation.z,
+    'XYZ',
+  ));
+  const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(quaternion).normalize();
+  const distance = source.type === 'spot'
+    ? Math.max(1, source.range ?? 10)
+    : 10;
+  light.target.position.copy(light.position).addScaledVector(forward, distance);
+  light.target.name = `${source.name} Target`;
+  light.target.userData.kyxosManagedLightTarget = source.id;
+  light.target.updateMatrixWorld(true);
+  scene.add(light.target);
+  return light.target;
+}
+
 KyxosViewer.prototype.setLighting = function setLighting(lights: SceneLight[]): void {
   const scene = internals(this).scene as THREE.Scene | undefined;
   if (!scene) return;
@@ -88,28 +136,22 @@ KyxosViewer.prototype.setLighting = function setLighting(lights: SceneLight[]): 
 
     light.name = source.name;
     light.userData.kyxosManagedLight = source.id;
-    light.position.set(
-      source.transform.position.x,
-      source.transform.position.y,
-      source.transform.position.z,
-    );
-    light.rotation.set(
-      source.transform.rotation.x,
-      source.transform.rotation.y,
-      source.transform.rotation.z,
-    );
+    configureTransform(light, source);
     configureShadow(light as THREE.Light & { castShadow?: boolean; shadow?: any }, source);
     scene.add(light);
     current.objects.push(light);
 
     if (light instanceof THREE.DirectionalLight || light instanceof THREE.SpotLight) {
-      light.target.position.set(0, 0.8, 0);
-      light.target.userData.kyxosManagedLightTarget = source.id;
-      scene.add(light.target);
-      current.objects.push(light.target);
+      const target = configureDirectionalTarget(scene, light, source);
+      current.objects.push(target);
     }
   }
   this.resetTemporal('scene-lighting');
+  // Editor helper geometry depends on range, cone and transform. The method is
+  // installed later during module bootstrap, but is available by the time scene
+  // lighting is applied in a running Viewer.
+  (this as KyxosViewer & { refreshEditorViewportHelpers?: () => void })
+    .refreshEditorViewportHelpers?.();
 };
 
 function applyLightPatch(lights: SceneLight[], patch: ScenePatch): SceneLight[] {
