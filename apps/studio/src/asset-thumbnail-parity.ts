@@ -10,12 +10,15 @@ const WIDTH = 256;
 const HEIGHT = 144;
 const CACHE_DB = 'kyxos-studio-thumbnail-cache';
 const CACHE_STORE = 'asset-thumbnails';
+const RASTER_IMAGE_MIME = /^image\/(png|jpeg|webp|avif)$/i;
 const backendConfig = resolveKyxosRuntimeBackendConfig(import.meta.env);
 const assetClient = createDurableApiClient({
   url: backendConfig.supabaseUrl,
   anonKey: backendConfig.supabaseAnonKey,
   functionsUrl: backendConfig.functionsUrl,
 });
+
+type ThumbnailEligibility = 'renderable' | 'embedded' | 'unsupported' | 'nonvisual';
 
 interface CachedThumbnail {
   assetId: string;
@@ -33,6 +36,15 @@ const cacheReads = new Map<string, Promise<CachedThumbnail | null>>();
 async function ensureCloudSession(): Promise<boolean> {
   if (backendConfig.provider !== 'supabase') return true;
   return Boolean(await assetClient.auth.getSession());
+}
+
+function thumbnailEligibility(asset: SceneAsset): ThumbnailEligibility {
+  if (asset.kind === 'model' || asset.kind === 'environment') return 'renderable';
+  if (asset.kind !== 'texture') return 'nonvisual';
+  if (asset.metadata?.embedded === true || typeof asset.metadata?.embeddedInAssetId === 'string') {
+    return 'embedded';
+  }
+  return RASTER_IMAGE_MIME.test(asset.mimeType ?? '') ? 'renderable' : 'unsupported';
 }
 
 function thumbnailMatches(asset: SceneAsset, cached: CachedThumbnail | null | undefined): cached is CachedThumbnail {
@@ -223,9 +235,10 @@ async function renderWithViewer(scene: KyxosSceneContract, focus: string[] = [])
 }
 
 async function generateThumbnail(scene: KyxosSceneContract, asset: SceneAsset): Promise<string | null> {
-  const existingManifest = await assetClient.assets.getManifest([asset.id]);
-  const sourceUrl = existingManifest.assets[asset.uri];
-  if (asset.kind === 'texture' && sourceUrl && /^image\/(png|jpeg|webp)$/i.test(asset.mimeType ?? '')) {
+  if (asset.kind === 'texture') {
+    const existingManifest = await assetClient.assets.getManifest([asset.id]);
+    const sourceUrl = existingManifest.assets[asset.uri];
+    if (!sourceUrl) throw new Error(`Texture thumbnail source is unavailable for ${asset.id}.`);
     const response = await fetch(sourceUrl);
     if (!response.ok) throw new Error(`Texture thumbnail download failed (${response.status}).`);
     return await rasterize(await response.blob(), true);
@@ -245,6 +258,7 @@ function mountCachedThumbnail(card: HTMLElement, asset: SceneAsset, cached: Cach
   card.classList.add('has-generated-thumbnail');
   card.dataset.thumbnailRenderer = cached.rendererVersion;
   card.dataset.thumbnailSourceHash = cached.contentHash;
+  card.dataset.thumbnailEligibility = 'renderable';
   const current = card.querySelector<HTMLElement>(':scope > .asset-thumbnail');
   if (current instanceof HTMLImageElement && current.src === cached.dataUrl) return;
   const image = document.createElement('img');
@@ -262,7 +276,9 @@ function decorateCards(session: ProjectSession): void {
     const assetId = card.dataset.assetId;
     const asset = assetId ? scene.assets[assetId] : undefined;
     if (!asset) return;
+    const eligibility = thumbnailEligibility(asset);
     card.dataset.thumbnailKind = asset.kind;
+    card.dataset.thumbnailEligibility = eligibility;
     let badge = card.querySelector<HTMLElement>('.kx-asset-kind-badge');
     if (!badge) {
       badge = document.createElement('span');
@@ -270,6 +286,13 @@ function decorateCards(session: ProjectSession): void {
       card.prepend(badge);
     }
     badge.textContent = asset.kind === 'environment' ? 'HDR' : asset.kind === 'texture' ? 'TEX' : asset.kind === 'model' ? '3D' : asset.kind.slice(0, 3).toUpperCase();
+
+    if (eligibility !== 'renderable') {
+      card.classList.remove('has-generated-thumbnail');
+      delete card.dataset.thumbnailRenderer;
+      delete card.dataset.thumbnailSourceHash;
+      return;
+    }
 
     const hot = memoryCache.get(asset.id);
     if (thumbnailMatches(asset, hot)) {
@@ -282,33 +305,38 @@ function decorateCards(session: ProjectSession): void {
     void readCachedThumbnail(asset).then((cached) => {
       if (!cached || !card.isConnected) return;
       const currentAsset = session.document.value.assets[asset.id];
-      if (currentAsset) mountCachedThumbnail(card, currentAsset, cached);
+      if (currentAsset && thumbnailEligibility(currentAsset) === 'renderable') {
+        mountCachedThumbnail(card, currentAsset, cached);
+      }
     }).catch((error) => console.warn('[Kyxos] Asset thumbnail cache read failed.', error));
   });
 }
 
-function removeLegacyThumbnailMetadata(session: ProjectSession, assetId: string, sourceHash: string): void {
+function stripLegacyThumbnailMetadata(session: ProjectSession): void {
   const fresh = session.document.value;
-  const asset = fresh.assets[assetId];
-  if (!asset || asset.contentHash !== sourceHash || !asset.metadata) return;
-  const metadata = { ...asset.metadata };
   let changed = false;
-  for (const key of [
-    'thumbnailDataUrl',
-    'thumbnailRenderer',
-    'thumbnailSourceHash',
-    'thumbnailGeneratedAt',
-    'thumbnailWidth',
-    'thumbnailHeight',
-  ]) {
-    if (key in metadata) {
-      delete metadata[key];
-      changed = true;
+  for (const asset of Object.values(fresh.assets)) {
+    if (!asset.metadata) continue;
+    const metadata = { ...asset.metadata };
+    let assetChanged = false;
+    for (const key of [
+      'thumbnailDataUrl',
+      'thumbnailRenderer',
+      'thumbnailSourceHash',
+      'thumbnailGeneratedAt',
+      'thumbnailWidth',
+      'thumbnailHeight',
+    ]) {
+      if (key in metadata) {
+        delete metadata[key];
+        assetChanged = true;
+      }
     }
+    if (!assetChanged) continue;
+    asset.metadata = metadata;
+    changed = true;
   }
-  if (!changed) return;
-  asset.metadata = metadata;
-  session.document.replace(fresh, 'asset-thumbnail-cache-cleanup');
+  if (changed) session.document.replace(fresh, 'asset-thumbnail-cache-cleanup');
 }
 
 const originalBindSession = BrowserKyxosViewportAdapter.prototype.bindSession;
@@ -325,29 +353,26 @@ BrowserKyxosViewportAdapter.prototype.bindSession = function bindSessionWithAsse
     running = true;
     try {
       decorateCards(session);
+      stripLegacyThumbnailMetadata(session);
       if (!(await ensureCloudSession())) {
         document.documentElement.dataset.assetThumbnailState = 'auth-required';
         return;
       }
       const snapshot = session.document.value;
       const candidates = Object.values(snapshot.assets).filter((asset) =>
-        ['model', 'texture', 'environment'].includes(asset.kind),
+        thumbnailEligibility(asset) === 'renderable',
       );
       for (const asset of candidates) {
         if (disposed) break;
         try {
           const cached = await readCachedThumbnail(asset);
-          if (cached) {
-            removeLegacyThumbnailMetadata(session, asset.id, asset.contentHash);
-            continue;
-          }
+          if (cached) continue;
           document.documentElement.dataset.assetThumbnailState = `rendering:${asset.id}`;
           const thumbnailDataUrl = await generateThumbnail(snapshot, asset);
           if (!thumbnailDataUrl) continue;
           const current = session.document.value.assets[asset.id];
-          if (!current || current.contentHash !== asset.contentHash) continue;
+          if (!current || current.contentHash !== asset.contentHash || thumbnailEligibility(current) !== 'renderable') continue;
           const record = await writeCachedThumbnail(current, thumbnailDataUrl);
-          removeLegacyThumbnailMetadata(session, current.id, current.contentHash);
           document.querySelectorAll<HTMLElement>(`.asset-workspace-item[data-asset-id="${CSS.escape(current.id)}"]`)
             .forEach((card) => mountCachedThumbnail(card, current, record));
         } catch (error) {
