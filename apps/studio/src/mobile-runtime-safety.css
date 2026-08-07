@@ -1,0 +1,44 @@
+/*
+ * iPhone / constrained-mobile compositor budget.
+ * Keep layout, opacity and hit targets identical while avoiding full-screen
+ * backdrop passes and large blurred shadows over the WebGL canvas.
+ */
+html[data-studio-runtime-profile='mobile-safe'] .studio-topbar,
+html[data-studio-runtime-profile='mobile-safe'] .studio-left-rail,
+html[data-studio-runtime-profile='mobile-safe'] .viewport-overlay,
+html[data-studio-runtime-profile='mobile-safe'] .studio-panel,
+html[data-studio-runtime-profile='mobile-safe'] .panel-shell,
+html[data-studio-runtime-profile='mobile-safe'] .floating-panel,
+html[data-studio-runtime-profile='mobile-safe'] .kx-floating-panel,
+html[data-studio-runtime-profile='mobile-safe'] .performance-capsule,
+html[data-studio-runtime-profile='mobile-safe'] .mobile-actions-menu,
+html[data-studio-runtime-profile='mobile-safe'] .studio-dialog,
+html[data-studio-runtime-profile='mobile-safe'] .kx-asset-kind-badge,
+html[data-studio-runtime-profile='mobile-safe'] details,
+html[data-studio-runtime-profile='mobile-safe'] dialog {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  filter: none !important;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 28%) !important;
+}
+
+html[data-studio-runtime-profile='mobile-safe'] *,
+html[data-studio-runtime-profile='mobile-safe'] *::before,
+html[data-studio-runtime-profile='mobile-safe'] *::after {
+  text-shadow: none !important;
+}
+
+html[data-studio-runtime-profile='mobile-safe'] .viewport-shell,
+html[data-studio-runtime-profile='mobile-safe'] #studio-canvas {
+  contain: layout paint;
+}
+
+@media (max-width: 680px) {
+  html[data-studio-runtime-profile='mobile-safe'] .studio-panel,
+  html[data-studio-runtime-profile='mobile-safe'] .floating-panel,
+  html[data-studio-runtime-profile='mobile-safe'] .kx-floating-panel {
+    /* Preserve translucent surfaces without asking Safari for a live blur of
+       the full 3D frame below them. */
+    background-color: rgb(17 21 29 / 94%) !important;
+  }
+}
