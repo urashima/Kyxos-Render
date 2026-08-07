@@ -39,10 +39,15 @@ test('Studio groups topbar actions and generates reusable project and asset thum
 
   await page.setViewportSize({ width: 900, height: 760 });
   await expect(shell).toHaveAttribute('data-topbar-density', 'compact');
-  await expect(slot.locator('.kx-topbar-editor-tools')).toBeHidden();
+  await expect(slot.locator('.kx-topbar-editor-tools')).toBeVisible();
+  await expect(slot.locator('.kx-topbar-transform-cluster')).toBeHidden();
+  await expect(slot.getByRole('button', { name: 'Undo', exact: true })).toBeVisible();
+  await expect(slot.getByRole('button', { name: 'Redo', exact: true })).toBeVisible();
+  await expect(slot.getByRole('button', { name: 'Preview', exact: true })).toBeVisible();
   await expect(slot.locator('.kx-topbar-primary').getByRole('button', { name: 'Publish', exact: true })).toBeVisible();
 
   await page.setViewportSize({ width: 620, height: 760 });
+  await expect(slot.locator('.kx-topbar-editor-tools')).toBeHidden();
   const mobileMore = page.getByRole('button', { name: 'More editor actions', exact: true });
   await expect(mobileMore).toBeVisible();
   await mobileMore.click();
