@@ -17,6 +17,11 @@ const thumbnailClient = createDurableApiClient({
   functionsUrl: backendConfig.functionsUrl,
 });
 
+function importTransactionActive(): boolean {
+  const dataset = document.documentElement.dataset;
+  return dataset.importWorkerBoundary === 'running' && dataset.importCoreComplete !== 'true';
+}
+
 async function ensureCloudSession(): Promise<void> {
   if (backendConfig.provider !== 'supabase') return;
   // This module is evaluated before the login screen completes, so its client
@@ -172,10 +177,22 @@ BrowserKyxosViewportAdapter.prototype.bindSession = function bindSessionWithProj
   let lastCapturedVersion = -1;
   let publishGate = false;
   let replayingPublish = false;
+  let deferredByImport = false;
 
   const capture = async (force = false): Promise<void> => {
     if (disposed) return;
     if (force) window.clearTimeout(timer);
+
+    // Project covers are derived presentation data. They must never compete with
+    // the authoritative upload / parse / activate / autosave import transaction.
+    // Resume only after Studio marks the core import as complete.
+    if (importTransactionActive()) {
+      deferredByImport = true;
+      document.documentElement.dataset.projectThumbnailState = 'deferred-import';
+      window.clearTimeout(timer);
+      return;
+    }
+
     const version = session.document.version;
     const now = Date.now();
     if (!force && version === lastCapturedVersion) return;
@@ -185,20 +202,24 @@ BrowserKyxosViewportAdapter.prototype.bindSession = function bindSessionWithProj
     }
     if (inFlight) {
       await inFlight;
-      // A Publish capture must represent the frame after any older background
-      // capture completes. Camera navigation can change the image without
-      // changing SceneDocument.version, so forced captures intentionally run
-      // again even when the document revision is identical.
-      if (force && !disposed) await capture(true);
+      if (force && !disposed && !importTransactionActive()) await capture(true);
       return;
     }
     document.documentElement.dataset.projectThumbnailState = 'capturing';
     inFlight = (async () => {
       try {
         const blob = await adapter.captureThumbnail();
+        // Import can begin while a scheduled capture is waiting on the GPU.
+        // Do not persist that stale frame into project metadata in that case.
+        if (importTransactionActive()) {
+          deferredByImport = true;
+          document.documentElement.dataset.projectThumbnailState = 'deferred-import';
+          return;
+        }
         await persistThumbnail(session.projectId, blob);
         lastCapturedVersion = version;
         lastCaptureAt = Date.now();
+        deferredByImport = false;
       } catch (error) {
         document.documentElement.dataset.projectThumbnailState = 'error';
         console.warn('[Kyxos] Project thumbnail capture failed.', error);
@@ -212,11 +233,38 @@ BrowserKyxosViewportAdapter.prototype.bindSession = function bindSessionWithProj
   function schedule(delay = CAPTURE_DEBOUNCE_MS): void {
     if (disposed) return;
     window.clearTimeout(timer);
+    if (importTransactionActive()) {
+      deferredByImport = true;
+      document.documentElement.dataset.projectThumbnailState = 'deferred-import';
+      return;
+    }
     timer = window.setTimeout(() => void capture(), delay);
   }
 
-  const onDocumentChange = () => schedule();
+  const onDocumentChange = () => {
+    if (importTransactionActive()) {
+      deferredByImport = true;
+      window.clearTimeout(timer);
+      document.documentElement.dataset.projectThumbnailState = 'deferred-import';
+      return;
+    }
+    schedule();
+  };
   session.document.addEventListener('change', onDocumentChange);
+
+  const onImportStep = () => {
+    if (importTransactionActive()) {
+      deferredByImport = true;
+      window.clearTimeout(timer);
+      document.documentElement.dataset.projectThumbnailState = 'deferred-import';
+      return;
+    }
+    if (deferredByImport || document.documentElement.dataset.importCoreComplete === 'true') {
+      deferredByImport = false;
+      schedule(900);
+    }
+  };
+  document.addEventListener('kyxos:studio-import-step', onImportStep);
 
   const onTopbarAction = (event: Event) => {
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>('button');
@@ -231,9 +279,11 @@ BrowserKyxosViewportAdapter.prototype.bindSession = function bindSessionWithProj
 
       // The publish_scene transaction snapshots projects.thumbnail_asset_id.
       // Stop the first click before the original target listener runs, persist
-      // the exact current viewport cover, then replay the same existing button
-      // once. This keeps the publish command implementation independent while
-      // making the immutable version thumbnail correspond to this Publish.
+      // the exact current viewport cover, then replay the same existing button.
+      // If import is still running, leave the existing Publish behavior alone;
+      // import validation owns that transitional state and thumbnail work must
+      // not extend the critical path.
+      if (importTransactionActive()) return;
       event.preventDefault();
       event.stopImmediatePropagation();
       if (publishGate) return;
@@ -253,17 +303,19 @@ BrowserKyxosViewportAdapter.prototype.bindSession = function bindSessionWithProj
       return;
     }
 
-    if (/Projects/i.test(label)) void capture(true);
+    if (/Projects/i.test(label) && !importTransactionActive()) void capture(true);
   };
   root?.addEventListener('click', onTopbarAction, { capture: true });
 
-  // Produce a cover for newly created projects even before the first edit.
+  // Produce a cover for newly created projects once no authoritative import is
+  // in flight. If the first import starts immediately, the capture is deferred.
   schedule(1800);
 
   return () => {
     disposed = true;
     window.clearTimeout(timer);
     session.document.removeEventListener('change', onDocumentChange);
+    document.removeEventListener('kyxos:studio-import-step', onImportStep);
     root?.removeEventListener('click', onTopbarAction, { capture: true });
     if (document.documentElement.dataset.kxActiveProjectId === session.projectId) {
       delete document.documentElement.dataset.kxActiveProjectId;
