@@ -10,6 +10,7 @@ import './capabilityApi';
 import './environmentApi';
 import './editorTransformControls';
 import './editorViewportHelpers';
+import './editorLightVisualization';
 import './editorViewportNavigation';
 import './editorRenderModes';
 
