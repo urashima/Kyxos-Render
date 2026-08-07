@@ -64,11 +64,6 @@ test('Studio groups topbar actions and generates reusable project and asset thum
   await expect(page.locator('html')).toHaveAttribute('data-import-core-complete', 'true', { timeout: 90_000 });
   await expect(page.locator('html')).toHaveAttribute('data-import-complete-message', /Import complete/);
 
-  await expect.poll(() => page.evaluate(() => {
-    const scene = (globalThis as any).kyxosStudio?.api?.getScene();
-    const asset = Object.values(scene?.assets ?? {}).find((entry: any) => entry.kind === 'model') as any;
-    return asset?.metadata?.thumbnailRenderer;
-  }), { timeout: 60_000 }).toBe('asset-thumbnail-v2');
   const modelAssetId = await page.evaluate(() => {
     const scene = (globalThis as any).kyxosStudio?.api?.getScene();
     return (Object.values(scene?.assets ?? {}).find((entry: any) => entry.kind === 'model') as any)?.id as string;
@@ -77,10 +72,21 @@ test('Studio groups topbar actions and generates reusable project and asset thum
 
   const assetCard = page.locator(`.asset-workspace-item[data-asset-id="${modelAssetId}"]`);
   await expect(assetCard).toBeVisible();
-  await expect(assetCard).toHaveClass(/has-generated-thumbnail/);
+  await expect(assetCard).toHaveClass(/has-generated-thumbnail/, { timeout: 60_000 });
+  await expect(assetCard).toHaveAttribute('data-thumbnail-renderer', 'asset-thumbnail-v3');
+  const sourceHash = await page.evaluate((assetId) => {
+    const asset = (globalThis as any).kyxosStudio?.api?.getScene()?.assets?.[assetId];
+    return asset?.contentHash as string;
+  }, modelAssetId);
+  await expect(assetCard).toHaveAttribute('data-thumbnail-source-hash', sourceHash);
   await expect(assetCard.locator('.kx-asset-kind-badge')).toHaveText('3D');
-  const assetImage = assetCard.locator('img.asset-thumbnail');
-  if (await assetImage.count()) await expect(assetImage).toHaveAttribute('src', /^data:image\/webp/);
+  await expect(assetCard.locator('img.asset-thumbnail')).toHaveAttribute('src', /^data:image\/webp/);
+
+  // Derived binary previews belong to the thumbnail cache, not the Scene Contract.
+  await expect.poll(() => page.evaluate((assetId) => {
+    const asset = (globalThis as any).kyxosStudio?.api?.getScene()?.assets?.[assetId];
+    return Boolean(asset?.metadata?.thumbnailDataUrl);
+  }, modelAssetId), { timeout: 30_000 }).toBe(false);
 
   await expect.poll(
     () => page.locator('html').getAttribute('data-project-thumbnail-state'),
