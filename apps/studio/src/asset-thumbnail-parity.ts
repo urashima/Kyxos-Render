@@ -10,7 +10,7 @@ import {
 } from '@kyxos/scene-contract';
 import { BrowserKyxosViewportAdapter } from '@kyxos/viewer-adapter';
 
-const RENDERER_VERSION = 'asset-thumbnail-v4';
+const RENDERER_VERSION = 'asset-thumbnail-v5';
 const WIDTH = 256;
 const HEIGHT = 144;
 const CACHE_DB = 'kyxos-studio-thumbnail-cache';
@@ -38,6 +38,11 @@ interface CachedThumbnail {
 const memoryCache = new Map<string, CachedThumbnail>();
 const cacheReads = new Map<string, Promise<CachedThumbnail | null>>();
 
+function importTransactionActive(): boolean {
+  const dataset = document.documentElement.dataset;
+  return dataset.importWorkerBoundary === 'running' && dataset.importCoreComplete !== 'true';
+}
+
 async function ensureCloudSession(): Promise<boolean> {
   if (backendConfig.provider !== 'supabase') return true;
   return Boolean(await assetClient.auth.getSession());
@@ -46,9 +51,7 @@ async function ensureCloudSession(): Promise<boolean> {
 function thumbnailEligibility(asset: SceneAsset): ThumbnailEligibility {
   if (asset.kind === 'model' || asset.kind === 'environment') return 'renderable';
   if (asset.kind !== 'texture') return 'nonvisual';
-  if (asset.metadata?.embedded === true || typeof asset.metadata?.embeddedInAssetId === 'string') {
-    return 'embedded';
-  }
+  if (asset.metadata?.embedded === true || typeof asset.metadata?.embeddedInAssetId === 'string') return 'embedded';
   return RASTER_IMAGE_MIME.test(asset.mimeType ?? '') ? 'renderable' : 'unsupported';
 }
 
@@ -78,10 +81,9 @@ function openCacheDb(): Promise<IDBDatabase> {
 async function readCachedThumbnail(asset: SceneAsset): Promise<CachedThumbnail | null> {
   const hot = memoryCache.get(asset.id);
   if (thumbnailMatches(asset, hot)) return hot;
-  const existingRead = cacheReads.get(asset.id);
-  if (existingRead) return existingRead;
-
-  const promise = (async () => {
+  const existing = cacheReads.get(asset.id);
+  if (existing) return existing;
+  const read = (async () => {
     const db = await openCacheDb();
     try {
       const value = await new Promise<CachedThumbnail | null>((resolve, reject) => {
@@ -89,18 +91,16 @@ async function readCachedThumbnail(asset: SceneAsset): Promise<CachedThumbnail |
         request.onsuccess = () => resolve((request.result as CachedThumbnail | undefined) ?? null);
         request.onerror = () => reject(request.error);
       });
-      if (thumbnailMatches(asset, value)) {
-        memoryCache.set(asset.id, value);
-        return value;
-      }
-      return null;
+      if (!thumbnailMatches(asset, value)) return null;
+      memoryCache.set(asset.id, value);
+      return value;
     } finally {
       db.close();
       cacheReads.delete(asset.id);
     }
   })();
-  cacheReads.set(asset.id, promise);
-  return promise;
+  cacheReads.set(asset.id, read);
+  return read;
 }
 
 async function writeCachedThumbnail(asset: SceneAsset, dataUrl: string): Promise<CachedThumbnail> {
@@ -179,13 +179,11 @@ function collectAssetNodes(nodes: SceneNode[], assetId: string): { keep: Set<str
   const focusNodes = nodes.filter((node) => node.meshAssetId === assetId);
   const focus = focusNodes.map((node) => node.id);
   const keep = new Set<string>();
-
   for (const node of focusNodes) {
     addAncestors(byId, keep, node.id);
     for (const jointId of node.skin?.joints ?? []) addAncestors(byId, keep, jointId);
     if (node.skin?.skeletonNodeId) addAncestors(byId, keep, node.skin.skeletonNodeId);
   }
-
   return { keep, focus };
 }
 
@@ -193,8 +191,6 @@ function thumbnailNode(node: SceneNode, keep: Set<string>): SceneNode {
   const clone = structuredClone(node);
   clone.parentId = clone.parentId && keep.has(clone.parentId) ? clone.parentId : null;
   clone.children = clone.children.filter((childId) => keep.has(childId));
-  // Asset thumbnails represent the imported file itself, not current scene
-  // material overrides, authored cameras/lights or animation playback state.
   delete clone.materialSlots;
   delete clone.materialVariantBindings;
   delete clone.cameraId;
@@ -208,12 +204,9 @@ function isolatedModelScene(source: KyxosSceneContract, assetId: string): { scen
   if (!asset) return null;
   const { keep, focus } = collectAssetNodes(source.nodes, assetId);
   if (!focus.length) return null;
-
   const scene = createEmptySceneContract(`Thumbnail · ${asset.name ?? 'Model'}`);
   scene.assets = { [assetId]: structuredClone(asset) };
-  scene.nodes = source.nodes
-    .filter((node) => keep.has(node.id))
-    .map((node) => thumbnailNode(node, keep));
+  scene.nodes = source.nodes.filter((node) => keep.has(node.id)).map((node) => thumbnailNode(node, keep));
   scene.materials = {};
   scene.animations = [];
   scene.materialVariants = [];
@@ -305,20 +298,20 @@ async function renderWithViewer(scene: KyxosSceneContract, focus: string[] = [])
 
 async function generateThumbnail(scene: KyxosSceneContract, asset: SceneAsset): Promise<string | null> {
   if (asset.kind === 'texture') {
-    const existingManifest = await assetClient.assets.getManifest([asset.id]);
-    const sourceUrl = existingManifest.assets[asset.uri];
+    const manifest = await assetClient.assets.getManifest([asset.id]);
+    const sourceUrl = manifest.assets[asset.uri];
     if (!sourceUrl) throw new Error(`Texture thumbnail source is unavailable for ${asset.id}.`);
     const response = await fetch(sourceUrl);
     if (!response.ok) throw new Error(`Texture thumbnail download failed (${response.status}).`);
-    return await rasterize(await response.blob(), true);
+    return rasterize(await response.blob(), true);
   }
   if (asset.kind === 'model') {
     const isolated = isolatedModelScene(scene, asset.id);
-    return isolated ? await renderWithViewer(isolated.scene, isolated.focus) : null;
+    return isolated ? renderWithViewer(isolated.scene, isolated.focus) : null;
   }
   if (asset.kind === 'environment') {
     const isolated = isolatedEnvironmentScene(scene, asset.id);
-    return isolated ? await renderWithViewer(isolated) : null;
+    return isolated ? renderWithViewer(isolated) : null;
   }
   return null;
 }
@@ -340,49 +333,13 @@ function mountCachedThumbnail(card: HTMLElement, asset: SceneAsset, cached: Cach
   else card.prepend(image);
 }
 
-function decorateCards(session: ProjectSession): void {
-  const scene = session.document.value;
-  document.querySelectorAll<HTMLElement>('.asset-workspace-item[data-asset-id]').forEach((card) => {
-    const assetId = card.dataset.assetId;
-    const asset = assetId ? scene.assets[assetId] : undefined;
-    if (!asset) return;
-    const eligibility = thumbnailEligibility(asset);
-    card.dataset.thumbnailKind = asset.kind;
-    card.dataset.thumbnailEligibility = eligibility;
-    let badge = card.querySelector<HTMLElement>('.kx-asset-kind-badge');
-    if (!badge) {
-      badge = document.createElement('span');
-      badge.className = 'kx-asset-kind-badge';
-      card.prepend(badge);
-    }
-    badge.textContent = asset.kind === 'environment' ? 'HDR' : asset.kind === 'texture' ? 'TEX' : asset.kind === 'model' ? '3D' : asset.kind.slice(0, 3).toUpperCase();
-
-    if (eligibility !== 'renderable') {
-      card.classList.remove('has-generated-thumbnail');
-      delete card.dataset.thumbnailRenderer;
-      delete card.dataset.thumbnailSourceHash;
-      return;
-    }
-
-    const hot = memoryCache.get(asset.id);
-    if (thumbnailMatches(asset, hot)) {
-      mountCachedThumbnail(card, asset, hot);
-      return;
-    }
-    card.classList.remove('has-generated-thumbnail');
-    delete card.dataset.thumbnailRenderer;
-    delete card.dataset.thumbnailSourceHash;
-    void readCachedThumbnail(asset).then((cached) => {
-      if (!cached || !card.isConnected) return;
-      const currentAsset = session.document.value.assets[asset.id];
-      if (currentAsset && thumbnailEligibility(currentAsset) === 'renderable') {
-        mountCachedThumbnail(card, currentAsset, cached);
-      }
-    }).catch((error) => console.warn('[Kyxos] Asset thumbnail cache read failed.', error));
-  });
+function clearLegacyCardPreview(card: HTMLElement): void {
+  const current = card.querySelector<HTMLElement>(':scope > .asset-thumbnail');
+  if (current instanceof HTMLImageElement && current.src.startsWith('data:image/')) current.remove();
 }
 
 function stripLegacyThumbnailMetadata(session: ProjectSession): void {
+  if (importTransactionActive()) return;
   const fresh = session.document.value;
   let changed = false;
   for (const asset of Object.values(fresh.assets)) {
@@ -414,62 +371,176 @@ BrowserKyxosViewportAdapter.prototype.bindSession = function bindSessionWithAsse
   session: ProjectSession,
 ): () => void {
   const disposeOriginal = originalBindSession.call(this, session);
+  const visibleAssetIds = new Set<string>();
+  const queuedAssetIds = new Set<string>();
+  const observedCards = new WeakSet<HTMLElement>();
   let disposed = false;
-  let timer = 0;
-  let running = false;
+  let processing = false;
+  let processTimer = 0;
+  let cleanupTimer = 0;
 
-  const scan = async () => {
-    if (disposed || running) return;
-    running = true;
+  const scheduleProcess = (delayMs = 40) => {
+    if (disposed) return;
+    window.clearTimeout(processTimer);
+    processTimer = window.setTimeout(() => void processQueue(), delayMs);
+  };
+
+  const intersectionObserver = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      const card = entry.target as HTMLElement;
+      const assetId = card.dataset.assetId;
+      if (!assetId) continue;
+      if (entry.isIntersecting) {
+        visibleAssetIds.add(assetId);
+        queuedAssetIds.add(assetId);
+      } else {
+        visibleAssetIds.delete(assetId);
+      }
+    }
+    scheduleProcess();
+  }, {
+    root: null,
+    rootMargin: '180px',
+    threshold: 0.01,
+  });
+
+  const decorateCards = () => {
+    const scene = session.document.value;
+    document.querySelectorAll<HTMLElement>('.asset-workspace-item[data-asset-id]').forEach((card) => {
+      const assetId = card.dataset.assetId;
+      const asset = assetId ? scene.assets[assetId] : undefined;
+      if (!asset) return;
+      const eligibility = thumbnailEligibility(asset);
+      card.dataset.thumbnailKind = asset.kind;
+      card.dataset.thumbnailEligibility = eligibility;
+      let badge = card.querySelector<HTMLElement>('.kx-asset-kind-badge');
+      if (!badge) {
+        badge = document.createElement('span');
+        badge.className = 'kx-asset-kind-badge';
+        card.prepend(badge);
+      }
+      badge.textContent = asset.kind === 'environment'
+        ? 'HDR'
+        : asset.kind === 'texture'
+          ? 'TEX'
+          : asset.kind === 'model'
+            ? '3D'
+            : asset.kind.slice(0, 3).toUpperCase();
+
+      if (eligibility !== 'renderable') {
+        card.classList.remove('has-generated-thumbnail');
+        delete card.dataset.thumbnailRenderer;
+        delete card.dataset.thumbnailSourceHash;
+        return;
+      }
+
+      if (!observedCards.has(card)) {
+        observedCards.add(card);
+        intersectionObserver.observe(card);
+      }
+
+      const hot = memoryCache.get(asset.id);
+      if (thumbnailMatches(asset, hot)) {
+        mountCachedThumbnail(card, asset, hot);
+        return;
+      }
+      card.classList.remove('has-generated-thumbnail');
+      delete card.dataset.thumbnailRenderer;
+      delete card.dataset.thumbnailSourceHash;
+      clearLegacyCardPreview(card);
+      void readCachedThumbnail(asset).then((cached) => {
+        if (!cached || !card.isConnected) return;
+        const currentAsset = session.document.value.assets[asset.id];
+        if (currentAsset) mountCachedThumbnail(card, currentAsset, cached);
+      }).catch((error) => console.warn('[Kyxos] Asset thumbnail cache read failed.', error));
+    });
+  };
+
+  const scheduleCleanup = () => {
+    if (disposed || importTransactionActive()) return;
+    window.clearTimeout(cleanupTimer);
+    cleanupTimer = window.setTimeout(() => {
+      if (!disposed && !importTransactionActive()) stripLegacyThumbnailMetadata(session);
+    }, 900);
+  };
+
+  async function processQueue(): Promise<void> {
+    if (disposed || processing) return;
+    if (importTransactionActive()) {
+      document.documentElement.dataset.assetThumbnailState = 'deferred-import';
+      scheduleProcess(700);
+      return;
+    }
+    processing = true;
     try {
-      decorateCards(session);
-      stripLegacyThumbnailMetadata(session);
       if (!(await ensureCloudSession())) {
         document.documentElement.dataset.assetThumbnailState = 'auth-required';
         return;
       }
-      const snapshot = session.document.value;
-      const candidates = Object.values(snapshot.assets).filter((asset) =>
-        thumbnailEligibility(asset) === 'renderable',
-      );
-      for (const asset of candidates) {
-        if (disposed) break;
-        try {
-          const cached = await readCachedThumbnail(asset);
-          if (cached) continue;
-          document.documentElement.dataset.assetThumbnailState = `rendering:${asset.id}`;
-          const thumbnailDataUrl = await generateThumbnail(snapshot, asset);
-          if (!thumbnailDataUrl) continue;
-          const current = session.document.value.assets[asset.id];
-          if (!current || current.contentHash !== asset.contentHash || thumbnailEligibility(current) !== 'renderable') continue;
-          const record = await writeCachedThumbnail(current, thumbnailDataUrl);
-          document.querySelectorAll<HTMLElement>(`.asset-workspace-item[data-asset-id="${CSS.escape(current.id)}"]`)
-            .forEach((card) => mountCachedThumbnail(card, current, record));
-        } catch (error) {
-          console.warn(`[Kyxos] Asset thumbnail generation failed for ${asset.name ?? asset.id}.`, error);
-        }
+      decorateCards();
+      const scene = session.document.value;
+      const nextId = [...queuedAssetIds].find((assetId) => visibleAssetIds.has(assetId));
+      if (!nextId) {
+        document.documentElement.dataset.assetThumbnailState = 'idle';
+        scheduleCleanup();
+        return;
       }
-      document.documentElement.dataset.assetThumbnailState = 'idle';
+      queuedAssetIds.delete(nextId);
+      const asset = scene.assets[nextId];
+      if (!asset || thumbnailEligibility(asset) !== 'renderable') return;
+      const cached = await readCachedThumbnail(asset);
+      if (cached) {
+        document.querySelectorAll<HTMLElement>(`.asset-workspace-item[data-asset-id="${CSS.escape(asset.id)}"]`)
+          .forEach((card) => mountCachedThumbnail(card, asset, cached));
+        return;
+      }
+      document.documentElement.dataset.assetThumbnailState = `rendering:${asset.id}`;
+      const dataUrl = await generateThumbnail(scene, asset);
+      if (!dataUrl || disposed || importTransactionActive()) return;
+      const current = session.document.value.assets[asset.id];
+      if (!current || current.contentHash !== asset.contentHash) return;
+      const record = await writeCachedThumbnail(current, dataUrl);
+      document.querySelectorAll<HTMLElement>(`.asset-workspace-item[data-asset-id="${CSS.escape(current.id)}"]`)
+        .forEach((card) => mountCachedThumbnail(card, current, record));
+    } catch (error) {
+      console.warn('[Kyxos] Visible asset thumbnail generation failed.', error);
     } finally {
-      running = false;
+      processing = false;
+      if (!disposed && [...queuedAssetIds].some((assetId) => visibleAssetIds.has(assetId))) scheduleProcess(60);
+      else if (!disposed && !importTransactionActive()) {
+        document.documentElement.dataset.assetThumbnailState = 'idle';
+        scheduleCleanup();
+      }
+    }
+  }
+
+  const onDocumentChange = () => {
+    decorateCards();
+    if (!importTransactionActive()) scheduleProcess(120);
+  };
+  const onImportStep = () => {
+    decorateCards();
+    if (!importTransactionActive()) {
+      for (const id of visibleAssetIds) queuedAssetIds.add(id);
+      scheduleProcess(80);
+      scheduleCleanup();
     }
   };
-
-  const schedule = () => {
-    window.clearTimeout(timer);
-    timer = window.setTimeout(() => void scan(), 1100);
-  };
-  const onChange = () => schedule();
-  session.document.addEventListener('change', onChange);
-  const domObserver = new MutationObserver(() => decorateCards(session));
+  session.document.addEventListener('change', onDocumentChange);
+  document.addEventListener('kyxos:studio-import-step', onImportStep);
+  const domObserver = new MutationObserver(() => decorateCards());
   domObserver.observe(document.documentElement, { childList: true, subtree: true });
-  schedule();
+  decorateCards();
+  if (!importTransactionActive()) scheduleProcess(250);
 
   return () => {
     disposed = true;
-    window.clearTimeout(timer);
+    window.clearTimeout(processTimer);
+    window.clearTimeout(cleanupTimer);
+    intersectionObserver.disconnect();
     domObserver.disconnect();
-    session.document.removeEventListener('change', onChange);
+    session.document.removeEventListener('change', onDocumentChange);
+    document.removeEventListener('kyxos:studio-import-step', onImportStep);
     disposeOriginal();
   };
 };
