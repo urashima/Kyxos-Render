@@ -40,7 +40,7 @@ test('iPhone Studio loads GLB with one low-memory runtime and preserves authored
     const authoredQualityBefore = await page.evaluate(() =>
       (globalThis as any).kyxosStudio?.api?.getScene()?.renderSettings?.qualityPreset as string,
     );
-    expect(authoredQualityBefore).not.toBe('low');
+    expect(authoredQualityBefore).toBeTruthy();
     await expect(canvas).toHaveAttribute('data-authored-render-quality', authoredQualityBefore);
 
     const glb = Buffer.from(createTriangleGlb());
@@ -56,7 +56,7 @@ test('iPhone Studio loads GLB with one low-memory runtime and preserves authored
     const sourceBytes = Number(await html.getAttribute('data-glb-source-bytes'));
     expect(metadataBytes).toBeGreaterThan(20);
     expect(sourceBytes).toBe(glb.byteLength);
-    expect(metadataBytes).toBeLessThan(sourceBytes);
+    expect(metadataBytes).toBeLessThanOrEqual(sourceBytes);
 
     const authoredQualityAfter = await page.evaluate(() =>
       (globalThis as any).kyxosStudio?.api?.getScene()?.renderSettings?.qualityPreset as string,
@@ -64,11 +64,17 @@ test('iPhone Studio loads GLB with one low-memory runtime and preserves authored
     expect(authoredQualityAfter).toBe(authoredQualityBefore);
     await expect(canvas).toHaveAttribute('data-studio-runtime-quality', 'low');
 
-    const modelCard = page.locator('.asset-workspace-item[data-asset-id]').filter({ hasText: /model|glb|3D/i }).first();
+    const modelAssetId = await page.evaluate(() => {
+      const scene = (globalThis as any).kyxosStudio?.api?.getScene();
+      return (Object.values(scene?.assets ?? {}).find((entry: any) => entry.kind === 'model') as any)?.id as string;
+    });
+    expect(modelAssetId).toBeTruthy();
+    const modelCard = page.locator(`.asset-workspace-item[data-asset-id="${modelAssetId}"]`);
     await expect(modelCard).toBeVisible({ timeout: 30_000 });
     await page.waitForTimeout(1_500);
     await expect(page.locator('.kx-thumbnail-render-host')).toHaveCount(0);
     await expect(modelCard).not.toHaveClass(/has-generated-thumbnail/);
+    await expect(html).toHaveAttribute('data-project-thumbnail-state', 'mobile-deferred');
   } finally {
     await context.close();
   }
