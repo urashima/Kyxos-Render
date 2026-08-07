@@ -3,6 +3,7 @@ import './sceneComponentHierarchy';
 import './cameraFrustumRuntimeParity';
 import './mobileStudioBeautyPipeline';
 import './gltfNativeLoad';
+import './mobileStudioFrameBudget';
 import './embeddedGltfTextureApi';
 import './materialEditApi';
 import './materialCompleteApi';
