@@ -46,6 +46,16 @@ interface NavigationBinding {
   onKeyDown: (event: KeyboardEvent) => void;
 }
 
+const VIEW_OPTIONS: ReadonlyArray<readonly [string, EditorViewPreset]> = [
+  ['Perspective', 'perspective'],
+  ['Front', 'front'],
+  ['Back', 'back'],
+  ['Top', 'top'],
+  ['Bottom', 'bottom'],
+  ['Left', 'left'],
+  ['Right', 'right'],
+];
+
 let binding: NavigationBinding | null = null;
 
 function studioApi(): StudioApiLike | null {
@@ -96,6 +106,38 @@ function writeBookmarks(
     path: '/editorState',
     value: editorState,
   }]);
+}
+
+function sceneCameraValue(cameraId: string): string {
+  return `scene:${cameraId}`;
+}
+
+function refreshViewSelect(select: HTMLSelectElement, canvas: HTMLCanvasElement): void {
+  const scene = studioApi()?.getScene();
+  const requested = canvas.dataset.editorSceneCameraView
+    ? sceneCameraValue(canvas.dataset.editorSceneCameraView)
+    : canvas.dataset.editorView && canvas.dataset.editorView !== 'bookmark'
+      ? canvas.dataset.editorView
+      : select.value || 'perspective';
+
+  select.replaceChildren();
+  const editorGroup = document.createElement('optgroup');
+  editorGroup.label = 'Editor Cameras';
+  for (const [label, value] of VIEW_OPTIONS) editorGroup.append(new Option(label, value));
+  select.append(editorGroup);
+
+  if (scene?.cameras.length) {
+    const sceneGroup = document.createElement('optgroup');
+    sceneGroup.label = 'Scene Cameras';
+    for (const camera of scene.cameras) {
+      const active = camera.id === scene.activeCameraId ? ' · Active' : '';
+      sceneGroup.append(new Option(`${camera.name}${active}`, sceneCameraValue(camera.id)));
+    }
+    select.append(sceneGroup);
+  }
+
+  const values = new Set(Array.from(select.options, (option) => option.value));
+  select.value = values.has(requested) ? requested : 'perspective';
 }
 
 function requestCameraState(
@@ -240,22 +282,17 @@ function attach(canvas: HTMLCanvasElement, topbar: HTMLElement): void {
 
   const select = document.createElement('select');
   select.setAttribute('aria-label', 'Viewport view');
-  for (const [label, value] of [
-    ['Perspective', 'perspective'],
-    ['Front', 'front'],
-    ['Back', 'back'],
-    ['Top', 'top'],
-    ['Bottom', 'bottom'],
-    ['Left', 'left'],
-    ['Right', 'right'],
-  ] as const) {
-    select.append(new Option(label, value));
-  }
-  const initialView = canvas.dataset.editorView;
-  select.value = initialView && initialView !== 'bookmark' ? initialView : 'perspective';
+  select.title = 'Editor cameras and authored Scene Cameras';
+  refreshViewSelect(select, canvas);
+  select.addEventListener('pointerdown', () => refreshViewSelect(select, canvas));
+  select.addEventListener('focus', () => refreshViewSelect(select, canvas));
   select.addEventListener('change', () => {
-    const preset = select.value as EditorViewPreset;
-    dispatch(canvas, { command: 'view', preset });
+    const value = select.value;
+    if (value.startsWith('scene:')) {
+      dispatch(canvas, { command: 'scene-camera', cameraId: value.slice('scene:'.length) });
+      return;
+    }
+    dispatch(canvas, { command: 'view', preset: value as EditorViewPreset });
   });
 
   const frameAll = document.createElement('button');
@@ -314,6 +351,7 @@ function attach(canvas: HTMLCanvasElement, topbar: HTMLElement): void {
     const preset = viewFromKeyboard(event);
     if (!preset) return;
     event.preventDefault();
+    refreshViewSelect(select, canvas);
     select.value = preset;
     dispatch(canvas, { command: 'view', preset });
   };

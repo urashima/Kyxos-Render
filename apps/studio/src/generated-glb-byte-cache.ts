@@ -1,24 +1,28 @@
-import { registerLocalBlobBytes } from './local-blob-byte-registry';
+import './blob-constructor-byte-registry';
+import { registeredLocalBlobBytes } from './local-blob-byte-registry';
 
 const installed = Symbol.for('kyxos.generatedGlbByteCache.installed');
-const cachedReads = new WeakMap<File, Promise<ArrayBuffer>>();
 
 type CacheGlobal = typeof globalThis & { [installed]?: boolean };
 const runtime = globalThis as CacheGlobal;
 
 if (!runtime[installed]) {
   const previousArrayBuffer = File.prototype.arrayBuffer;
-  File.prototype.arrayBuffer = function cachedGeneratedFileArrayBuffer(): Promise<ArrayBuffer> {
-    let pending = cachedReads.get(this);
-    if (!pending) {
-      pending = previousArrayBuffer.call(this).then((buffer) => {
-        registerLocalBlobBytes(this, new Uint8Array(buffer));
-        return buffer;
-      });
-      cachedReads.set(this, pending);
-      pending.catch(() => cachedReads.delete(this));
+  File.prototype.arrayBuffer = function generatedFileArrayBuffer(): Promise<ArrayBuffer> {
+    const registered = registeredLocalBlobBytes(this);
+    if (!registered) {
+      // A user-picked File is not a generated asset. Never retain or clone its
+      // entire payload here; large GLBs must remain eligible for collection
+      // between hashing, persistence and GLTFLoader parsing on iOS.
+      return previousArrayBuffer.call(this);
     }
-    return pending.then((buffer) => buffer.slice(0));
+    const bytes = registered;
+    if (bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength) {
+      return Promise.resolve(bytes.buffer as ArrayBuffer);
+    }
+    return Promise.resolve(
+      bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer,
+    );
   };
   runtime[installed] = true;
 }

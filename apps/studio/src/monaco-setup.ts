@@ -3,6 +3,7 @@ import CssWorker from 'monaco-editor/esm/vs/language/css/css.worker?worker';
 import HtmlWorker from 'monaco-editor/esm/vs/language/html/html.worker?worker';
 import JsonWorker from 'monaco-editor/esm/vs/language/json/json.worker?worker';
 import TypeScriptWorker from 'monaco-editor/esm/vs/language/typescript/ts.worker?worker';
+import 'monaco-editor/esm/vs/language/typescript/monaco.contribution';
 
 (globalThis as typeof globalThis & { MonacoEnvironment?: unknown }).MonacoEnvironment = {
   getWorker(_moduleId: string, label: string): Worker {

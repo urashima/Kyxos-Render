@@ -28,6 +28,13 @@ export interface ImportStepLifecycleDetail {
   error?: string;
 }
 
+interface ImportRenderLifecycleDetail {
+  id: string;
+  stage: ImportTaskStage | 'core-complete';
+  state: ImportStepLifecycleDetail['state'];
+  progress: number;
+}
+
 interface ImportCompletionReport {
   warnings?: unknown[];
   nodes?: unknown[];
@@ -37,6 +44,42 @@ interface ImportCompletionReport {
 
 interface ImportCompletionState {
   report?: ImportCompletionReport | null;
+}
+
+const DURABILITY_SLOW_MS = 15_000;
+const MOBILE_MEMORY_YIELD_STEPS = new Set([
+  'hash-source',
+  'upload-source',
+  'register-source',
+  'parse-source',
+]);
+
+function isConstrainedMobileImport(): boolean {
+  if (typeof navigator === 'undefined' || typeof window === 'undefined') return false;
+  const ipadDesktopMode = navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1;
+  const ios = /iPhone|iPad|iPod/i.test(navigator.userAgent) || ipadDesktopMode;
+  const coarse = window.matchMedia?.('(pointer: coarse)').matches === true;
+  const narrow = Math.min(
+    window.screen.width || window.innerWidth,
+    window.screen.height || window.innerHeight,
+  ) <= 1024;
+  return ios || (coarse && narrow && /Android|Mobile/i.test(navigator.userAgent));
+}
+
+async function yieldMobileImportMemory(stepId: string): Promise<void> {
+  if (!isConstrainedMobileImport() || !MOBILE_MEMORY_YIELD_STEPS.has(stepId)) return;
+  if (typeof document !== 'undefined') {
+    const previous = Number(document.documentElement.dataset.mobileImportMemoryYields ?? '0');
+    document.documentElement.dataset.mobileImportMemoryYields = String(previous + 1);
+    document.documentElement.dataset.mobileImportYieldAfter = stepId;
+  }
+  // A task boundary after full-file hashing / upload / parser work lets WebKit
+  // release no-longer-referenced ArrayBuffers before the next heavyweight stage.
+  // Do not yield after Viewer activation: once the render loop owns the freshly
+  // uploaded scene, iOS/WebKit can indefinitely defer a zero-delay timer under
+  // GPU pressure. Core completion must be committed synchronously after the
+  // successful activation instead.
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
 }
 
 export function throwIfImportAborted(signal: AbortSignal): void {
@@ -57,6 +100,39 @@ function deferredDispatch<T>(name: string, detail: T): void {
   else window.setTimeout(dispatch, 0);
 }
 
+function dispatchRenderLifecycle(detail: ImportStepLifecycleDetail): void {
+  if (typeof document === 'undefined') return;
+
+  let stage: ImportTaskStage | 'core-complete' | null = null;
+  if (detail.state === 'failed') {
+    stage = detail.aborted ? 'cancelled' : 'failed';
+  } else if (detail.stage === 'core-complete') {
+    stage = 'core-complete';
+  } else if (detail.state === 'start') {
+    stage = detail.stage;
+  }
+  if (!stage) return;
+
+  // EditorSceneMode intentionally consumes this event synchronously. Pausing
+  // rendering after hashing/decoding has already started is too late on iOS:
+  // the WebContent process may be holding full GLB bytes, decoded textures and
+  // active GPU targets at the same time. Do not route this through the deferred
+  // UI event queue; heavy work starts only after the render lifecycle listener
+  // has had a chance to suspend the Studio pipeline.
+  document.dispatchEvent(new CustomEvent<ImportRenderLifecycleDetail>(
+    'kyxos:studio-import-lifecycle',
+    {
+      detail: {
+        id: detail.id,
+        stage,
+        state: detail.state,
+        progress: detail.progress,
+      },
+    },
+  ));
+  document.documentElement.dataset.importRenderLifecycle = stage;
+}
+
 function reportImportStep(detail: ImportStepLifecycleDetail): void {
   const suffix = detail.error ? ` · ${detail.error}` : '';
   console.info(
@@ -68,6 +144,9 @@ function reportImportStep(detail: ImportStepLifecycleDetail): void {
   document.documentElement.dataset.importStepStage = detail.stage;
   document.documentElement.dataset.importStepProgress = String(detail.progress);
   document.documentElement.dataset.importStepAborted = String(detail.aborted);
+  dispatchRenderLifecycle(detail);
+  // Detailed UI/diagnostic consumers remain deferred so they cannot extend the
+  // critical import path. Only the render-pause lifecycle above is synchronous.
   deferredDispatch('kyxos:studio-import-step', detail);
 }
 
@@ -100,6 +179,9 @@ function clearCoreImportCompletion(): void {
   delete document.documentElement.dataset.importCoreComplete;
   delete document.documentElement.dataset.importCompleteMessage;
   delete document.documentElement.dataset.importCompletedAt;
+  delete document.documentElement.dataset.importDurabilityState;
+  delete document.documentElement.dataset.importDurabilityError;
+  delete document.documentElement.dataset.importDurabilitySchedule;
 }
 
 function commitCoreImportCompletion(state: unknown): void {
@@ -116,6 +198,88 @@ function commitCoreImportCompletion(state: unknown): void {
   }
 }
 
+function runPostprocess(options: ImportPostprocessOptions): void {
+  Promise.resolve()
+    .then(() => options.run())
+    .catch((error) => options.onWarning(options.label, error));
+}
+
+function scheduleDurability<TState>(
+  step: ImportJobStep<TState>,
+  state: TState,
+  signal: AbortSignal,
+  progress: number,
+): void {
+  if (typeof document !== 'undefined') {
+    document.documentElement.dataset.importDurabilityState = 'pending';
+  }
+  const options: ImportPostprocessOptions = {
+    label: step.id,
+    async run() {
+      let slowTimer: ReturnType<typeof setTimeout> | null = null;
+      try {
+        slowTimer = setTimeout(() => {
+          if (typeof document !== 'undefined') {
+            document.documentElement.dataset.importDurabilityState = 'slow';
+          }
+          console.warn(
+            `[studio-import] ${step.id} is still saving after ${DURABILITY_SLOW_MS} ms; ` +
+            'the editable scene remains available while durability finishes.',
+          );
+        }, DURABILITY_SLOW_MS);
+        await step.run(state, signal);
+        throwIfImportAborted(signal);
+        if (typeof document !== 'undefined') {
+          document.documentElement.dataset.importDurabilityState = 'saved';
+          delete document.documentElement.dataset.importDurabilityError;
+        }
+        reportImportStep({
+          id: step.id,
+          stage: step.stage,
+          state: 'complete',
+          progress,
+          aborted: signal.aborted,
+        });
+      } finally {
+        if (slowTimer != null) clearTimeout(slowTimer);
+      }
+    },
+    onWarning(label, error) {
+      if (typeof document !== 'undefined') {
+        document.documentElement.dataset.importDurabilityState = 'error';
+        document.documentElement.dataset.importDurabilityError = errorMessage(error);
+      }
+      reportImportStep({
+        id: label,
+        stage: step.stage,
+        state: 'failed',
+        progress,
+        aborted: signal.aborted,
+        error: errorMessage(error),
+      });
+      reportPostprocessFailure(label, error);
+    },
+  };
+
+  if (isConstrainedMobileImport() && typeof queueMicrotask === 'function') {
+    // Core Complete synchronously tells EditorSceneMode to resume after its short
+    // stabilization delay. Use that still-suspended window to persist the draft
+    // before the 30fps mobile render loop restarts. WebKit can postpone nested
+    // rAF/timer callbacks for a long time immediately after GPU texture upload;
+    // a microtask is deterministic and does not add another whole-frame wait.
+    if (typeof document !== 'undefined') {
+      document.documentElement.dataset.importDurabilitySchedule = 'microtask';
+    }
+    queueMicrotask(() => runPostprocess(options));
+    return;
+  }
+
+  if (typeof document !== 'undefined') {
+    document.documentElement.dataset.importDurabilitySchedule = 'after-paint';
+  }
+  scheduleImportPostprocess(options);
+}
+
 export async function runImportJob<TState>(
   context: ImportTaskContext,
   state: TState,
@@ -128,7 +292,12 @@ export async function runImportJob<TState>(
   for (const step of steps) {
     throwIfImportAborted(context.signal);
     const progress = Math.max(lastProgress, Math.min(0.99, step.progress));
-    const postprocess = step.completion === 'postprocess';
+    // Persist/recovery verification is durability, not scene activation. Never
+    // make the editor's “Import complete” state depend on IndexedDB, cloud
+    // revision verification or Blob recovery. Those are allowed to finish after
+    // the model is already editable on every platform, not only on iOS.
+    const durability = step.id === 'persist-import';
+    const postprocess = step.completion === 'postprocess' || durability;
     reportImportStep({
       id: step.id,
       stage: step.stage,
@@ -142,30 +311,36 @@ export async function runImportJob<TState>(
       lastProgress = progress;
 
       if (postprocess) {
-        pendingPostprocess.push(() => scheduleImportPostprocess({
-          label: step.id,
-          run: async () => {
-            await step.run(state, context.signal);
-            reportImportStep({
-              id: step.id,
-              stage: step.stage,
-              state: 'complete',
-              progress,
-              aborted: context.signal.aborted,
-            });
-          },
-          onWarning(label, error) {
-            reportImportStep({
-              id: label,
-              stage: step.stage,
-              state: 'failed',
-              progress,
-              aborted: context.signal.aborted,
-              error: errorMessage(error),
-            });
-            reportPostprocessFailure(label, error);
-          },
-        }));
+        pendingPostprocess.push(() => {
+          if (durability) {
+            scheduleDurability(step, state, context.signal, progress);
+            return;
+          }
+          scheduleImportPostprocess({
+            label: step.id,
+            run: async () => {
+              await step.run(state, context.signal);
+              reportImportStep({
+                id: step.id,
+                stage: step.stage,
+                state: 'complete',
+                progress,
+                aborted: context.signal.aborted,
+              });
+            },
+            onWarning(label, error) {
+              reportImportStep({
+                id: label,
+                stage: step.stage,
+                state: 'failed',
+                progress,
+                aborted: context.signal.aborted,
+                error: errorMessage(error),
+              });
+              reportPostprocessFailure(label, error);
+            },
+          });
+        });
         reportImportStep({
           id: step.id,
           stage: step.stage,
@@ -185,6 +360,7 @@ export async function runImportJob<TState>(
         progress,
         aborted: context.signal.aborted,
       });
+      await yieldMobileImportMemory(step.id);
     } catch (error) {
       reportImportStep({
         id: step.id,
@@ -207,11 +383,10 @@ export async function runImportJob<TState>(
     aborted: context.signal.aborted,
   });
 
-  // The durable scene, Viewer activation, Hierarchy and completion marker are
-  // already committed synchronously. Resolve immediately so ImportTaskQueue can
-  // emit its core-complete lifecycle while the Studio renderer remains paused.
-  // Waiting for another timer here allowed browser GPU scheduling to starve the
-  // transaction after all import work had already succeeded.
+  // The Viewer scene and editor document are already committed. Resolve the
+  // core import immediately. Durability and optional derived work are explicitly
+  // finished in the background so a slow IndexedDB / remote verification tail
+  // cannot hold the browser in a high-memory import state.
   pendingPostprocess.forEach((schedule) => schedule());
   console.info('[studio-import] core-import · return-void');
 }
@@ -235,9 +410,6 @@ export function scheduleImportPostprocess(
       console.info(`[studio-import] ${options.label} · deferred-fallback`);
       return;
     }
-
-    Promise.resolve()
-      .then(() => options.run())
-      .catch((error) => options.onWarning(options.label, error));
+    runPostprocess(options);
   });
 }

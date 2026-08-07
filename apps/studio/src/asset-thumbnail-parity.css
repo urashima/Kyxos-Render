@@ -1,0 +1,59 @@
+.asset-workspace-item {
+  position: relative;
+}
+
+.asset-workspace-item .asset-thumbnail {
+  object-fit: cover;
+  background:
+    linear-gradient(45deg, rgb(255 255 255 / 3%) 25%, transparent 25%) 0 0 / 12px 12px,
+    linear-gradient(-45deg, rgb(255 255 255 / 3%) 25%, transparent 25%) 0 6px / 12px 12px,
+    linear-gradient(45deg, transparent 75%, rgb(255 255 255 / 3%) 75%) 6px -6px / 12px 12px,
+    linear-gradient(-45deg, transparent 75%, rgb(255 255 255 / 3%) 75%) -6px 0 / 12px 12px,
+    #12161d;
+}
+
+.kx-asset-kind-badge {
+  position: absolute;
+  z-index: 2;
+  top: 7px;
+  left: 7px;
+  min-width: 26px;
+  padding: 2px 5px;
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: 5px;
+  background: rgb(10 13 17 / 72%);
+  color: rgb(235 241 244 / 78%);
+  font: 600 9px/1.25 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: .06em;
+  text-align: center;
+  pointer-events: none;
+  backdrop-filter: blur(8px);
+}
+
+.asset-workspace-item.has-generated-thumbnail .kx-asset-kind-badge::after {
+  content: ' ·';
+  opacity: .45;
+}
+
+.kx-thumbnail-render-host {
+  position: fixed;
+  left: -10000px;
+  top: -10000px;
+  width: 384px;
+  height: 216px;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0;
+}
+
+.kx-thumbnail-render-host canvas {
+  display: block;
+  width: 384px;
+  height: 216px;
+}
+
+.asset-workspace-items.list .kx-asset-kind-badge {
+  top: 50%;
+  left: 6px;
+  transform: translateY(-50%);
+}
