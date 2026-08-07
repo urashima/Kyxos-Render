@@ -12,6 +12,12 @@ interface LightingState {
   objects: THREE.Object3D[];
 }
 
+interface ManagedLightDiagnostic {
+  id: string;
+  type: SceneLight['type'];
+  direction: [number, number, number] | null;
+}
+
 const lightingStates = new WeakMap<KyxosViewer, LightingState>();
 
 function state(viewer: KyxosViewer): LightingState {
@@ -72,6 +78,16 @@ function configureTransform(light: THREE.Light, source: SceneLight): void {
   light.updateMatrixWorld(true);
 }
 
+function authoredLightDirection(source: SceneLight): THREE.Vector3 {
+  const quaternion = new THREE.Quaternion().setFromEuler(new THREE.Euler(
+    source.transform.rotation.x,
+    source.transform.rotation.y,
+    source.transform.rotation.z,
+    'XYZ',
+  ));
+  return new THREE.Vector3(0, 0, -1).applyQuaternion(quaternion).normalize();
+}
+
 function configureDirectionalTarget(
   scene: THREE.Scene,
   light: THREE.DirectionalLight | THREE.SpotLight,
@@ -83,13 +99,7 @@ function configureDirectionalTarget(
   // rendered direction. Convert the authored Euler rotation into a target point
   // every time the Scene Contract is applied so Inspector and gizmo rotation are
   // visually and physically identical.
-  const quaternion = new THREE.Quaternion().setFromEuler(new THREE.Euler(
-    source.transform.rotation.x,
-    source.transform.rotation.y,
-    source.transform.rotation.z,
-    'XYZ',
-  ));
-  const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(quaternion).normalize();
+  const forward = authoredLightDirection(source);
   const distance = source.type === 'spot'
     ? Math.max(1, source.range ?? 10)
     : 10;
@@ -107,6 +117,7 @@ KyxosViewer.prototype.setLighting = function setLighting(lights: SceneLight[]): 
   disposeManagedLights(this);
   const current = state(this);
   current.lights = structuredClone(lights);
+  const diagnostics: ManagedLightDiagnostic[] = [];
 
   for (const source of lights) {
     let light: THREE.Light;
@@ -141,11 +152,19 @@ KyxosViewer.prototype.setLighting = function setLighting(lights: SceneLight[]): 
     scene.add(light);
     current.objects.push(light);
 
+    let direction: THREE.Vector3 | null = null;
     if (light instanceof THREE.DirectionalLight || light instanceof THREE.SpotLight) {
       const target = configureDirectionalTarget(scene, light, source);
       current.objects.push(target);
+      direction = target.position.clone().sub(light.position).normalize();
     }
+    diagnostics.push({
+      id: source.id,
+      type: source.type,
+      direction: direction ? [direction.x, direction.y, direction.z] : null,
+    });
   }
+  this.canvas.dataset.managedLightDirections = JSON.stringify(diagnostics);
   this.resetTemporal('scene-lighting');
   // Editor helper geometry depends on range, cone and transform. The method is
   // installed later during module bootstrap, but is available by the time scene
