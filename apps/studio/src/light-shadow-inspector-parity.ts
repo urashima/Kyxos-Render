@@ -47,18 +47,12 @@ function replaceShadow(
   });
 }
 
-function relabelResolution(root: HTMLElement): void {
+function removeLegacyResolutionField(root: HTMLElement): void {
   root.querySelectorAll<HTMLElement>('.kx-component-field').forEach((field) => {
+    if (field.closest('.kx-light-shadow-runtime')) return;
     const caption = field.querySelector<HTMLElement>(':scope > span');
-    if (caption?.textContent !== 'Shadow Map') return;
-    caption.textContent = 'Shadow Resolution';
-    const input = field.querySelector<HTMLInputElement>('input');
-    input?.setAttribute('aria-label', 'Shadow Resolution');
-    if (input) {
-      input.min = '256';
-      input.max = '4096';
-      input.step = '256';
-      input.title = 'Shadow map resolution · 256–4096';
+    if (caption?.textContent === 'Shadow Map' || caption?.textContent === 'Shadow Resolution') {
+      field.remove();
     }
   });
 }
@@ -81,7 +75,7 @@ function install(session: ProjectSession): () => void {
     frame = requestAnimationFrame(() => {
       const root = document.querySelector<HTMLElement>('.kyxos-studio-shell .inspector-content');
       if (!root) return;
-      relabelResolution(root);
+      removeLegacyResolutionField(root);
 
       const existing = root.querySelector<HTMLElement>('.kx-light-shadow-runtime');
       if (existing?.contains(document.activeElement)) return;
@@ -97,6 +91,27 @@ function install(session: ProjectSession): () => void {
       summary.textContent = 'Shadow · Runtime';
       const grid = document.createElement('div');
       grid.className = 'kx-component-inspector-grid';
+
+      const resolution = document.createElement('input');
+      resolution.type = 'number';
+      resolution.min = '256';
+      resolution.max = '4096';
+      resolution.step = '256';
+      resolution.value = String(Number(selected.light.shadow?.mapSize ?? 1024));
+      resolution.title = 'Shadow map resolution · 256–4096';
+      resolution.addEventListener('input', () => {
+        const value = Number(resolution.value);
+        if (!Number.isFinite(value)) return;
+        const clamped = Math.max(256, Math.min(4096, Math.round(value / 256) * 256));
+        replaceShadow(
+          session,
+          selected.index,
+          'Light shadow resolution',
+          'mapSize',
+          clamped,
+          `light:shadow:mapSize:${selected.light.id}`,
+        );
+      });
 
       const updateMode = document.createElement('select');
       updateMode.append(new Option('Realtime', 'realtime'), new Option('Once', 'once'));
@@ -129,6 +144,7 @@ function install(session: ProjectSession): () => void {
       });
 
       grid.append(
+        row('Shadow Resolution', resolution),
         row('Shadow Update', updateMode),
         row('Shadow Intensity', intensity),
       );
