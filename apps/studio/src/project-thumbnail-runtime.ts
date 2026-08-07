@@ -170,9 +170,12 @@ BrowserKyxosViewportAdapter.prototype.bindSession = function bindSessionWithProj
   let inFlight: Promise<void> | null = null;
   let lastCaptureAt = 0;
   let lastCapturedVersion = -1;
+  let publishGate = false;
+  let replayingPublish = false;
 
-  const capture = async (force = false) => {
+  const capture = async (force = false): Promise<void> => {
     if (disposed) return;
+    if (force) window.clearTimeout(timer);
     const version = session.document.version;
     const now = Date.now();
     if (!force && version === lastCapturedVersion) return;
@@ -180,7 +183,15 @@ BrowserKyxosViewportAdapter.prototype.bindSession = function bindSessionWithProj
       schedule(MIN_CAPTURE_INTERVAL_MS - (now - lastCaptureAt));
       return;
     }
-    if (inFlight) return inFlight;
+    if (inFlight) {
+      await inFlight;
+      // A Publish capture must represent the frame after any older background
+      // capture completes. Camera navigation can change the image without
+      // changing SceneDocument.version, so forced captures intentionally run
+      // again even when the document revision is identical.
+      if (force && !disposed) await capture(true);
+      return;
+    }
     document.documentElement.dataset.projectThumbnailState = 'capturing';
     inFlight = (async () => {
       try {
@@ -195,7 +206,7 @@ BrowserKyxosViewportAdapter.prototype.bindSession = function bindSessionWithProj
         inFlight = null;
       }
     })();
-    return inFlight;
+    await inFlight;
   };
 
   function schedule(delay = CAPTURE_DEBOUNCE_MS): void {
@@ -210,7 +221,39 @@ BrowserKyxosViewportAdapter.prototype.bindSession = function bindSessionWithProj
   const onTopbarAction = (event: Event) => {
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>('button');
     const label = (button?.getAttribute('aria-label') ?? button?.textContent ?? '').trim();
-    if (label === 'Publish' || /Projects/i.test(label)) void capture(true);
+    if (!button) return;
+
+    if (label === 'Publish') {
+      if (replayingPublish) {
+        replayingPublish = false;
+        return;
+      }
+
+      // The publish_scene transaction snapshots projects.thumbnail_asset_id.
+      // Stop the first click before the original target listener runs, persist
+      // the exact current viewport cover, then replay the same existing button
+      // once. This keeps the publish command implementation independent while
+      // making the immutable version thumbnail correspond to this Publish.
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (publishGate) return;
+      publishGate = true;
+      document.documentElement.dataset.projectThumbnailPublishGate = 'capturing';
+      void (async () => {
+        await capture(true);
+        if (disposed || !button.isConnected) {
+          publishGate = false;
+          return;
+        }
+        document.documentElement.dataset.projectThumbnailPublishGate = 'ready';
+        replayingPublish = true;
+        button.click();
+        publishGate = false;
+      })();
+      return;
+    }
+
+    if (/Projects/i.test(label)) void capture(true);
   };
   root?.addEventListener('click', onTopbarAction, { capture: true });
 
@@ -225,6 +268,7 @@ BrowserKyxosViewportAdapter.prototype.bindSession = function bindSessionWithProj
     if (document.documentElement.dataset.kxActiveProjectId === session.projectId) {
       delete document.documentElement.dataset.kxActiveProjectId;
     }
+    delete document.documentElement.dataset.projectThumbnailPublishGate;
     disposeOriginal();
   };
 };
