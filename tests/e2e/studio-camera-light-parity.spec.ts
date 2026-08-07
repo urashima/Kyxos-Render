@@ -148,9 +148,8 @@ test('Studio camera and light selection, inspector edits and transforms stay syn
   await expect(page.locator('#studio-canvas')).toHaveAttribute('data-authoring-camera', 'editor');
   await expect(page.locator('#studio-canvas')).toHaveAttribute('data-authored-scene-camera', camera.cameraId!);
 
-  // Hierarchy Add mirrors PlayCanvas behavior: adding while Camera is selected
-  // creates the Light below that Camera. This intentionally exercises parent
-  // rotation in the runtime direction instead of only root-node transforms.
+  // Adding while Camera is selected creates the Light below that Camera. This
+  // intentionally verifies world-space light direction through a parent camera.
   await addComponent(page, 'Add Spot Light');
   const lightInspector = page.locator('.kx-component-inspector').filter({ hasText: 'Light ·' });
   await expect(lightInspector).toBeVisible();
@@ -173,6 +172,14 @@ test('Studio camera and light selection, inspector edits and transforms stay syn
   await lightInspector.getByLabel('Shadow Bias').fill('0.0015');
   await lightInspector.getByLabel('Normal Bias').fill('0.035');
 
+  const shadowRuntime = page.locator('.kx-light-shadow-runtime');
+  await expect(shadowRuntime).toBeVisible();
+  await expect(lightInspector.getByLabel('Shadow Resolution')).toBeVisible();
+  await lightInspector.getByLabel('Shadow Resolution').fill('2048');
+  await shadowRuntime.getByLabel('Shadow Update').selectOption('once');
+  await shadowRuntime.getByLabel('Shadow Intensity').fill('0.65');
+  await expect(shadowRuntime.getByLabel('Shadow Intensity')).toBeFocused();
+
   await expect.poll(() => page.evaluate(() => {
     const scene = (globalThis as any).kyxosStudio?.api?.getScene();
     const selected = document.querySelector<HTMLElement>('.hierarchy-row.selected')?.dataset.node;
@@ -187,6 +194,9 @@ test('Studio camera and light selection, inspector edits and transforms stay syn
       range: component?.range,
       bias: component?.shadow?.bias,
       normalBias: component?.shadow?.normalBias,
+      resolution: component?.shadow?.mapSize,
+      shadowAutoUpdate: component?.shadow?.autoUpdate,
+      shadowIntensity: component?.shadow?.intensity,
     };
   })).toEqual({
     nodePosition: { x: 0, y: 1, z: -3.5 },
@@ -197,6 +207,9 @@ test('Studio camera and light selection, inspector edits and transforms stay syn
     range: 18,
     bias: 0.0015,
     normalBias: 0.035,
+    resolution: 2048,
+    shadowAutoUpdate: false,
+    shadowIntensity: 0.65,
   });
 
   const canvas = page.locator('#studio-canvas');
@@ -220,12 +233,30 @@ test('Studio camera and light selection, inspector edits and transforms stay syn
     expect(direction[2]).toBeCloseTo(expectedDirection[2], 4);
   }
 
+  await expect.poll(() => canvas.evaluate((element, lightId) => {
+    const values = JSON.parse((element as HTMLCanvasElement).dataset.managedLightShadows ?? '[]') as Array<any>;
+    return values.find((value) => value.id === lightId) ?? null;
+  }, light.lightId)).toMatchObject({
+    id: light.lightId,
+    castShadow: true,
+    resolution: 2048,
+    intensity: 0.65,
+    updateMode: 'once',
+  });
+
   await clickHelper(page, light.nodeId, 'light');
   await page.getByRole('button', { name: 'Undo', exact: true }).click();
   await expect.poll(() => page.evaluate(() => {
     const scene = (globalThis as any).kyxosStudio?.api?.getScene();
     const id = document.querySelector<HTMLElement>('.hierarchy-row.selected')?.dataset.node;
     const node = scene?.nodes?.find((entry: any) => entry.id === id);
-    return scene?.lights?.find((entry: any) => entry.id === node?.lightId)?.shadow?.normalBias ?? null;
-  })).not.toBe(0.035);
+    return scene?.lights?.find((entry: any) => entry.id === node?.lightId)?.shadow?.intensity ?? null;
+  })).not.toBe(0.65);
+  await page.getByRole('button', { name: 'Redo', exact: true }).click();
+  await expect.poll(() => page.evaluate(() => {
+    const scene = (globalThis as any).kyxosStudio?.api?.getScene();
+    const id = document.querySelector<HTMLElement>('.hierarchy-row.selected')?.dataset.node;
+    const node = scene?.nodes?.find((entry: any) => entry.id === id);
+    return scene?.lights?.find((entry: any) => entry.id === node?.lightId)?.shadow?.intensity;
+  })).toBe(0.65);
 });
