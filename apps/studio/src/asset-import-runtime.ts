@@ -39,6 +39,41 @@ interface ImportCompletionState {
   report?: ImportCompletionReport | null;
 }
 
+const MOBILE_DURABILITY_SLOW_MS = 15_000;
+const MOBILE_MEMORY_YIELD_STEPS = new Set([
+  'hash-source',
+  'upload-source',
+  'register-source',
+  'parse-source',
+  'activate-asset',
+]);
+
+function isConstrainedMobileImport(): boolean {
+  if (typeof navigator === 'undefined' || typeof window === 'undefined') return false;
+  const ipadDesktopMode = navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1;
+  const ios = /iPhone|iPad|iPod/i.test(navigator.userAgent) || ipadDesktopMode;
+  const coarse = window.matchMedia?.('(pointer: coarse)').matches === true;
+  const narrow = Math.min(
+    window.screen.width || window.innerWidth,
+    window.screen.height || window.innerHeight,
+  ) <= 1024;
+  return ios || (coarse && narrow && /Android|Mobile/i.test(navigator.userAgent));
+}
+
+async function yieldMobileImportMemory(stepId: string): Promise<void> {
+  if (!isConstrainedMobileImport() || !MOBILE_MEMORY_YIELD_STEPS.has(stepId)) return;
+  if (typeof document !== 'undefined') {
+    const previous = Number(document.documentElement.dataset.mobileImportMemoryYields ?? '0');
+    document.documentElement.dataset.mobileImportMemoryYields = String(previous + 1);
+    document.documentElement.dataset.mobileImportYieldAfter = stepId;
+  }
+  // A task boundary after full-file hashing / upload / parser work lets WebKit
+  // release no-longer-referenced ArrayBuffers before the next heavyweight stage.
+  // requestAnimationFrame is intentionally avoided here because background tabs
+  // can throttle it indefinitely.
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+}
+
 export function throwIfImportAborted(signal: AbortSignal): void {
   if (!signal.aborted) return;
   throw signal.reason instanceof Error
@@ -100,6 +135,7 @@ function clearCoreImportCompletion(): void {
   delete document.documentElement.dataset.importCoreComplete;
   delete document.documentElement.dataset.importCompleteMessage;
   delete document.documentElement.dataset.importCompletedAt;
+  delete document.documentElement.dataset.importDurabilityState;
 }
 
 function commitCoreImportCompletion(state: unknown): void {
@@ -116,6 +152,63 @@ function commitCoreImportCompletion(state: unknown): void {
   }
 }
 
+function scheduleMobileDurability<TState>(
+  step: ImportJobStep<TState>,
+  state: TState,
+  signal: AbortSignal,
+  progress: number,
+): void {
+  if (typeof document !== 'undefined') {
+    document.documentElement.dataset.importDurabilityState = 'pending';
+  }
+  scheduleImportPostprocess({
+    label: step.id,
+    async run() {
+      let slowTimer: ReturnType<typeof setTimeout> | null = null;
+      try {
+        slowTimer = setTimeout(() => {
+          if (typeof document !== 'undefined') {
+            document.documentElement.dataset.importDurabilityState = 'slow';
+          }
+          console.warn(
+            `[studio-import] ${step.id} is still saving after ${MOBILE_DURABILITY_SLOW_MS} ms; ` +
+            'the editable scene remains available while durability finishes.',
+          );
+        }, MOBILE_DURABILITY_SLOW_MS);
+        await step.run(state, signal);
+        throwIfImportAborted(signal);
+        if (typeof document !== 'undefined') {
+          document.documentElement.dataset.importDurabilityState = 'saved';
+        }
+        reportImportStep({
+          id: step.id,
+          stage: step.stage,
+          state: 'complete',
+          progress,
+          aborted: signal.aborted,
+        });
+      } finally {
+        if (slowTimer != null) clearTimeout(slowTimer);
+      }
+    },
+    onWarning(label, error) {
+      if (typeof document !== 'undefined') {
+        document.documentElement.dataset.importDurabilityState = 'error';
+        document.documentElement.dataset.importDurabilityError = errorMessage(error);
+      }
+      reportImportStep({
+        id: label,
+        stage: step.stage,
+        state: 'failed',
+        progress,
+        aborted: signal.aborted,
+        error: errorMessage(error),
+      });
+      reportPostprocessFailure(label, error);
+    },
+  });
+}
+
 export async function runImportJob<TState>(
   context: ImportTaskContext,
   state: TState,
@@ -124,11 +217,13 @@ export async function runImportJob<TState>(
   clearCoreImportCompletion();
   const pendingPostprocess: Array<() => void> = [];
   let lastProgress = 0;
+  const mobile = isConstrainedMobileImport();
 
   for (const step of steps) {
     throwIfImportAborted(context.signal);
     const progress = Math.max(lastProgress, Math.min(0.99, step.progress));
-    const postprocess = step.completion === 'postprocess';
+    const mobileDurability = mobile && step.id === 'persist-import';
+    const postprocess = step.completion === 'postprocess' || mobileDurability;
     reportImportStep({
       id: step.id,
       stage: step.stage,
@@ -142,30 +237,36 @@ export async function runImportJob<TState>(
       lastProgress = progress;
 
       if (postprocess) {
-        pendingPostprocess.push(() => scheduleImportPostprocess({
-          label: step.id,
-          run: async () => {
-            await step.run(state, context.signal);
-            reportImportStep({
-              id: step.id,
-              stage: step.stage,
-              state: 'complete',
-              progress,
-              aborted: context.signal.aborted,
-            });
-          },
-          onWarning(label, error) {
-            reportImportStep({
-              id: label,
-              stage: step.stage,
-              state: 'failed',
-              progress,
-              aborted: context.signal.aborted,
-              error: errorMessage(error),
-            });
-            reportPostprocessFailure(label, error);
-          },
-        }));
+        pendingPostprocess.push(() => {
+          if (mobileDurability) {
+            scheduleMobileDurability(step, state, context.signal, progress);
+            return;
+          }
+          scheduleImportPostprocess({
+            label: step.id,
+            run: async () => {
+              await step.run(state, context.signal);
+              reportImportStep({
+                id: step.id,
+                stage: step.stage,
+                state: 'complete',
+                progress,
+                aborted: context.signal.aborted,
+              });
+            },
+            onWarning(label, error) {
+              reportImportStep({
+                id: label,
+                stage: step.stage,
+                state: 'failed',
+                progress,
+                aborted: context.signal.aborted,
+                error: errorMessage(error),
+              });
+              reportPostprocessFailure(label, error);
+            },
+          });
+        });
         reportImportStep({
           id: step.id,
           stage: step.stage,
@@ -185,6 +286,7 @@ export async function runImportJob<TState>(
         progress,
         aborted: context.signal.aborted,
       });
+      await yieldMobileImportMemory(step.id);
     } catch (error) {
       reportImportStep({
         id: step.id,
@@ -207,11 +309,10 @@ export async function runImportJob<TState>(
     aborted: context.signal.aborted,
   });
 
-  // The durable scene, Viewer activation, Hierarchy and completion marker are
-  // already committed synchronously. Resolve immediately so ImportTaskQueue can
-  // emit its core-complete lifecycle while the Studio renderer remains paused.
-  // Waiting for another timer here allowed browser GPU scheduling to starve the
-  // transaction after all import work had already succeeded.
+  // The Viewer scene and editor document are already committed. Resolve the
+  // core import immediately. Mobile durability is explicitly finished in the
+  // background so a slow IndexedDB / remote verification tail cannot hold the
+  // WebKit page in a high-memory import state.
   pendingPostprocess.forEach((schedule) => schedule());
   console.info('[studio-import] core-import · return-void');
 }
