@@ -5,9 +5,11 @@ import { SceneDocument, type ProjectSession } from '@kyxos/editor-core';
 import type { KyxosSceneContract, SceneAsset, SceneNode } from '@kyxos/scene-contract';
 import { BrowserKyxosViewportAdapter } from '@kyxos/viewer-adapter';
 
-const RENDERER_VERSION = 'asset-thumbnail-v2';
+const RENDERER_VERSION = 'asset-thumbnail-v3';
 const WIDTH = 256;
 const HEIGHT = 144;
+const CACHE_DB = 'kyxos-studio-thumbnail-cache';
+const CACHE_STORE = 'asset-thumbnails';
 const backendConfig = resolveKyxosRuntimeBackendConfig(import.meta.env);
 const assetClient = createDurableApiClient({
   url: backendConfig.supabaseUrl,
@@ -15,15 +17,99 @@ const assetClient = createDurableApiClient({
   functionsUrl: backendConfig.functionsUrl,
 });
 
+interface CachedThumbnail {
+  assetId: string;
+  contentHash: string;
+  rendererVersion: string;
+  dataUrl: string;
+  width: number;
+  height: number;
+  generatedAt: string;
+}
+
+const memoryCache = new Map<string, CachedThumbnail>();
+const cacheReads = new Map<string, Promise<CachedThumbnail | null>>();
+
 async function ensureCloudSession(): Promise<boolean> {
   if (backendConfig.provider !== 'supabase') return true;
   return Boolean(await assetClient.auth.getSession());
 }
 
-function thumbnailIsCurrent(asset: SceneAsset): boolean {
-  return asset.metadata?.thumbnailRenderer === RENDERER_VERSION
-    && asset.metadata?.thumbnailSourceHash === asset.contentHash
-    && typeof asset.metadata?.thumbnailDataUrl === 'string';
+function thumbnailMatches(asset: SceneAsset, cached: CachedThumbnail | null | undefined): cached is CachedThumbnail {
+  return Boolean(
+    cached
+    && cached.assetId === asset.id
+    && cached.contentHash === asset.contentHash
+    && cached.rendererVersion === RENDERER_VERSION
+    && cached.dataUrl.startsWith('data:image/webp'),
+  );
+}
+
+function openCacheDb(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(CACHE_DB, 1);
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains(CACHE_STORE)) {
+        request.result.createObjectStore(CACHE_STORE, { keyPath: 'assetId' });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error ?? new Error('Asset thumbnail cache could not be opened.'));
+  });
+}
+
+async function readCachedThumbnail(asset: SceneAsset): Promise<CachedThumbnail | null> {
+  const hot = memoryCache.get(asset.id);
+  if (thumbnailMatches(asset, hot)) return hot;
+  const existingRead = cacheReads.get(asset.id);
+  if (existingRead) return existingRead;
+
+  const promise = (async () => {
+    const db = await openCacheDb();
+    try {
+      const value = await new Promise<CachedThumbnail | null>((resolve, reject) => {
+        const request = db.transaction(CACHE_STORE).objectStore(CACHE_STORE).get(asset.id);
+        request.onsuccess = () => resolve((request.result as CachedThumbnail | undefined) ?? null);
+        request.onerror = () => reject(request.error);
+      });
+      if (thumbnailMatches(asset, value)) {
+        memoryCache.set(asset.id, value);
+        return value;
+      }
+      return null;
+    } finally {
+      db.close();
+      cacheReads.delete(asset.id);
+    }
+  })();
+  cacheReads.set(asset.id, promise);
+  return promise;
+}
+
+async function writeCachedThumbnail(asset: SceneAsset, dataUrl: string): Promise<CachedThumbnail> {
+  const record: CachedThumbnail = {
+    assetId: asset.id,
+    contentHash: asset.contentHash,
+    rendererVersion: RENDERER_VERSION,
+    dataUrl,
+    width: WIDTH,
+    height: HEIGHT,
+    generatedAt: new Date().toISOString(),
+  };
+  const db = await openCacheDb();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const transaction = db.transaction(CACHE_STORE, 'readwrite');
+      transaction.objectStore(CACHE_STORE).put(record);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(transaction.error);
+    });
+  } finally {
+    db.close();
+  }
+  memoryCache.set(asset.id, record);
+  return record;
 }
 
 function delay(ms: number): Promise<void> {
@@ -65,7 +151,6 @@ function collectAssetNodes(nodes: SceneNode[], assetId: string): { keep: Set<str
   const focus = nodes.filter((node) => node.meshAssetId === assetId).map((node) => node.id);
   const keep = new Set(focus);
 
-  // Preserve hierarchy transforms above meshes.
   for (const id of focus) {
     let current = byId.get(id);
     const visited = new Set<string>();
@@ -76,8 +161,6 @@ function collectAssetNodes(nodes: SceneNode[], assetId: string): { keep: Set<str
     }
   }
 
-  // Preserve descendants such as child meshes, skeleton branches and authored
-  // helper nodes below an imported GLB root.
   let changed = true;
   while (changed) {
     changed = false;
@@ -157,6 +240,22 @@ async function generateThumbnail(scene: KyxosSceneContract, asset: SceneAsset): 
   return null;
 }
 
+function mountCachedThumbnail(card: HTMLElement, asset: SceneAsset, cached: CachedThumbnail): void {
+  if (!thumbnailMatches(asset, cached)) return;
+  card.classList.add('has-generated-thumbnail');
+  card.dataset.thumbnailRenderer = cached.rendererVersion;
+  card.dataset.thumbnailSourceHash = cached.contentHash;
+  const current = card.querySelector<HTMLElement>(':scope > .asset-thumbnail');
+  if (current instanceof HTMLImageElement && current.src === cached.dataUrl) return;
+  const image = document.createElement('img');
+  image.className = 'asset-thumbnail';
+  image.src = cached.dataUrl;
+  image.alt = '';
+  image.decoding = 'async';
+  if (current) current.replaceWith(image);
+  else card.prepend(image);
+}
+
 function decorateCards(session: ProjectSession): void {
   const scene = session.document.value;
   document.querySelectorAll<HTMLElement>('.asset-workspace-item[data-asset-id]').forEach((card) => {
@@ -164,7 +263,6 @@ function decorateCards(session: ProjectSession): void {
     const asset = assetId ? scene.assets[assetId] : undefined;
     if (!asset) return;
     card.dataset.thumbnailKind = asset.kind;
-    card.classList.toggle('has-generated-thumbnail', thumbnailIsCurrent(asset));
     let badge = card.querySelector<HTMLElement>('.kx-asset-kind-badge');
     if (!badge) {
       badge = document.createElement('span');
@@ -172,7 +270,45 @@ function decorateCards(session: ProjectSession): void {
       card.prepend(badge);
     }
     badge.textContent = asset.kind === 'environment' ? 'HDR' : asset.kind === 'texture' ? 'TEX' : asset.kind === 'model' ? '3D' : asset.kind.slice(0, 3).toUpperCase();
+
+    const hot = memoryCache.get(asset.id);
+    if (thumbnailMatches(asset, hot)) {
+      mountCachedThumbnail(card, asset, hot);
+      return;
+    }
+    card.classList.remove('has-generated-thumbnail');
+    delete card.dataset.thumbnailRenderer;
+    delete card.dataset.thumbnailSourceHash;
+    void readCachedThumbnail(asset).then((cached) => {
+      if (!cached || !card.isConnected) return;
+      const currentAsset = session.document.value.assets[asset.id];
+      if (currentAsset) mountCachedThumbnail(card, currentAsset, cached);
+    }).catch((error) => console.warn('[Kyxos] Asset thumbnail cache read failed.', error));
   });
+}
+
+function removeLegacyThumbnailMetadata(session: ProjectSession, assetId: string, sourceHash: string): void {
+  const fresh = session.document.value;
+  const asset = fresh.assets[assetId];
+  if (!asset || asset.contentHash !== sourceHash || !asset.metadata) return;
+  const metadata = { ...asset.metadata };
+  let changed = false;
+  for (const key of [
+    'thumbnailDataUrl',
+    'thumbnailRenderer',
+    'thumbnailSourceHash',
+    'thumbnailGeneratedAt',
+    'thumbnailWidth',
+    'thumbnailHeight',
+  ]) {
+    if (key in metadata) {
+      delete metadata[key];
+      changed = true;
+    }
+  }
+  if (!changed) return;
+  asset.metadata = metadata;
+  session.document.replace(fresh, 'asset-thumbnail-cache-cleanup');
 }
 
 const originalBindSession = BrowserKyxosViewportAdapter.prototype.bindSession;
@@ -194,30 +330,26 @@ BrowserKyxosViewportAdapter.prototype.bindSession = function bindSessionWithAsse
         return;
       }
       const snapshot = session.document.value;
-      const pending = Object.values(snapshot.assets).filter((asset) =>
-        ['model', 'texture', 'environment'].includes(asset.kind)
-        && !thumbnailIsCurrent(asset),
+      const candidates = Object.values(snapshot.assets).filter((asset) =>
+        ['model', 'texture', 'environment'].includes(asset.kind),
       );
-      for (const asset of pending) {
+      for (const asset of candidates) {
         if (disposed) break;
         try {
+          const cached = await readCachedThumbnail(asset);
+          if (cached) {
+            removeLegacyThumbnailMetadata(session, asset.id, asset.contentHash);
+            continue;
+          }
           document.documentElement.dataset.assetThumbnailState = `rendering:${asset.id}`;
           const thumbnailDataUrl = await generateThumbnail(snapshot, asset);
           if (!thumbnailDataUrl) continue;
-          const fresh = session.document.value;
-          const current = fresh.assets[asset.id];
+          const current = session.document.value.assets[asset.id];
           if (!current || current.contentHash !== asset.contentHash) continue;
-          current.metadata = {
-            ...(current.metadata ?? {}),
-            thumbnailDataUrl,
-            thumbnailRenderer: RENDERER_VERSION,
-            thumbnailSourceHash: current.contentHash,
-            thumbnailGeneratedAt: new Date().toISOString(),
-            thumbnailWidth: WIDTH,
-            thumbnailHeight: HEIGHT,
-          };
-          session.document.replace(fresh, 'asset-thumbnail-renderer');
-          decorateCards(session);
+          const record = await writeCachedThumbnail(current, thumbnailDataUrl);
+          removeLegacyThumbnailMetadata(session, current.id, current.contentHash);
+          document.querySelectorAll<HTMLElement>(`.asset-workspace-item[data-asset-id="${CSS.escape(current.id)}"]`)
+            .forEach((card) => mountCachedThumbnail(card, current, record));
         } catch (error) {
           console.warn(`[Kyxos] Asset thumbnail generation failed for ${asset.name ?? asset.id}.`, error);
         }
