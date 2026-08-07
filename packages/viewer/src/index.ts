@@ -7,6 +7,7 @@ import './materialCompleteApi';
 import './materialTransparencyApi';
 import './animationApi';
 import './lightingApi';
+import './lightShadowRuntimeParity';
 import './capabilityApi';
 import './environmentApi';
 import './editorTransformControls';
