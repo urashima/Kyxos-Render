@@ -10,6 +10,7 @@ const recentPickerFiles: Array<{ file: File; capturedAt: number }> = [];
 const cachedReads = new WeakMap<File, Promise<ArrayBuffer>>();
 const READ_TIMEOUT_MS = 30_000;
 const PICKER_SOURCE_TTL_MS = 60_000;
+const MAX_CACHED_PICKER_BYTES = 8 * 1024 * 1024;
 
 type ObjectUrlRegistryGlobal = typeof globalThis & {
   [objectUrlBlobRegistryKey]?: Map<string, Blob>;
@@ -24,15 +25,30 @@ const localBlobBytesRegistry =
 registryGlobal[objectUrlBlobRegistryKey] = objectUrlBlobRegistry;
 registryGlobal[localBlobBytesRegistryKey] = localBlobBytesRegistry;
 
+function constrainedMobileMemory(): boolean {
+  const ua = navigator.userAgent;
+  const ipadDesktopMode = navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1;
+  return /iPhone|iPad|iPod/i.test(ua) || ipadDesktopMode;
+}
+
 /** Register immutable source bytes for generated or repacked local assets. */
 export function registerLocalBlobBytes(blob: Blob, bytes: Uint8Array): void {
+  // Generated assets are normally much smaller than source GLBs. Keep one
+  // immutable snapshot, but do not manufacture another copy every time a
+  // consumer asks for the bytes.
   localBlobBytesRegistry.set(blob, bytes.slice());
 }
 
 function registeredBytes(blob: Blob): ArrayBuffer | null {
   const bytes = localBlobBytesRegistry.get(blob);
   if (!bytes) return null;
-  return bytes.slice().buffer;
+  if (bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength) {
+    return bytes.buffer as ArrayBuffer;
+  }
+  return bytes.buffer.slice(
+    bytes.byteOffset,
+    bytes.byteOffset + bytes.byteLength,
+  ) as ArrayBuffer;
 }
 
 function pruneRecentPickerFiles(now = Date.now()): void {
@@ -88,6 +104,10 @@ document.addEventListener(
     for (const file of input.files ?? []) {
       pickerFiles.add(file);
       recentPickerFiles.push({ file, capturedAt });
+      if (constrainedMobileMemory() || file.size > MAX_CACHED_PICKER_BYTES) {
+        document.documentElement.dataset.pickerBlobReadMode = 'uncached-large';
+        document.documentElement.dataset.pickerBlobBytes = String(file.size);
+      }
     }
     pruneRecentPickerFiles(capturedAt);
   },
@@ -132,11 +152,27 @@ File.prototype.arrayBuffer = function guardedFileArrayBuffer(): Promise<ArrayBuf
   const exact = registeredBytes(this);
   if (exact) return Promise.resolve(exact);
   if (!pickerFiles.has(this)) return originalFileArrayBuffer.call(this);
+
+  // The previous guard cached the complete picker ArrayBuffer for 60 seconds
+  // (because recentPickerFiles also retained the File) and returned buffer.slice
+  // on every call. A 200 MB GLB could therefore keep one 200 MB cache plus a
+  // fresh 200 MB clone for hashing, persistence and GLTFLoader parsing. iOS
+  // Safari commonly kills the page under that transient pressure. Large picker
+  // files and all iPhone/iPad imports now use the browser's one-shot read path
+  // and are eligible for collection immediately after each consumer finishes.
+  if (constrainedMobileMemory() || this.size > MAX_CACHED_PICKER_BYTES) {
+    document.documentElement.dataset.pickerBlobReadMode = 'uncached-large';
+    return originalFileArrayBuffer.call(this);
+  }
+
   let cached = cachedReads.get(this);
   if (!cached) {
     cached = readFile(this);
     cachedReads.set(this, cached);
     cached.catch(() => cachedReads.delete(this));
   }
+  document.documentElement.dataset.pickerBlobReadMode = 'cached-small';
+  // Small files can afford the standards-compatible fresh ArrayBuffer result;
+  // large files never enter this cache path.
   return cached.then((buffer) => buffer.slice(0));
 };
