@@ -39,8 +39,17 @@ test('Studio keeps an independent authoring camera and explicitly views through 
   await expect(canvas).toHaveAttribute('data-authoring-camera', 'editor');
 
   const camera = await addCamera(page);
-  const cameraInspector = page.locator('.kx-component-inspector').filter({ hasText: 'Camera ·' });
+  const cameraInspector = page.locator('.kx-component-inspector').filter({ hasText: 'Camera ·' }).first();
   await expect(cameraInspector).toBeVisible();
+  const cameraRuntime = page.locator('.kx-camera-runtime');
+  await expect(cameraRuntime).toBeVisible();
+  const frustumCulling = cameraRuntime.getByLabel('Frustum Culling');
+  await expect(frustumCulling).toBeChecked();
+  await frustumCulling.uncheck();
+  await expect.poll(() => page.evaluate((cameraId) => {
+    const scene = (globalThis as any).kyxosStudio?.api?.getScene();
+    return scene?.cameras?.find((entry: any) => entry.id === cameraId)?.frustumCulling;
+  }, camera.cameraId)).toBe(false);
 
   // Selecting an authored camera opens a separate low-resolution live runtime
   // preview instead of reusing or stealing the authoring viewport.
@@ -50,6 +59,7 @@ test('Studio keeps an independent authoring camera and explicitly views through 
   const previewCanvas = preview.getByLabel('Live camera preview canvas');
   await expect.poll(() => previewCanvas.getAttribute('data-camera-preview-status')).toBe('ready');
   await expect(previewCanvas).toHaveAttribute('data-camera-preview-id', camera.cameraId);
+  await expect(previewCanvas).toHaveAttribute('data-managed-camera-frustum-culling', 'false');
 
   // Reparent the authored camera beneath a translated/rotated rig. The runtime
   // preview must recompute position and target from the complete node hierarchy,
@@ -119,6 +129,7 @@ test('Studio keeps an independent authoring camera and explicitly views through 
   await viewportView.selectOption(`scene:${camera.cameraId}`);
   await expect(canvas).toHaveAttribute('data-authoring-camera', 'scene');
   await expect(canvas).toHaveAttribute('data-editor-scene-camera-view', camera.cameraId);
+  await expect(canvas).toHaveAttribute('data-managed-camera-frustum-culling', 'false');
   await expect(preview).toHaveAttribute('data-view-through', 'true');
 
   // Camera edits remain scene data while view-through is explicit and the live
@@ -131,10 +142,12 @@ test('Studio keeps an independent authoring camera and explicitly views through 
   })).toBe(61);
   await expect(canvas).toHaveAttribute('data-editor-scene-camera-view', camera.cameraId);
   await expect(previewCanvas).toHaveAttribute('data-camera-preview-id', camera.cameraId);
+  await expect(previewCanvas).toHaveAttribute('data-managed-camera-frustum-culling', 'false');
 
   await viewportView.selectOption('perspective');
   await expect(canvas).toHaveAttribute('data-authoring-camera', 'editor');
   await expect(canvas).not.toHaveAttribute('data-editor-scene-camera-view', camera.cameraId);
+  await expect(canvas).toHaveAttribute('data-managed-camera-frustum-culling', 'true');
   await expect(preview).toHaveAttribute('data-view-through', 'false');
   await expect.poll(() => page.evaluate(() => {
     const scene = (globalThis as any).kyxosStudio?.api?.getScene();
