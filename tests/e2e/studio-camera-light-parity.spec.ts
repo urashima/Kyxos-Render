@@ -141,16 +141,18 @@ test('Studio camera and light selection, inspector edits and transforms stay syn
   await expect(lightInspector).toBeVisible();
   await expect(page.locator('.hierarchy-row.selected .kx-component-badge')).toHaveText('LGT');
 
-  const lightNodeId = await expect.poll(() => page.evaluate(() => {
+  const lightState = await expect.poll(() => page.evaluate(() => {
     const scene = (globalThis as any).kyxosStudio?.api?.getScene();
     const selected = document.querySelector<HTMLElement>('.hierarchy-row.selected')?.dataset.node;
     const node = scene?.nodes?.find((entry: any) => entry.id === selected);
     const light = scene?.lights?.find((entry: any) => entry.id === node?.lightId);
-    return JSON.stringify(node?.transform) === JSON.stringify(light?.transform) ? node?.id ?? null : null;
+    if (JSON.stringify(node?.transform) !== JSON.stringify(light?.transform)) return null;
+    return { nodeId: node?.id ?? null, lightId: light?.id ?? null };
   })).not.toBeNull().then(() => page.evaluate(() => {
     const scene = (globalThis as any).kyxosStudio?.api?.getScene();
     const selected = document.querySelector<HTMLElement>('.hierarchy-row.selected')?.dataset.node;
-    return scene?.nodes?.find((entry: any) => entry.id === selected)?.id as string;
+    const node = scene?.nodes?.find((entry: any) => entry.id === selected);
+    return { nodeId: node?.id as string, lightId: node?.lightId as string };
   }));
 
   await lightInspector.getByLabel('Intensity').fill('7.5');
@@ -161,6 +163,12 @@ test('Studio camera and light selection, inspector edits and transforms stay syn
   await lightInspector.getByLabel('Position Y').fill('1');
   await lightInspector.getByLabel('Position Z').fill('-3.5');
   await expect(lightInspector.getByLabel('Position Z')).toBeFocused();
+  await lightInspector.getByLabel('Rotation X').fill('0');
+  await lightInspector.getByLabel('Rotation Y').fill('0.6');
+  await lightInspector.getByLabel('Rotation Z').fill('0');
+  await expect(lightInspector.getByLabel('Rotation Y')).toBeFocused();
+  await lightInspector.getByLabel('Inner Cone °').fill('20');
+  await lightInspector.getByLabel('Outer Cone °').fill('40');
   await lightInspector.getByLabel('Shadow Bias').fill('0.0015');
   await lightInspector.getByLabel('Normal Bias').fill('0.035');
 
@@ -178,6 +186,10 @@ test('Studio camera and light selection, inspector edits and transforms stay syn
       lightX: light?.transform?.position?.x,
       lightY: light?.transform?.position?.y,
       lightZ: light?.transform?.position?.z,
+      nodeRotationY: node?.transform?.rotation?.y,
+      lightRotationY: light?.transform?.rotation?.y,
+      innerCone: light?.innerConeAngle,
+      outerCone: light?.outerConeAngle,
       bias: light?.shadow?.bias,
       normalBias: light?.shadow?.normalBias,
     };
@@ -190,11 +202,63 @@ test('Studio camera and light selection, inspector edits and transforms stay syn
     lightX: 0,
     lightY: 1,
     lightZ: -3.5,
+    nodeRotationY: 0.6,
+    lightRotationY: 0.6,
+    innerCone: 20 * Math.PI / 180,
+    outerCone: 40 * Math.PI / 180,
     bias: 0.0015,
     normalBias: 0.035,
   });
 
-  await clickComponentHelper(page, lightNodeId, 'light');
+  const canvas = page.locator('#studio-canvas');
+  await expect.poll(() => canvas.evaluate((element, expected) => {
+    const entries = JSON.parse(
+      (element as HTMLCanvasElement).dataset.editorLightVisualizations ?? '[]',
+    ) as Array<{
+      nodeId: string;
+      lightId: string;
+      type: string;
+      selected: boolean;
+      range: number | null;
+      innerConeAngle: number | null;
+      outerConeAngle: number | null;
+      direction: [number, number, number];
+    }>;
+    return entries.find((entry) => entry.nodeId === expected.nodeId && entry.lightId === expected.lightId) ?? null;
+  }, lightState)).toMatchObject({
+    nodeId: lightState.nodeId,
+    lightId: lightState.lightId,
+    type: 'spot',
+    selected: true,
+    range: 18,
+  });
+
+  // The rendered Three.js SpotLight must use the same local -Z direction as the
+  // Scene Contract / helper proxy. Rotation Y=0.6 should rotate -Z toward -X.
+  await expect.poll(() => canvas.evaluate((element, lightId) => {
+    const entries = JSON.parse(
+      (element as HTMLCanvasElement).dataset.managedLightDirections ?? '[]',
+    ) as Array<{ id: string; type: string; direction: [number, number, number] | null }>;
+    return entries.find((entry) => entry.id === lightId)?.direction ?? null;
+  }, lightState.lightId)).toEqual(expect.arrayContaining([
+    expect.any(Number),
+    expect.any(Number),
+    expect.any(Number),
+  ]));
+  const renderedDirection = await canvas.evaluate((element, lightId) => {
+    const entries = JSON.parse(
+      (element as HTMLCanvasElement).dataset.managedLightDirections ?? '[]',
+    ) as Array<{ id: string; direction: [number, number, number] | null }>;
+    return entries.find((entry) => entry.id === lightId)?.direction ?? null;
+  }, lightState.lightId);
+  expect(renderedDirection).not.toBeNull();
+  if (renderedDirection) {
+    expect(renderedDirection[0]).toBeCloseTo(-Math.sin(0.6), 4);
+    expect(renderedDirection[1]).toBeCloseTo(0, 4);
+    expect(renderedDirection[2]).toBeCloseTo(-Math.cos(0.6), 4);
+  }
+
+  await clickComponentHelper(page, lightState.nodeId, 'light');
   await expect(lightInspector).toBeVisible();
 
   await page.getByRole('button', { name: 'Undo', exact: true }).click();
