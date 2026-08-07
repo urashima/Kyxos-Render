@@ -218,6 +218,23 @@ function setupPanel(
     setFloating(!panel.classList.contains('kx-panel-floating'));
   });
 
+  // The legacy collapse handler lives on the header in capture phase. A real
+  // drag ends with a synthetic click on that same header, which used to fold
+  // the panel immediately after moving it. Capture at the shell ancestor so we
+  // can swallow only that one post-drag click before it reaches the header.
+  root.addEventListener(
+    'click',
+    (event) => {
+      if (panel.dataset.kxSuppressNextHeaderClick !== 'true') return;
+      if (!(event.target instanceof Node) || !header.contains(event.target)) return;
+      delete panel.dataset.kxSuppressNextHeaderClick;
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+    },
+    true,
+  );
+
   let drag:
     | {
         pointerId: number;
@@ -253,7 +270,12 @@ function setupPanel(
 
   const finishDrag = (event: PointerEvent) => {
     if (!drag || event.pointerId !== drag.pointerId) return;
-    if (drag.activated) writeState(state);
+    const wasActivated = drag.activated;
+    if (wasActivated) {
+      writeState(state);
+      panel.dataset.kxSuppressNextHeaderClick = 'true';
+      window.setTimeout(() => delete panel.dataset.kxSuppressNextHeaderClick, 0);
+    }
     drag = null;
     header.classList.remove('is-workspace-dragging');
     window.removeEventListener('pointermove', onMove);
