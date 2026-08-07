@@ -39,7 +39,7 @@ interface ImportCompletionState {
   report?: ImportCompletionReport | null;
 }
 
-const MOBILE_DURABILITY_SLOW_MS = 15_000;
+const DURABILITY_SLOW_MS = 15_000;
 const MOBILE_MEMORY_YIELD_STEPS = new Set([
   'hash-source',
   'upload-source',
@@ -136,6 +136,7 @@ function clearCoreImportCompletion(): void {
   delete document.documentElement.dataset.importCompleteMessage;
   delete document.documentElement.dataset.importCompletedAt;
   delete document.documentElement.dataset.importDurabilityState;
+  delete document.documentElement.dataset.importDurabilityError;
 }
 
 function commitCoreImportCompletion(state: unknown): void {
@@ -152,7 +153,7 @@ function commitCoreImportCompletion(state: unknown): void {
   }
 }
 
-function scheduleMobileDurability<TState>(
+function scheduleDurability<TState>(
   step: ImportJobStep<TState>,
   state: TState,
   signal: AbortSignal,
@@ -171,14 +172,15 @@ function scheduleMobileDurability<TState>(
             document.documentElement.dataset.importDurabilityState = 'slow';
           }
           console.warn(
-            `[studio-import] ${step.id} is still saving after ${MOBILE_DURABILITY_SLOW_MS} ms; ` +
+            `[studio-import] ${step.id} is still saving after ${DURABILITY_SLOW_MS} ms; ` +
             'the editable scene remains available while durability finishes.',
           );
-        }, MOBILE_DURABILITY_SLOW_MS);
+        }, DURABILITY_SLOW_MS);
         await step.run(state, signal);
         throwIfImportAborted(signal);
         if (typeof document !== 'undefined') {
           document.documentElement.dataset.importDurabilityState = 'saved';
+          delete document.documentElement.dataset.importDurabilityError;
         }
         reportImportStep({
           id: step.id,
@@ -217,13 +219,16 @@ export async function runImportJob<TState>(
   clearCoreImportCompletion();
   const pendingPostprocess: Array<() => void> = [];
   let lastProgress = 0;
-  const mobile = isConstrainedMobileImport();
 
   for (const step of steps) {
     throwIfImportAborted(context.signal);
     const progress = Math.max(lastProgress, Math.min(0.99, step.progress));
-    const mobileDurability = mobile && step.id === 'persist-import';
-    const postprocess = step.completion === 'postprocess' || mobileDurability;
+    // Persist/recovery verification is durability, not scene activation. Never
+    // make the editor's “Import complete” state depend on IndexedDB, cloud
+    // revision verification or Blob recovery. Those are allowed to finish after
+    // the model is already editable on every platform, not only on iOS.
+    const durability = step.id === 'persist-import';
+    const postprocess = step.completion === 'postprocess' || durability;
     reportImportStep({
       id: step.id,
       stage: step.stage,
@@ -238,8 +243,8 @@ export async function runImportJob<TState>(
 
       if (postprocess) {
         pendingPostprocess.push(() => {
-          if (mobileDurability) {
-            scheduleMobileDurability(step, state, context.signal, progress);
+          if (durability) {
+            scheduleDurability(step, state, context.signal, progress);
             return;
           }
           scheduleImportPostprocess({
@@ -310,9 +315,9 @@ export async function runImportJob<TState>(
   });
 
   // The Viewer scene and editor document are already committed. Resolve the
-  // core import immediately. Mobile durability is explicitly finished in the
-  // background so a slow IndexedDB / remote verification tail cannot hold the
-  // WebKit page in a high-memory import state.
+  // core import immediately. Durability and optional derived work are explicitly
+  // finished in the background so a slow IndexedDB / remote verification tail
+  // cannot hold the browser in a high-memory import state.
   pendingPostprocess.forEach((schedule) => schedule());
   console.info('[studio-import] core-import · return-void');
 }
