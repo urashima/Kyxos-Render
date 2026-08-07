@@ -33,7 +33,8 @@ test('Studio camera and light selection, inspector edits and transforms stay syn
 
   const cameraState = await page.evaluate(() => {
     const scene = (globalThis as any).kyxosStudio?.api?.getScene();
-    const node = scene?.nodes?.find((entry: any) => entry.cameraId && entry.id === (globalThis as any).kyxosStudio?.api?.getSelection?.()[0]);
+    const selected = document.querySelector<HTMLElement>('.hierarchy-row.selected')?.dataset.node;
+    const node = scene?.nodes?.find((entry: any) => entry.cameraId && entry.id === selected);
     const camera = scene?.cameras?.find((entry: any) => entry.id === node?.cameraId);
     return { nodeTransform: node?.transform, componentTransform: camera?.transform, cameraId: camera?.id };
   });
@@ -49,7 +50,7 @@ test('Studio camera and light selection, inspector edits and transforms stay syn
 
   await expect.poll(() => page.evaluate(() => {
     const scene = (globalThis as any).kyxosStudio?.api?.getScene();
-    const selected = (globalThis as any).kyxosStudio?.api?.getSelection?.()[0];
+    const selected = document.querySelector<HTMLElement>('.hierarchy-row.selected')?.dataset.node;
     const node = scene?.nodes?.find((entry: any) => entry.id === selected);
     const camera = scene?.cameras?.find((entry: any) => entry.id === node?.cameraId);
     return {
@@ -64,7 +65,7 @@ test('Studio camera and light selection, inspector edits and transforms stay syn
   await cameraInspector.getByRole('button', { name: 'Set Active' }).click();
   await expect.poll(() => page.evaluate(() => {
     const scene = (globalThis as any).kyxosStudio?.api?.getScene();
-    const selected = (globalThis as any).kyxosStudio?.api?.getSelection?.()[0];
+    const selected = document.querySelector<HTMLElement>('.hierarchy-row.selected')?.dataset.node;
     const node = scene?.nodes?.find((entry: any) => entry.id === selected);
     return scene?.activeCameraId === node?.cameraId;
   })).toBe(true);
@@ -79,7 +80,7 @@ test('Studio camera and light selection, inspector edits and transforms stay syn
 
   await expect.poll(() => page.evaluate(() => {
     const scene = (globalThis as any).kyxosStudio?.api?.getScene();
-    const selected = (globalThis as any).kyxosStudio?.api?.getSelection?.()[0];
+    const selected = document.querySelector<HTMLElement>('.hierarchy-row.selected')?.dataset.node;
     const node = scene?.nodes?.find((entry: any) => entry.id === selected);
     const light = scene?.lights?.find((entry: any) => entry.id === node?.lightId);
     return JSON.stringify(node?.transform) === JSON.stringify(light?.transform);
@@ -96,7 +97,7 @@ test('Studio camera and light selection, inspector edits and transforms stay syn
 
   await expect.poll(() => page.evaluate(() => {
     const scene = (globalThis as any).kyxosStudio?.api?.getScene();
-    const selected = (globalThis as any).kyxosStudio?.api?.getSelection?.()[0];
+    const selected = document.querySelector<HTMLElement>('.hierarchy-row.selected')?.dataset.node;
     const node = scene?.nodes?.find((entry: any) => entry.id === selected);
     const light = scene?.lights?.find((entry: any) => entry.id === node?.lightId);
     return {
@@ -120,7 +121,7 @@ test('Studio camera and light selection, inspector edits and transforms stay syn
   await page.getByRole('button', { name: 'Undo', exact: true }).click();
   await expect.poll(() => page.evaluate(() => {
     const scene = (globalThis as any).kyxosStudio?.api?.getScene();
-    const selected = (globalThis as any).kyxosStudio?.api?.getSelection?.()[0];
+    const selected = document.querySelector<HTMLElement>('.hierarchy-row.selected')?.dataset.node;
     const node = scene?.nodes?.find((entry: any) => entry.id === selected);
     const light = scene?.lights?.find((entry: any) => entry.id === node?.lightId);
     return light?.shadow?.normalBias ?? null;
@@ -128,7 +129,7 @@ test('Studio camera and light selection, inspector edits and transforms stay syn
   await page.getByRole('button', { name: 'Redo', exact: true }).click();
   await expect.poll(() => page.evaluate(() => {
     const scene = (globalThis as any).kyxosStudio?.api?.getScene();
-    const selected = (globalThis as any).kyxosStudio?.api?.getSelection?.()[0];
+    const selected = document.querySelector<HTMLElement>('.hierarchy-row.selected')?.dataset.node;
     const node = scene?.nodes?.find((entry: any) => entry.id === selected);
     const light = scene?.lights?.find((entry: any) => entry.id === node?.lightId);
     return light?.shadow?.normalBias;
