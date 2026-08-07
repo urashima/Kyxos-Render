@@ -80,7 +80,7 @@ test('Studio groups topbar actions and generates reusable project and asset thum
   const assetCard = page.locator(`.asset-workspace-item[data-asset-id="${modelAssetId}"]`);
   await expect(assetCard).toBeVisible();
   await expect(assetCard).toHaveClass(/has-generated-thumbnail/, { timeout: 60_000 });
-  await expect(assetCard).toHaveAttribute('data-thumbnail-renderer', 'asset-thumbnail-v4');
+  await expect(assetCard).toHaveAttribute('data-thumbnail-renderer', 'asset-thumbnail-v5');
   const sourceHash = await page.evaluate((assetId) => {
     const asset = (globalThis as any).kyxosStudio?.api?.getScene()?.assets?.[assetId];
     return asset?.contentHash as string;
