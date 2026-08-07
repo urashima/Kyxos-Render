@@ -10,6 +10,7 @@ export type {
 export type { TransformPivot } from './transformPivot';
 export type { ViewportHelperSettings } from './viewportHelpers';
 import './boxSelection';
+import './cameraPreview';
 import './transformPivot';
 import './viewportHelpers';
 import { installBackendQueryOverride } from './backendQueryOverride';
