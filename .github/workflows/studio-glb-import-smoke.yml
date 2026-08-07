@@ -18,6 +18,7 @@ on:
       - 'tests/e2e/studio-authoring-runtime.spec.ts'
       - 'tests/e2e/studio-workspace-parity.spec.ts'
       - 'tests/e2e/studio-camera-light-parity.spec.ts'
+      - 'tests/e2e/studio-camera-viewport-parity.spec.ts'
       - 'tests/e2e/studio-source-workspace-parity.spec.ts'
       - 'tests/e2e/studio-save-publish-public.spec.ts'
       - 'tests/e2e/studio-asset-virtualization.spec.ts'
@@ -126,6 +127,9 @@ jobs:
           - id: camera-light-parity
             spec: tests/e2e/studio-camera-light-parity.spec.ts
             grep: Studio camera and light selection, inspector edits and transforms stay synchronized
+          - id: camera-viewport-parity
+            spec: tests/e2e/studio-camera-viewport-parity.spec.ts
+            grep: Studio keeps an independent authoring camera and explicitly views through authored cameras
           - id: source-workspace-parity
             spec: tests/e2e/studio-source-workspace-parity.spec.ts
             grep: Studio source workspace supports create edit save rename duplicate refresh delete and dirty close protection
