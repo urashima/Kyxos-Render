@@ -28,6 +28,13 @@ export interface ImportStepLifecycleDetail {
   error?: string;
 }
 
+interface ImportRenderLifecycleDetail {
+  id: string;
+  stage: ImportTaskStage | 'core-complete';
+  state: ImportStepLifecycleDetail['state'];
+  progress: number;
+}
+
 interface ImportCompletionReport {
   warnings?: unknown[];
   nodes?: unknown[];
@@ -93,6 +100,39 @@ function deferredDispatch<T>(name: string, detail: T): void {
   else window.setTimeout(dispatch, 0);
 }
 
+function dispatchRenderLifecycle(detail: ImportStepLifecycleDetail): void {
+  if (typeof document === 'undefined') return;
+
+  let stage: ImportTaskStage | 'core-complete' | null = null;
+  if (detail.state === 'failed') {
+    stage = detail.aborted ? 'cancelled' : 'failed';
+  } else if (detail.stage === 'core-complete') {
+    stage = 'core-complete';
+  } else if (detail.state === 'start') {
+    stage = detail.stage;
+  }
+  if (!stage) return;
+
+  // EditorSceneMode intentionally consumes this event synchronously. Pausing
+  // rendering after hashing/decoding has already started is too late on iOS:
+  // the WebContent process may be holding full GLB bytes, decoded textures and
+  // active GPU targets at the same time. Do not route this through the deferred
+  // UI event queue; heavy work starts only after the render lifecycle listener
+  // has had a chance to suspend the Studio pipeline.
+  document.dispatchEvent(new CustomEvent<ImportRenderLifecycleDetail>(
+    'kyxos:studio-import-lifecycle',
+    {
+      detail: {
+        id: detail.id,
+        stage,
+        state: detail.state,
+        progress: detail.progress,
+      },
+    },
+  ));
+  document.documentElement.dataset.importRenderLifecycle = stage;
+}
+
 function reportImportStep(detail: ImportStepLifecycleDetail): void {
   const suffix = detail.error ? ` · ${detail.error}` : '';
   console.info(
@@ -104,6 +144,9 @@ function reportImportStep(detail: ImportStepLifecycleDetail): void {
   document.documentElement.dataset.importStepStage = detail.stage;
   document.documentElement.dataset.importStepProgress = String(detail.progress);
   document.documentElement.dataset.importStepAborted = String(detail.aborted);
+  dispatchRenderLifecycle(detail);
+  // Detailed UI/diagnostic consumers remain deferred so they cannot extend the
+  // critical import path. Only the render-pause lifecycle above is synchronous.
   deferredDispatch('kyxos:studio-import-step', detail);
 }
 
