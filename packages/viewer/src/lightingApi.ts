@@ -6,6 +6,11 @@ import type {
   ScenePatch,
 } from '@kyxos/scene-contract';
 import { KyxosViewer } from './KyxosViewer';
+import {
+  findSceneLightNode,
+  resolveSceneNodeWorldTransform,
+  type ResolvedSceneTransform,
+} from './sceneComponentHierarchy';
 
 interface LightingState {
   lights: SceneLight[];
@@ -15,6 +20,7 @@ interface LightingState {
 interface ManagedLightDiagnostic {
   id: string;
   type: SceneLight['type'];
+  position: [number, number, number];
   direction: [number, number, number] | null;
 }
 
@@ -59,51 +65,63 @@ function configureShadow(light: THREE.Light & { castShadow?: boolean; shadow?: a
   }
 }
 
-function configureTransform(light: THREE.Light, source: SceneLight): void {
-  light.position.set(
+function resolveLightTransform(viewer: KyxosViewer, source: SceneLight): ResolvedSceneTransform {
+  const contract = viewer.getLoadedSceneContract();
+  const node = contract ? findSceneLightNode(contract, source.id) : null;
+  if (contract && node) {
+    return resolveSceneNodeWorldTransform(contract, node.id, source.transform);
+  }
+  const position = new THREE.Vector3(
     source.transform.position.x,
     source.transform.position.y,
     source.transform.position.z,
   );
-  light.rotation.set(
-    source.transform.rotation.x,
-    source.transform.rotation.y,
-    source.transform.rotation.z,
-  );
-  light.scale.set(
-    source.transform.scale.x,
-    source.transform.scale.y,
-    source.transform.scale.z,
-  );
-  light.updateMatrixWorld(true);
-}
-
-function authoredLightDirection(source: SceneLight): THREE.Vector3 {
   const quaternion = new THREE.Quaternion().setFromEuler(new THREE.Euler(
     source.transform.rotation.x,
     source.transform.rotation.y,
     source.transform.rotation.z,
     'XYZ',
   ));
-  return new THREE.Vector3(0, 0, -1).applyQuaternion(quaternion).normalize();
+  const scale = new THREE.Vector3(
+    source.transform.scale.x,
+    source.transform.scale.y,
+    source.transform.scale.z,
+  );
+  return {
+    matrix: new THREE.Matrix4().compose(position, quaternion, scale),
+    position,
+    quaternion,
+    scale,
+  };
+}
+
+function configureTransform(light: THREE.Light, resolved: ResolvedSceneTransform): void {
+  light.position.copy(resolved.position);
+  light.quaternion.copy(resolved.quaternion);
+  light.scale.copy(resolved.scale);
+  light.updateMatrixWorld(true);
+}
+
+function resolvedLightDirection(resolved: ResolvedSceneTransform): THREE.Vector3 {
+  return new THREE.Vector3(0, 0, -1).applyQuaternion(resolved.quaternion).normalize();
 }
 
 function configureDirectionalTarget(
   scene: THREE.Scene,
   light: THREE.DirectionalLight | THREE.SpotLight,
   source: SceneLight,
+  resolved: ResolvedSceneTransform,
 ): THREE.Object3D {
   // Camera and Light components in the Scene Contract share the conventional
   // local -Z forward axis. Three.js DirectionalLight / SpotLight derive their
   // direction from `position -> target`, so rotation alone does not affect the
-  // rendered direction. Convert the authored Euler rotation into a target point
-  // every time the Scene Contract is applied so Inspector and gizmo rotation are
-  // visually and physically identical.
-  const forward = authoredLightDirection(source);
+  // rendered direction. Use the resolved node world quaternion so a light nested
+  // beneath translated/rotated parents behaves exactly like its hierarchy gizmo.
+  const forward = resolvedLightDirection(resolved);
   const distance = source.type === 'spot'
     ? Math.max(1, source.range ?? 10)
     : 10;
-  light.target.position.copy(light.position).addScaledVector(forward, distance);
+  light.target.position.copy(resolved.position).addScaledVector(forward, distance);
   light.target.name = `${source.name} Target`;
   light.target.userData.kyxosManagedLightTarget = source.id;
   light.target.updateMatrixWorld(true);
@@ -147,20 +165,22 @@ KyxosViewer.prototype.setLighting = function setLighting(lights: SceneLight[]): 
 
     light.name = source.name;
     light.userData.kyxosManagedLight = source.id;
-    configureTransform(light, source);
+    const resolved = resolveLightTransform(this, source);
+    configureTransform(light, resolved);
     configureShadow(light as THREE.Light & { castShadow?: boolean; shadow?: any }, source);
     scene.add(light);
     current.objects.push(light);
 
     let direction: THREE.Vector3 | null = null;
     if (light instanceof THREE.DirectionalLight || light instanceof THREE.SpotLight) {
-      const target = configureDirectionalTarget(scene, light, source);
+      const target = configureDirectionalTarget(scene, light, source, resolved);
       current.objects.push(target);
       direction = target.position.clone().sub(light.position).normalize();
     }
     diagnostics.push({
       id: source.id,
       type: source.type,
+      position: [resolved.position.x, resolved.position.y, resolved.position.z],
       direction: direction ? [direction.x, direction.y, direction.z] : null,
     });
   }
@@ -225,8 +245,19 @@ KyxosViewer.prototype.applyScenePatch = async function applyScenePatchWithLighti
   patch: ScenePatch,
 ): Promise<void> {
   await originalApplyScenePatch.call(this, patch);
-  if (patch.some((operation) => operation.path.startsWith('/lights'))) {
-    const next = applyLightPatch(state(this).lights, patch);
+  if (
+    patch.some((operation) =>
+      operation.path.startsWith('/lights') ||
+      operation.path.startsWith('/nodes'),
+    )
+  ) {
+    // Parent transform, reparent and hierarchy edits can all change a component
+    // world matrix without touching /lights itself. Re-resolve from the current
+    // Scene Contract rather than leaving the rendered light behind its gizmo.
+    const contract = this.getLoadedSceneContract();
+    const next = patch.some((operation) => operation.path.startsWith('/lights'))
+      ? applyLightPatch(state(this).lights, patch)
+      : contract?.lights ?? state(this).lights;
     this.setLighting(next);
   }
 };
