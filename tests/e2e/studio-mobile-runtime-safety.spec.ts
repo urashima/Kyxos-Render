@@ -109,6 +109,18 @@ test('iPhone Studio loads and reopens GLB with one low-memory runtime while pres
     await expect(html).toHaveAttribute('data-mobile-texture-source-size', '4096x2048');
     await expect(html).toHaveAttribute('data-mobile-texture-decode-size', '2048x1024');
 
+    await page.evaluate(() => {
+      const runtime = globalThis as any;
+      runtime.__kyxosMobileImportLifecycle = [];
+      document.addEventListener('kyxos:studio-import-lifecycle', (event) => {
+        const detail = (event as CustomEvent<{ stage?: string }>).detail;
+        runtime.__kyxosMobileImportLifecycle.push({
+          stage: detail?.stage ?? '',
+          authoringReady: document.querySelector<HTMLCanvasElement>('#studio-canvas')?.dataset.authoringReady ?? '',
+        });
+      });
+    });
+
     const glb = Buffer.from(createTriangleGlb());
     await page.locator('#asset-import-input').setInputFiles({
       name: 'iphone-triangle.glb',
@@ -116,11 +128,28 @@ test('iPhone Studio loads and reopens GLB with one low-memory runtime while pres
       buffer: glb,
     });
     await expect(html).toHaveAttribute('data-import-core-complete', 'true', { timeout: 90_000 });
+    await expect(html).toHaveAttribute('data-import-render-lifecycle', 'core-complete');
     await expect(html).toHaveAttribute('data-picker-blob-read-mode', 'uncached-large');
     await expect.poll(
       () => html.getAttribute('data-import-durability-state'),
       { timeout: 5_000 },
     ).toMatch(/^(pending|saved|slow)$/);
+    await expect(canvas).toHaveAttribute('data-studio-runtime-model-loading', 'false');
+    await expect(canvas).toHaveAttribute('data-studio-runtime-frame-budget', '30');
+    await expect(canvas).toHaveAttribute('data-authoring-ready', 'true', { timeout: 10_000 });
+
+    const lifecycle = await page.evaluate(() => (globalThis as any).__kyxosMobileImportLifecycle as Array<{
+      stage: string;
+      authoringReady: string;
+    }>);
+    for (const stage of ['hashing', 'uploading', 'parsing', 'building', 'core-complete']) {
+      expect(lifecycle.some((entry) => entry.stage === stage), `lifecycle contains ${stage}`).toBe(true);
+    }
+    expect(
+      lifecycle.filter((entry) => ['hashing', 'uploading', 'parsing', 'building'].includes(entry.stage))
+        .every((entry) => entry.authoringReady === 'false'),
+      'Studio render loop stays suspended across heavyweight import stages',
+    ).toBe(true);
 
     const metadataBytes = Number(await html.getAttribute('data-glb-metadata-bytes'));
     const sourceBytes = Number(await html.getAttribute('data-glb-source-bytes'));
@@ -171,6 +200,7 @@ test('iPhone Studio loads and reopens GLB with one low-memory runtime while pres
     await expect(reopenedCanvas).toHaveAttribute('data-studio-runtime-shadows', 'disabled');
     await expect(reopenedCanvas).toHaveAttribute('data-studio-runtime-environment', 'studio-default');
     await expect(reopenedCanvas).toHaveAttribute('data-gltf-transform-mode', 'native-scene', { timeout: 60_000 });
+    await expect(reopenedCanvas).toHaveAttribute('data-studio-runtime-frame-budget', '30');
 
     const reopened = await page.evaluate(() => {
       const scene = (globalThis as any).kyxosStudio?.api?.getScene();
