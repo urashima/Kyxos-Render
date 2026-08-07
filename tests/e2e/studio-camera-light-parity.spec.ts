@@ -22,6 +22,42 @@ async function addHierarchyComponent(
   await menu.getByRole('menuitem', { name: label, exact: true }).click();
 }
 
+async function clickComponentHelper(
+  page: import('@playwright/test').Page,
+  nodeId: string,
+  kind: 'camera' | 'light',
+): Promise<void> {
+  const canvas = page.locator('#studio-canvas');
+  const target = await expect.poll(async () => {
+    return canvas.evaluate((element, expected) => {
+      const targets = JSON.parse(
+        (element as HTMLCanvasElement).dataset.editorComponentHelperTargets ?? '[]',
+      ) as Array<{ nodeId: string; kind: string; x: number; y: number; visible: boolean }>;
+      return targets.find((entry) => entry.nodeId === expected.nodeId && entry.kind === expected.kind && entry.visible)
+        ?? null;
+    }, { nodeId, kind });
+  }, { timeout: 20_000 }).not.toBeNull().then(async () => {
+    return canvas.evaluate((element, expected) => {
+      const targets = JSON.parse(
+        (element as HTMLCanvasElement).dataset.editorComponentHelperTargets ?? '[]',
+      ) as Array<{ nodeId: string; kind: string; x: number; y: number; visible: boolean }>;
+      return targets.find((entry) => entry.nodeId === expected.nodeId && entry.kind === expected.kind && entry.visible)!;
+    }, { nodeId, kind });
+  });
+
+  const box = await canvas.boundingBox();
+  expect(box).not.toBeNull();
+  if (box) {
+    // Empty-scene fixture makes the upper-left canvas corner a deterministic
+    // selection-clear location before exercising the component helper hit path.
+    await page.mouse.click(box.x + 8, box.y + 8);
+    await expect(page.locator('.hierarchy-row.selected')).toHaveCount(0);
+  }
+  await page.mouse.click(target.x, target.y);
+  await expect(page.locator(`.hierarchy-row.selected[data-node="${nodeId}"]`)).toBeVisible();
+  await expect(canvas).toHaveAttribute('data-editor-helper-last-hit', nodeId);
+}
+
 test('Studio camera and light selection, inspector edits and transforms stay synchronized', async ({ page }) => {
   test.setTimeout(180_000);
   await createStudioProject(page);
@@ -36,17 +72,25 @@ test('Studio camera and light selection, inspector edits and transforms stay syn
     const selected = document.querySelector<HTMLElement>('.hierarchy-row.selected')?.dataset.node;
     const node = scene?.nodes?.find((entry: any) => entry.cameraId && entry.id === selected);
     const camera = scene?.cameras?.find((entry: any) => entry.id === node?.cameraId);
-    return { nodeTransform: node?.transform, componentTransform: camera?.transform, cameraId: camera?.id };
+    return {
+      nodeId: node?.id,
+      nodeTransform: node?.transform,
+      componentTransform: camera?.transform,
+      cameraId: camera?.id,
+    };
   });
   expect(cameraState.nodeTransform).toEqual(cameraState.componentTransform);
   expect(cameraState.cameraId).toBeTruthy();
+  expect(cameraState.nodeId).toBeTruthy();
 
   await cameraInspector.getByLabel('FOV').fill('58');
   await expect(cameraInspector.getByLabel('FOV')).toBeFocused();
-  await cameraInspector.getByLabel('Position X').fill('5.25');
+  await cameraInspector.getByLabel('Position X').fill('0.6');
   await expect(cameraInspector.getByLabel('Position X')).toBeFocused();
-  await cameraInspector.getByLabel('Position Y').fill('2.75');
+  await cameraInspector.getByLabel('Position Y').fill('1.4');
   await expect(cameraInspector.getByLabel('Position Y')).toBeFocused();
+  await cameraInspector.getByLabel('Position Z').fill('4.5');
+  await expect(cameraInspector.getByLabel('Position Z')).toBeFocused();
 
   await expect.poll(() => page.evaluate(() => {
     const scene = (globalThis as any).kyxosStudio?.api?.getScene();
@@ -57,11 +101,23 @@ test('Studio camera and light selection, inspector edits and transforms stay syn
       fov: camera?.fov,
       nodeX: node?.transform?.position?.x,
       nodeY: node?.transform?.position?.y,
+      nodeZ: node?.transform?.position?.z,
       cameraX: camera?.transform?.position?.x,
       cameraY: camera?.transform?.position?.y,
+      cameraZ: camera?.transform?.position?.z,
     };
-  })).toEqual({ fov: 58, nodeX: 5.25, nodeY: 2.75, cameraX: 5.25, cameraY: 2.75 });
+  })).toEqual({
+    fov: 58,
+    nodeX: 0.6,
+    nodeY: 1.4,
+    nodeZ: 4.5,
+    cameraX: 0.6,
+    cameraY: 1.4,
+    cameraZ: 4.5,
+  });
 
+  await clickComponentHelper(page, cameraState.nodeId as string, 'camera');
+  await expect(cameraInspector).toBeVisible();
   await cameraInspector.getByRole('button', { name: 'Set Active' }).click();
   await expect.poll(() => page.evaluate(() => {
     const scene = (globalThis as any).kyxosStudio?.api?.getScene();
@@ -75,18 +131,24 @@ test('Studio camera and light selection, inspector edits and transforms stay syn
   await expect(lightInspector).toBeVisible();
   await expect(page.locator('.hierarchy-row.selected .kx-component-badge')).toHaveText('LGT');
 
-  await expect.poll(() => page.evaluate(() => {
+  const lightNodeId = await expect.poll(() => page.evaluate(() => {
     const scene = (globalThis as any).kyxosStudio?.api?.getScene();
     const selected = document.querySelector<HTMLElement>('.hierarchy-row.selected')?.dataset.node;
     const node = scene?.nodes?.find((entry: any) => entry.id === selected);
     const light = scene?.lights?.find((entry: any) => entry.id === node?.lightId);
-    return JSON.stringify(node?.transform) === JSON.stringify(light?.transform);
-  })).toBe(true);
+    return JSON.stringify(node?.transform) === JSON.stringify(light?.transform) ? node?.id ?? null : null;
+  })).not.toBeNull().then(() => page.evaluate(() => {
+    const scene = (globalThis as any).kyxosStudio?.api?.getScene();
+    const selected = document.querySelector<HTMLElement>('.hierarchy-row.selected')?.dataset.node;
+    return scene?.nodes?.find((entry: any) => entry.id === selected)?.id as string;
+  }));
 
   await lightInspector.getByLabel('Intensity').fill('7.5');
   await expect(lightInspector.getByLabel('Intensity')).toBeFocused();
   await lightInspector.getByLabel('Range').fill('18');
   await expect(lightInspector.getByLabel('Range')).toBeFocused();
+  await lightInspector.getByLabel('Position X').fill('0');
+  await lightInspector.getByLabel('Position Y').fill('1');
   await lightInspector.getByLabel('Position Z').fill('-3.5');
   await expect(lightInspector.getByLabel('Position Z')).toBeFocused();
   await lightInspector.getByLabel('Shadow Bias').fill('0.0015');
@@ -100,7 +162,11 @@ test('Studio camera and light selection, inspector edits and transforms stay syn
     return {
       intensity: light?.intensity,
       range: light?.range,
+      nodeX: node?.transform?.position?.x,
+      nodeY: node?.transform?.position?.y,
       nodeZ: node?.transform?.position?.z,
+      lightX: light?.transform?.position?.x,
+      lightY: light?.transform?.position?.y,
       lightZ: light?.transform?.position?.z,
       bias: light?.shadow?.bias,
       normalBias: light?.shadow?.normalBias,
@@ -108,11 +174,18 @@ test('Studio camera and light selection, inspector edits and transforms stay syn
   })).toEqual({
     intensity: 7.5,
     range: 18,
+    nodeX: 0,
+    nodeY: 1,
     nodeZ: -3.5,
+    lightX: 0,
+    lightY: 1,
     lightZ: -3.5,
     bias: 0.0015,
     normalBias: 0.035,
   });
+
+  await clickComponentHelper(page, lightNodeId, 'light');
+  await expect(lightInspector).toBeVisible();
 
   await page.getByRole('button', { name: 'Undo', exact: true }).click();
   await expect.poll(() => page.evaluate(() => {
