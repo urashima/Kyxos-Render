@@ -15,11 +15,25 @@ type ObjectUrlRegistryGlobal = typeof globalThis & {
   [localBlobBytesRegistryKey]?: WeakMap<Blob, Uint8Array>;
 };
 
+function constrainedMobileDecode(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const ipadDesktopMode = navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1;
+  return /iPhone|iPad|iPod/i.test(navigator.userAgent) || ipadDesktopMode;
+}
+
+function decoderWorkerLimit(): number {
+  return constrainedMobileDecode() ? 1 : 2;
+}
+
 function markLoadStage(stage: string): void {
   if (typeof document !== 'undefined') {
     document.documentElement.dataset.gltfLoadStage = stage;
+    document.documentElement.dataset.gltfDecoderWorkers = String(decoderWorkerLimit());
     const canvas = document.querySelector<HTMLCanvasElement>('#studio-canvas');
-    if (canvas) canvas.dataset.gltfLoadStage = stage;
+    if (canvas) {
+      canvas.dataset.gltfLoadStage = stage;
+      canvas.dataset.gltfDecoderWorkers = String(decoderWorkerLimit());
+    }
   }
   console.warn(`[gltf-loader] ${stage}`);
 }
@@ -55,6 +69,16 @@ function progress(
   );
 }
 
+function arrayBufferForRegisteredBytes(bytes: Uint8Array): ArrayBuffer {
+  if (bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength) {
+    return bytes.buffer as ArrayBuffer;
+  }
+  return bytes.buffer.slice(
+    bytes.byteOffset,
+    bytes.byteOffset + bytes.byteLength,
+  ) as ArrayBuffer;
+}
+
 async function loadRegisteredBlob(
   url: string,
   onProgress?: ProgressCallback,
@@ -69,7 +93,7 @@ async function loadRegisteredBlob(
   if (exact) {
     markLoadStage('registered-bytes-read-start');
     progress(onProgress, 0, exact.byteLength);
-    const buffer = exact.slice().buffer;
+    const buffer = arrayBufferForRegisteredBytes(exact);
     progress(onProgress, exact.byteLength, exact.byteLength);
     markLoadStage('registered-bytes-read-complete');
     return buffer;
@@ -124,6 +148,11 @@ export function createConfiguredGltfLoader(
   _options: ConfiguredGltfLoaderOptions = {},
 ): GLTFLoader {
   const loader = new GLTFLoader();
+  // Two simultaneous decoder workers are a useful desktop throughput default,
+  // but on iPhone each worker can temporarily retain compressed and decoded
+  // buffers at the same time. Serial decoding trades a little import latency for
+  // a much lower peak resident set and avoids Safari page-process termination.
+  dracoLoader.setWorkerLimit(decoderWorkerLimit());
   loader.setDRACOLoader(dracoLoader);
   loader.setMeshoptDecoder(MeshoptDecoder);
 
@@ -133,7 +162,7 @@ export function createConfiguredGltfLoader(
   if (renderer) {
     let ktx2Loader = ktx2Loaders.get(renderer);
     if (!ktx2Loader) {
-      ktx2Loader = new KTX2Loader().setWorkerLimit(2);
+      ktx2Loader = new KTX2Loader().setWorkerLimit(decoderWorkerLimit());
       ktx2Loader.detectSupport(renderer as any);
       ktx2Loaders.set(renderer, ktx2Loader);
     }
