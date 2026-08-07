@@ -1,3 +1,4 @@
+import './blob-constructor-byte-registry';
 import { registeredLocalBlobBytes } from './local-blob-byte-registry';
 
 const installed = Symbol.for('kyxos.generatedGlbByteCache.installed');
