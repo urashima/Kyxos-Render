@@ -1,3 +1,4 @@
+import { deflateSync } from 'node:zlib';
 import { expect, test } from '@playwright/test';
 import { createTriangleGlb } from '../../packages/test-fixtures/src/index';
 
@@ -6,6 +7,43 @@ const IPHONE_UA = [
   'AppleWebKit/605.1.15 (KHTML, like Gecko)',
   'Version/18.6 Mobile/15E148 Safari/604.1',
 ].join(' ');
+
+function crc32(input: Uint8Array): number {
+  let crc = 0xffffffff;
+  for (const byte of input) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function pngChunk(type: string, data: Uint8Array): Buffer {
+  const typeBytes = Buffer.from(type, 'ascii');
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(data.byteLength, 0);
+  const checksum = Buffer.alloc(4);
+  checksum.writeUInt32BE(crc32(Buffer.concat([typeBytes, Buffer.from(data)])), 0);
+  return Buffer.concat([length, typeBytes, Buffer.from(data), checksum]);
+}
+
+function createLargeSolidPng(width = 4096, height = 2048): Buffer {
+  const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8; // grayscale, 8-bit
+  ihdr[9] = 0;
+  const scanlines = Buffer.alloc((width + 1) * height);
+  const compressed = deflateSync(scanlines, { level: 9 });
+  return Buffer.concat([
+    signature,
+    pngChunk('IHDR', ihdr),
+    pngChunk('IDAT', compressed),
+    pngChunk('IEND', Buffer.alloc(0)),
+  ]);
+}
 
 test('iPhone Studio loads GLB with one low-memory runtime and preserves authored render quality', async ({ browser }) => {
   test.setTimeout(180_000);
@@ -43,6 +81,25 @@ test('iPhone Studio loads GLB with one low-memory runtime and preserves authored
     expect(authoredQualityBefore).toBeTruthy();
     await expect(canvas).toHaveAttribute('data-authored-render-quality', authoredQualityBefore);
 
+    // Verify the Studio-only mobile decoder budget with a real 4096×2048 PNG.
+    // The PNG compresses to a very small fixture, but a native full-size RGBA
+    // decode would still occupy tens of MB on WebKit before GPU upload.
+    const largeTexture = createLargeSolidPng().toString('base64');
+    const decodedSize = await page.evaluate(async (encoded) => {
+      const binary = atob(encoded);
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+      const bitmap = await createImageBitmap(new Blob([bytes], { type: 'image/png' }));
+      const result = { width: bitmap.width, height: bitmap.height };
+      bitmap.close();
+      return result;
+    }, largeTexture);
+    expect(decodedSize).toEqual({ width: 2048, height: 1024 });
+    await expect(html).toHaveAttribute('data-mobile-texture-max-dimension', '2048');
+    await expect(html).toHaveAttribute('data-mobile-texture-downsampled', 'true');
+    await expect(html).toHaveAttribute('data-mobile-texture-source-size', '4096x2048');
+    await expect(html).toHaveAttribute('data-mobile-texture-decode-size', '2048x1024');
+
     const glb = Buffer.from(createTriangleGlb());
     await page.locator('#asset-import-input').setInputFiles({
       name: 'iphone-triangle.glb',
@@ -51,6 +108,10 @@ test('iPhone Studio loads GLB with one low-memory runtime and preserves authored
     });
     await expect(html).toHaveAttribute('data-import-core-complete', 'true', { timeout: 90_000 });
     await expect(html).toHaveAttribute('data-picker-blob-read-mode', 'uncached-large');
+    await expect.poll(
+      () => html.getAttribute('data-import-durability-state'),
+      { timeout: 5_000 },
+    ).toMatch(/^(pending|saved|slow)$/);
 
     const metadataBytes = Number(await html.getAttribute('data-glb-metadata-bytes'));
     const sourceBytes = Number(await html.getAttribute('data-glb-source-bytes'));
