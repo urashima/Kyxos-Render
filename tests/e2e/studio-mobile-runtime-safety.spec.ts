@@ -7,6 +7,7 @@ const IPHONE_UA = [
   'AppleWebKit/605.1.15 (KHTML, like Gecko)',
   'Version/18.6 Mobile/15E148 Safari/604.1',
 ].join(' ');
+const PROJECT_NAME = 'iPhone Runtime Fixture';
 
 function crc32(input: Uint8Array): number {
   let crc = 0xffffffff;
@@ -45,8 +46,8 @@ function createLargeSolidPng(width = 4096, height = 2048): Buffer {
   ]);
 }
 
-test('iPhone Studio loads GLB with one low-memory runtime and preserves authored render quality', async ({ browser }) => {
-  test.setTimeout(180_000);
+test('iPhone Studio loads and reopens GLB with one low-memory runtime while preserving authored quality', async ({ browser }) => {
+  test.setTimeout(240_000);
   const context = await browser.newContext({
     userAgent: IPHONE_UA,
     viewport: { width: 393, height: 852 },
@@ -61,7 +62,7 @@ test('iPhone Studio loads GLB with one low-memory runtime and preserves authored
     await page.getByLabel('Email').fill('mobile-runtime-safety@kyxos.local');
     await page.getByLabel('Password').fill('mobile-runtime-safety');
     await page.getByRole('button', { name: 'Sign in' }).click();
-    page.once('dialog', (dialog) => dialog.accept('iPhone Runtime Fixture'));
+    page.once('dialog', (dialog) => dialog.accept(PROJECT_NAME));
     await page.getByRole('button', { name: 'New project' }).click();
 
     const html = page.locator('html');
@@ -72,12 +73,14 @@ test('iPhone Studio loads GLB with one low-memory runtime and preserves authored
     await expect(html).toHaveAttribute('data-studio-runtime-quality', 'low');
     await expect(html).toHaveAttribute('data-studio-runtime-pixel-ratio', '1');
     await expect(html).toHaveAttribute('data-studio-runtime-shadows', 'disabled');
+    await expect(html).toHaveAttribute('data-studio-runtime-environment', 'studio-default');
     await expect(html).toHaveAttribute('data-studio-runtime-pipeline', 'beauty-only');
     await expect(html).toHaveAttribute('data-studio-runtime-mrt', 'disabled');
     await expect(canvas).toHaveAttribute('data-studio-runtime-profile', 'mobile-safe');
     await expect(canvas).toHaveAttribute('data-studio-runtime-backend', 'webgl2');
     await expect(canvas).toHaveAttribute('data-studio-runtime-quality', 'low');
     await expect(canvas).toHaveAttribute('data-studio-runtime-shadows', 'disabled');
+    await expect(canvas).toHaveAttribute('data-studio-runtime-environment', 'studio-default');
     await expect(canvas).toHaveAttribute('data-studio-runtime-pipeline', 'beauty-only');
     await expect(canvas).toHaveAttribute('data-studio-runtime-mrt', 'disabled');
 
@@ -131,6 +134,7 @@ test('iPhone Studio loads GLB with one low-memory runtime and preserves authored
     expect(authoredQualityAfter).toBe(authoredQualityBefore);
     await expect(canvas).toHaveAttribute('data-studio-runtime-quality', 'low');
     await expect(canvas).toHaveAttribute('data-studio-runtime-pipeline', 'beauty-only');
+    await expect(canvas).toHaveAttribute('data-gltf-transform-mode', 'native-scene');
 
     const modelAssetId = await page.evaluate(() => {
       const scene = (globalThis as any).kyxosStudio?.api?.getScene();
@@ -143,6 +147,40 @@ test('iPhone Studio loads GLB with one low-memory runtime and preserves authored
     await expect(page.locator('.kx-thumbnail-render-host')).toHaveCount(0);
     await expect(modelCard).not.toHaveClass(/has-generated-thumbnail/);
     await expect(html).toHaveAttribute('data-project-thumbnail-state', 'mobile-deferred');
+
+    // Wait until the authoritative draft is durable, then reproduce the user's
+    // observed recovery path: a WebKit reload lands on Projects, and opening the
+    // same persisted project must decode the existing GLB without allocating the
+    // desktop MRT / HDR / shadow runtime.
+    await expect.poll(
+      () => html.getAttribute('data-import-durability-state'),
+      { timeout: 45_000 },
+    ).toBe('saved');
+    await expect(page.locator('.save-state')).toHaveAttribute('data-state', 'Saved', { timeout: 45_000 });
+
+    await page.reload();
+    const projectCard = page.locator('.project-card').filter({ hasText: PROJECT_NAME });
+    await expect(projectCard).toBeVisible({ timeout: 30_000 });
+    await projectCard.click();
+
+    const reopenedCanvas = page.locator('#studio-canvas');
+    await expect(reopenedCanvas).toBeVisible({ timeout: 60_000 });
+    await expect(reopenedCanvas).toHaveAttribute('data-studio-runtime-profile', 'mobile-safe');
+    await expect(reopenedCanvas).toHaveAttribute('data-studio-runtime-pipeline', 'beauty-only');
+    await expect(reopenedCanvas).toHaveAttribute('data-studio-runtime-mrt', 'disabled');
+    await expect(reopenedCanvas).toHaveAttribute('data-studio-runtime-shadows', 'disabled');
+    await expect(reopenedCanvas).toHaveAttribute('data-studio-runtime-environment', 'studio-default');
+    await expect(reopenedCanvas).toHaveAttribute('data-gltf-transform-mode', 'native-scene', { timeout: 60_000 });
+
+    const reopened = await page.evaluate(() => {
+      const scene = (globalThis as any).kyxosStudio?.api?.getScene();
+      return {
+        quality: scene?.renderSettings?.qualityPreset as string,
+        modelCount: Object.values(scene?.assets ?? {}).filter((entry: any) => entry.kind === 'model').length,
+      };
+    });
+    expect(reopened.quality).toBe(authoredQualityBefore);
+    expect(reopened.modelCount).toBe(1);
   } finally {
     await context.close();
   }
