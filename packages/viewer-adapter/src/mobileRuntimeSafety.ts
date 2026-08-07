@@ -34,6 +34,7 @@ interface AdapterPrototype {
   mount(canvas: HTMLCanvasElement): Promise<void>;
   loadDocument(document: SceneDocument): Promise<void>;
   applyPatch(patch: ScenePatch): Promise<void>;
+  loadEnvironmentAsset(assetId?: string): Promise<void>;
   setQualityPreset(name: QualityPresetName | 'ultra'): void;
   mountCameraPreview?: (canvas: HTMLCanvasElement, cameraId: string) => Promise<void>;
 }
@@ -100,6 +101,12 @@ function createMobileSafeScene(authored: KyxosSceneContract): KyxosSceneContract
     // the transient mobile runtime renders lights without shadow targets.
     castShadow: false,
   }));
+  // HDR/EXR authoring environments can be 4K/8K floating-point images. Loading
+  // them immediately after a texture-heavy GLB creates another large transient
+  // decode + PMREM allocation on iOS. Keep the authored assetId in the real
+  // SceneDocument, while Mobile Studio previews against its lightweight built-in
+  // environment. Desktop and Public Viewer still resolve the authored asset.
+  if (scene.environment.assetId) delete scene.environment.assetId;
   return scene;
 }
 
@@ -109,11 +116,13 @@ function markMobileProfile(canvas?: HTMLCanvasElement | null): void {
   document.documentElement.dataset.studioRuntimeQuality = 'low';
   document.documentElement.dataset.studioRuntimePixelRatio = '1';
   document.documentElement.dataset.studioRuntimeShadows = 'disabled';
+  document.documentElement.dataset.studioRuntimeEnvironment = 'studio-default';
   if (canvas) {
     canvas.dataset.studioRuntimeProfile = 'mobile-safe';
     canvas.dataset.studioRuntimeBackend = 'webgl2';
     canvas.dataset.studioRuntimeQuality = 'low';
     canvas.dataset.studioRuntimeShadows = 'disabled';
+    canvas.dataset.studioRuntimeEnvironment = 'studio-default';
   }
 }
 
@@ -131,6 +140,7 @@ function applyPixelRatioCap(adapter: BrowserKyxosViewportAdapter): void {
 function sanitizeMobilePatch(patch: ScenePatch): ScenePatch {
   return patch.flatMap((operation) => {
     if (operation.path.startsWith('/renderSettings')) return [];
+    if (operation.path === '/environment/assetId') return [];
     if (/^\/lights\/\d+\/castShadow$/.test(operation.path)) {
       if (operation.op === 'remove' || operation.op === 'test') return [];
       return [{ ...operation, value: false }];
@@ -198,7 +208,10 @@ function installMobileAdapterSafety(): void {
     if (!isConstrainedMobileRuntime()) return originalApplyPatch.call(this, patch);
     const runtimePatch = sanitizeMobilePatch(patch);
     if (runtimePatch.length) await originalApplyPatch.call(this, runtimePatch);
-    if (runtimePatch.length !== patch.length || patch.some((entry) => entry.path.startsWith('/renderSettings'))) {
+    if (
+      runtimePatch.length !== patch.length ||
+      patch.some((entry) => entry.path.startsWith('/renderSettings'))
+    ) {
       const internals = this as unknown as AdapterInternals;
       const authored = internals.document?.value.renderSettings;
       if (authored && internals.viewer) {
@@ -209,6 +222,25 @@ function installMobileAdapterSafety(): void {
       }
       markMobileProfile(internals.canvas);
     }
+  };
+
+  const originalLoadEnvironmentAsset = prototype.loadEnvironmentAsset;
+  prototype.loadEnvironmentAsset = function loadEnvironmentAssetWithMobileSafety(
+    this: BrowserKyxosViewportAdapter,
+    assetId?: string,
+  ): Promise<void> {
+    if (!isConstrainedMobileRuntime()) {
+      return originalLoadEnvironmentAsset.call(this, assetId);
+    }
+    const internals = this as unknown as AdapterInternals;
+    if (internals.canvas) {
+      internals.canvas.dataset.authoredEnvironmentAsset = assetId ?? '';
+    }
+    markMobileProfile(internals.canvas);
+    // Keep the runtime on the built-in PMREM even when the user selects an HDR.
+    // The authoritative document already records the selected asset for desktop
+    // editing and publication.
+    return originalLoadEnvironmentAsset.call(this, undefined);
   };
 
   const originalSetQualityPreset = prototype.setQualityPreset;
