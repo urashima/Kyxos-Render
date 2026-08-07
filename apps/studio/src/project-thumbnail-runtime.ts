@@ -1,0 +1,222 @@
+import { hashBlob } from '@kyxos/api-client';
+import { createDurableApiClient } from '@kyxos/api-client/durable';
+import { resolveKyxosRuntimeBackendConfig } from '@kyxos/api-client/runtime-config';
+import type { ProjectSession } from '@kyxos/editor-core';
+import { BrowserKyxosViewportAdapter } from '@kyxos/viewer-adapter';
+
+const LOCAL_KEY = 'kyxos-studio-local-v1';
+const THUMBNAIL_WIDTH = 512;
+const THUMBNAIL_HEIGHT = 288;
+const CAPTURE_DEBOUNCE_MS = 2600;
+const MIN_CAPTURE_INTERVAL_MS = 12_000;
+
+const backendConfig = resolveKyxosRuntimeBackendConfig(import.meta.env);
+const thumbnailClient = createDurableApiClient({
+  url: backendConfig.supabaseUrl,
+  anonKey: backendConfig.supabaseAnonKey,
+  functionsUrl: backendConfig.functionsUrl,
+});
+
+async function normalizedThumbnail(blob: Blob): Promise<Blob> {
+  const bitmap = await createImageBitmap(blob);
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = THUMBNAIL_WIDTH;
+    canvas.height = THUMBNAIL_HEIGHT;
+    const context = canvas.getContext('2d', { alpha: false });
+    if (!context) throw new Error('Canvas 2D is unavailable for project thumbnail generation.');
+    context.fillStyle = '#11151d';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    const scale = Math.max(canvas.width / bitmap.width, canvas.height / bitmap.height);
+    const width = Math.max(1, bitmap.width * scale);
+    const height = Math.max(1, bitmap.height * scale);
+    context.drawImage(
+      bitmap,
+      (canvas.width - width) / 2,
+      (canvas.height - height) / 2,
+      width,
+      height,
+    );
+    return await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob(
+        (output) => output ? resolve(output) : reject(new Error('Project thumbnail encoding failed.')),
+        'image/webp',
+        0.8,
+      );
+    });
+  } finally {
+    bitmap.close();
+  }
+}
+
+async function blobToDataUrl(blob: Blob): Promise<string> {
+  return await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ''));
+    reader.onerror = () => reject(reader.error ?? new Error('Thumbnail data URL conversion failed.'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+function persistLocalThumbnail(projectId: string, thumbnail: string): void {
+  try {
+    const state = JSON.parse(localStorage.getItem(LOCAL_KEY) ?? '{}') as {
+      projects?: Array<{ id: string; thumbnail?: string; updatedAt?: string }>;
+    };
+    const project = state.projects?.find((entry) => entry.id === projectId);
+    if (!project) return;
+    project.thumbnail = thumbnail;
+    project.updatedAt = new Date().toISOString();
+    localStorage.setItem(LOCAL_KEY, JSON.stringify(state));
+  } catch (error) {
+    console.warn('[Kyxos] Local project thumbnail persistence failed.', error);
+  }
+}
+
+function cloudHeaders(extra?: HeadersInit): Headers {
+  const headers = new Headers(extra);
+  const token = sessionStorage.getItem('kyxos-token');
+  if (backendConfig.supabaseAnonKey) headers.set('apikey', backendConfig.supabaseAnonKey);
+  if (token) headers.set('authorization', `Bearer ${token}`);
+  return headers;
+}
+
+async function postgrest(path: string, init: RequestInit): Promise<void> {
+  if (!backendConfig.supabaseUrl || !backendConfig.supabaseAnonKey) return;
+  const response = await fetch(`${backendConfig.supabaseUrl.replace(/\/$/, '')}/rest/v1/${path}`, {
+    ...init,
+    headers: cloudHeaders(init.headers),
+  });
+  if (!response.ok) {
+    throw new Error(`Project thumbnail metadata update failed (${response.status}): ${await response.text()}`);
+  }
+}
+
+async function persistCloudThumbnail(projectId: string, blob: Blob): Promise<string> {
+  const hash = await hashBlob(blob);
+  const ticket = await thumbnailClient.assets.createUpload({
+    hash,
+    name: `project-thumbnail-${projectId}.webp`,
+    mimeType: 'image/webp',
+    byteSize: blob.size,
+  });
+  if (!ticket.alreadyExists) {
+    await thumbnailClient.assets.upload(ticket, blob);
+    await thumbnailClient.assets.completeUpload(ticket.assetId, {
+      kind: 'project-thumbnail',
+      projectId,
+      width: THUMBNAIL_WIDTH,
+      height: THUMBNAIL_HEIGHT,
+      generatedBy: 'kyxos-studio',
+    });
+  }
+
+  // Link the thumbnail asset into the project so editors/viewers can resolve it
+  // through normal project-member RLS, then make it the current project cover.
+  await postgrest('project_assets?on_conflict=project_id,asset_id', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      Prefer: 'resolution=merge-duplicates,return=minimal',
+    },
+    body: JSON.stringify({ project_id: projectId, asset_id: ticket.assetId }),
+  });
+  await postgrest(`projects?id=eq.${encodeURIComponent(projectId)}`, {
+    method: 'PATCH',
+    headers: {
+      'content-type': 'application/json',
+      Prefer: 'return=minimal',
+    },
+    body: JSON.stringify({
+      thumbnail_asset_id: ticket.assetId,
+      updated_at: new Date().toISOString(),
+    }),
+  });
+  return ticket.assetId;
+}
+
+async function persistThumbnail(projectId: string, rawBlob: Blob): Promise<void> {
+  const blob = await normalizedThumbnail(rawBlob);
+  if (backendConfig.provider === 'supabase') {
+    const assetId = await persistCloudThumbnail(projectId, blob);
+    document.documentElement.dataset.projectThumbnailAssetId = assetId;
+  } else {
+    persistLocalThumbnail(projectId, await blobToDataUrl(blob));
+  }
+  document.documentElement.dataset.projectThumbnailState = 'saved';
+  window.dispatchEvent(new CustomEvent('kx:project-thumbnail-updated', { detail: { projectId } }));
+}
+
+const originalBindSession = BrowserKyxosViewportAdapter.prototype.bindSession;
+BrowserKyxosViewportAdapter.prototype.bindSession = function bindSessionWithProjectThumbnail(
+  session: ProjectSession,
+): () => void {
+  const adapter = this;
+  const disposeOriginal = originalBindSession.call(adapter, session);
+  const root = document.querySelector<HTMLElement>('.kyxos-studio-shell');
+  if (root) root.dataset.projectId = session.projectId;
+  document.documentElement.dataset.kxActiveProjectId = session.projectId;
+
+  let timer = 0;
+  let disposed = false;
+  let inFlight: Promise<void> | null = null;
+  let lastCaptureAt = 0;
+  let lastCapturedVersion = -1;
+
+  const capture = async (force = false) => {
+    if (disposed) return;
+    const version = session.document.version;
+    const now = Date.now();
+    if (!force && version === lastCapturedVersion) return;
+    if (!force && now - lastCaptureAt < MIN_CAPTURE_INTERVAL_MS) {
+      schedule(MIN_CAPTURE_INTERVAL_MS - (now - lastCaptureAt));
+      return;
+    }
+    if (inFlight) return inFlight;
+    document.documentElement.dataset.projectThumbnailState = 'capturing';
+    inFlight = (async () => {
+      try {
+        const blob = await adapter.captureThumbnail();
+        await persistThumbnail(session.projectId, blob);
+        lastCapturedVersion = version;
+        lastCaptureAt = Date.now();
+      } catch (error) {
+        document.documentElement.dataset.projectThumbnailState = 'error';
+        console.warn('[Kyxos] Project thumbnail capture failed.', error);
+      } finally {
+        inFlight = null;
+      }
+    })();
+    return inFlight;
+  };
+
+  function schedule(delay = CAPTURE_DEBOUNCE_MS): void {
+    if (disposed) return;
+    window.clearTimeout(timer);
+    timer = window.setTimeout(() => void capture(), delay);
+  }
+
+  const onDocumentChange = () => schedule();
+  session.document.addEventListener('change', onDocumentChange);
+
+  const onTopbarAction = (event: Event) => {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>('button');
+    const label = (button?.getAttribute('aria-label') ?? button?.textContent ?? '').trim();
+    if (label === 'Publish' || /Projects/i.test(label)) void capture(true);
+  };
+  root?.addEventListener('click', onTopbarAction, { capture: true });
+
+  // Produce a cover for newly created projects even before the first edit.
+  schedule(1800);
+
+  return () => {
+    disposed = true;
+    window.clearTimeout(timer);
+    session.document.removeEventListener('change', onDocumentChange);
+    root?.removeEventListener('click', onTopbarAction, { capture: true });
+    if (document.documentElement.dataset.kxActiveProjectId === session.projectId) {
+      delete document.documentElement.dataset.kxActiveProjectId;
+    }
+    disposeOriginal();
+  };
+};

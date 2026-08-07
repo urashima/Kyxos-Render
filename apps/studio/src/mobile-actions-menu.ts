@@ -9,11 +9,17 @@ function visibleLabel(button: HTMLButtonElement): string {
 function actionableButtons(root: HTMLElement): HTMLButtonElement[] {
   const slot = root.querySelector<HTMLElement>('.studio-topbar-slot');
   if (!slot) return [];
-  return [...slot.querySelectorAll<HTMLButtonElement>(':scope > button')]
-    .filter((button) => {
-      const label = visibleLabel(button);
-      return label && !EXCLUDED_LABELS.has(label) && !button.classList.contains('preview-toggle');
-    });
+  const explicitlyGrouped = [...slot.querySelectorAll<HTMLButtonElement>('button[data-kx-mobile-action-source="true"]')];
+  const candidates = explicitlyGrouped.length
+    ? explicitlyGrouped
+    : [...slot.querySelectorAll<HTMLButtonElement>(':scope > button')];
+  return [...new Set(candidates)].filter((button) => {
+    const label = visibleLabel(button);
+    return label
+      && !EXCLUDED_LABELS.has(label)
+      && !button.classList.contains('preview-toggle')
+      && !button.classList.contains('kx-topbar-overflow-trigger');
+  });
 }
 
 function mount(root: HTMLElement): void {
@@ -105,7 +111,12 @@ function mount(root: HTMLElement): void {
     if (!menu.hidden) render();
   });
   const slot = root.querySelector<HTMLElement>('.studio-topbar-slot');
-  if (slot) syncDisabled.observe(slot, { childList: true, subtree: true, attributes: true, attributeFilter: ['disabled'] });
+  if (slot) syncDisabled.observe(slot, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ['disabled', 'data-kx-mobile-action-source'],
+  });
 
   end.prepend(trigger, menu);
 }

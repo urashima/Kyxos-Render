@@ -1,0 +1,163 @@
+.studio-topbar-slot[data-kx-topbar-layout='true'] {
+  display: grid;
+  grid-template-columns: minmax(250px, 1fr) auto auto auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  width: 100%;
+}
+
+.kx-topbar-context,
+.kx-topbar-editor-tools,
+.kx-topbar-primary,
+.kx-topbar-cluster {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.kx-topbar-context {
+  overflow: hidden;
+}
+
+.kx-topbar-context > button:first-child {
+  flex: 0 0 auto;
+}
+
+.kx-topbar-project-copy {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.kx-topbar-title {
+  display: block;
+  min-width: 0;
+  max-width: min(34vw, 420px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kx-topbar-project-copy .role-badge,
+.kx-topbar-project-copy .presence-strip,
+.kx-topbar-context .save-state {
+  flex: 0 0 auto;
+}
+
+.kx-topbar-editor-tools {
+  justify-self: center;
+  padding: 3px;
+  border: 1px solid color-mix(in srgb, var(--kx-border, #5a6472) 55%, transparent);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--kx-surface, #171b22) 82%, transparent);
+}
+
+.kx-topbar-cluster + .kx-topbar-cluster {
+  padding-left: 6px;
+  border-left: 1px solid color-mix(in srgb, var(--kx-border, #5a6472) 45%, transparent);
+}
+
+.kx-topbar-editor-tools .tool-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.kx-topbar-editor-tools button,
+.kx-topbar-editor-tools select,
+.kx-topbar-primary button,
+.kx-topbar-overflow-trigger {
+  min-height: 30px;
+}
+
+.kx-topbar-primary {
+  justify-self: end;
+}
+
+.kx-topbar-publish {
+  font-weight: 650;
+}
+
+.kx-topbar-overflow {
+  position: relative;
+  justify-self: end;
+}
+
+.kx-topbar-overflow-menu {
+  position: absolute;
+  z-index: 1100;
+  top: calc(100% + 8px);
+  right: 0;
+  width: min(240px, calc(100vw - 24px));
+  padding: 6px;
+  border: 1px solid color-mix(in srgb, var(--kx-border, #5a6472) 70%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--kx-surface, #15191f) 96%, transparent);
+  box-shadow: 0 18px 44px rgb(0 0 0 / 38%);
+  backdrop-filter: blur(16px);
+}
+
+.kx-topbar-overflow-menu[hidden] {
+  display: none;
+}
+
+.kx-topbar-overflow-menu > button {
+  display: flex;
+  width: 100%;
+  min-height: 34px;
+  justify-content: flex-start;
+  margin: 0;
+  border-radius: 7px;
+}
+
+.kyxos-studio-shell[data-topbar-density='comfortable'] .kx-topbar-transform-cluster .tool-group {
+  display: none;
+}
+
+.kyxos-studio-shell[data-topbar-density='comfortable'] .kx-topbar-title {
+  max-width: 26vw;
+}
+
+.kyxos-studio-shell[data-topbar-density='compact'] .kx-topbar-editor-tools {
+  display: none;
+}
+
+.kyxos-studio-shell[data-topbar-density='compact'] .studio-topbar-slot[data-kx-topbar-layout='true'] {
+  grid-template-columns: minmax(150px, 1fr) auto auto;
+}
+
+.kyxos-studio-shell[data-topbar-density='compact'] .kx-topbar-project-copy .role-badge,
+.kyxos-studio-shell[data-topbar-density='compact'] .kx-topbar-project-copy .presence-strip {
+  display: none;
+}
+
+@media (max-width: 680px) {
+  .studio-topbar-slot[data-kx-topbar-layout='true'] {
+    display: flex;
+    gap: 5px;
+  }
+
+  .kx-topbar-context {
+    flex: 1 1 auto;
+  }
+
+  .kx-topbar-context > button:first-child,
+  .kx-topbar-project-copy .role-badge,
+  .kx-topbar-project-copy .presence-strip,
+  .kx-topbar-primary > button:not(.kx-topbar-publish),
+  .kx-topbar-overflow {
+    display: none;
+  }
+
+  .kx-topbar-title {
+    max-width: 38vw;
+  }
+
+  .kx-topbar-primary {
+    flex: 0 0 auto;
+  }
+}
