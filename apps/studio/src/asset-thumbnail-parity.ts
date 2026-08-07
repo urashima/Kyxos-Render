@@ -2,10 +2,15 @@ import './asset-thumbnail-parity.css';
 import { createDurableApiClient } from '@kyxos/api-client/durable';
 import { resolveKyxosRuntimeBackendConfig } from '@kyxos/api-client/runtime-config';
 import { SceneDocument, type ProjectSession } from '@kyxos/editor-core';
-import type { KyxosSceneContract, SceneAsset, SceneNode } from '@kyxos/scene-contract';
+import {
+  createEmptySceneContract,
+  type KyxosSceneContract,
+  type SceneAsset,
+  type SceneNode,
+} from '@kyxos/scene-contract';
 import { BrowserKyxosViewportAdapter } from '@kyxos/viewer-adapter';
 
-const RENDERER_VERSION = 'asset-thumbnail-v3';
+const RENDERER_VERSION = 'asset-thumbnail-v4';
 const WIDTH = 256;
 const HEIGHT = 144;
 const CACHE_DB = 'kyxos-studio-thumbnail-cache';
@@ -158,48 +163,112 @@ async function rasterize(blob: Blob, checker = false): Promise<string> {
   }
 }
 
+function addAncestors(nodesById: Map<string, SceneNode>, keep: Set<string>, id: string): void {
+  let current = nodesById.get(id);
+  const visited = new Set<string>();
+  while (current && !visited.has(current.id)) {
+    visited.add(current.id);
+    keep.add(current.id);
+    if (!current.parentId) break;
+    current = nodesById.get(current.parentId);
+  }
+}
+
 function collectAssetNodes(nodes: SceneNode[], assetId: string): { keep: Set<string>; focus: string[] } {
   const byId = new Map(nodes.map((node) => [node.id, node]));
-  const focus = nodes.filter((node) => node.meshAssetId === assetId).map((node) => node.id);
-  const keep = new Set(focus);
+  const focusNodes = nodes.filter((node) => node.meshAssetId === assetId);
+  const focus = focusNodes.map((node) => node.id);
+  const keep = new Set<string>();
 
-  for (const id of focus) {
-    let current = byId.get(id);
-    const visited = new Set<string>();
-    while (current?.parentId && !visited.has(current.id)) {
-      visited.add(current.id);
-      keep.add(current.parentId);
-      current = byId.get(current.parentId);
-    }
+  for (const node of focusNodes) {
+    addAncestors(byId, keep, node.id);
+    for (const jointId of node.skin?.joints ?? []) addAncestors(byId, keep, jointId);
+    if (node.skin?.skeletonNodeId) addAncestors(byId, keep, node.skin.skeletonNodeId);
   }
 
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const node of nodes) {
-      if (node.parentId && keep.has(node.parentId) && !keep.has(node.id)) {
-        keep.add(node.id);
-        changed = true;
-      }
-    }
-  }
   return { keep, focus };
 }
 
+function thumbnailNode(node: SceneNode, keep: Set<string>): SceneNode {
+  const clone = structuredClone(node);
+  clone.parentId = clone.parentId && keep.has(clone.parentId) ? clone.parentId : null;
+  clone.children = clone.children.filter((childId) => keep.has(childId));
+  // Asset thumbnails represent the imported file itself, not current scene
+  // material overrides, authored cameras/lights or animation playback state.
+  delete clone.materialSlots;
+  delete clone.materialVariantBindings;
+  delete clone.cameraId;
+  delete clone.lightId;
+  delete clone.animationIds;
+  return clone;
+}
+
 function isolatedModelScene(source: KyxosSceneContract, assetId: string): { scene: KyxosSceneContract; focus: string[] } | null {
+  const asset = source.assets[assetId];
+  if (!asset) return null;
   const { keep, focus } = collectAssetNodes(source.nodes, assetId);
   if (!focus.length) return null;
-  const scene = structuredClone(source);
-  scene.nodes = scene.nodes.filter((node) => keep.has(node.id));
+
+  const scene = createEmptySceneContract(`Thumbnail · ${asset.name ?? 'Model'}`);
+  scene.assets = { [assetId]: structuredClone(asset) };
+  scene.nodes = source.nodes
+    .filter((node) => keep.has(node.id))
+    .map((node) => thumbnailNode(node, keep));
+  scene.materials = {};
   scene.animations = [];
+  scene.materialVariants = [];
+  scene.activeMaterialVariantId = undefined;
+  scene.animationStateGraph = undefined;
+  scene.editorState = undefined;
+  scene.environment.backgroundColor = '#171b22';
+  scene.environment.intensity = 0.35;
+  scene.environment.backgroundIntensity = 0.15;
+  scene.renderSettings.backend = 'webgl2';
+  scene.renderSettings.qualityPreset = 'low';
+  scene.renderSettings.effects = {};
+  scene.lights = [
+    {
+      id: crypto.randomUUID(),
+      name: 'Thumbnail Key',
+      type: 'directional',
+      color: '#ffffff',
+      intensity: 2.4,
+      transform: {
+        position: { x: 3, y: 4, z: 5 },
+        rotation: { x: -0.55, y: 0.65, z: 0 },
+        scale: { x: 1, y: 1, z: 1 },
+      },
+      castShadow: false,
+    },
+    {
+      id: crypto.randomUUID(),
+      name: 'Thumbnail Fill',
+      type: 'ambient',
+      color: '#d9e4ff',
+      intensity: 0.8,
+      transform: {
+        position: { x: 0, y: 0, z: 0 },
+        rotation: { x: 0, y: 0, z: 0 },
+        scale: { x: 1, y: 1, z: 1 },
+      },
+      castShadow: false,
+    },
+  ];
   return { scene, focus };
 }
 
-function isolatedEnvironmentScene(source: KyxosSceneContract, assetId: string): KyxosSceneContract {
-  const scene = structuredClone(source);
-  scene.nodes = [];
-  scene.animations = [];
+function isolatedEnvironmentScene(source: KyxosSceneContract, assetId: string): KyxosSceneContract | null {
+  const asset = source.assets[assetId];
+  if (!asset) return null;
+  const scene = createEmptySceneContract(`Thumbnail · ${asset.name ?? 'Environment'}`);
+  scene.assets = { [assetId]: structuredClone(asset) };
   scene.environment.assetId = assetId;
+  scene.environment.intensity = Math.max(0.15, source.environment.intensity);
+  scene.environment.backgroundIntensity = Math.max(0.15, source.environment.backgroundIntensity);
+  scene.environment.backgroundBlur = Math.min(0.35, source.environment.backgroundBlur);
+  scene.renderSettings.backend = 'webgl2';
+  scene.renderSettings.qualityPreset = 'low';
+  scene.renderSettings.effects = {};
   return scene;
 }
 
@@ -248,7 +317,8 @@ async function generateThumbnail(scene: KyxosSceneContract, asset: SceneAsset): 
     return isolated ? await renderWithViewer(isolated.scene, isolated.focus) : null;
   }
   if (asset.kind === 'environment') {
-    return await renderWithViewer(isolatedEnvironmentScene(scene, asset.id));
+    const isolated = isolatedEnvironmentScene(scene, asset.id);
+    return isolated ? await renderWithViewer(isolated) : null;
   }
   return null;
 }
