@@ -57,6 +57,12 @@ function removeLegacyResolutionField(root: HTMLElement): void {
   });
 }
 
+function lightComponentPanel(root: HTMLElement): HTMLElement | null {
+  return [...root.querySelectorAll<HTMLElement>(':scope > .kx-component-inspector')]
+    .find((panel) => panel.querySelector<HTMLElement>(':scope > summary')?.textContent?.startsWith('Light ·'))
+    ?? null;
+}
+
 function row(label: string, control: HTMLElement): HTMLElement {
   const field = document.createElement('div');
   field.className = 'kx-component-field';
@@ -83,6 +89,8 @@ function install(session: ProjectSession): () => void {
 
       const selected = selectedLight(session);
       if (!selected?.light.castShadow) return;
+      const lightPanel = lightComponentPanel(root);
+      if (!lightPanel) return;
 
       const details = document.createElement('details');
       details.className = 'kx-component-inspector kx-light-shadow-runtime';
@@ -150,9 +158,11 @@ function install(session: ProjectSession): () => void {
       );
       details.append(summary, grid);
 
-      const base = root.querySelector('.kx-component-inspector');
-      if (base?.nextSibling) root.insertBefore(details, base.nextSibling);
-      else root.prepend(details);
+      // Match PlayCanvas' component organization: advanced shadow runtime
+      // controls belong to the selected Light component itself, not as an
+      // unrelated sibling inspector. Keeping it nested also makes keyboard and
+      // accessibility traversal follow the Light component's visual hierarchy.
+      lightPanel.append(details);
     });
   };
 
