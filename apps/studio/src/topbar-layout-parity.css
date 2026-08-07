@@ -122,17 +122,30 @@
   max-width: 26vw;
 }
 
-.kyxos-studio-shell[data-topbar-density='compact'] .kx-topbar-editor-tools {
+/* Narrow desktop / landscape tablet: the left rail already owns the transform
+   tools, so hide only that duplicate cluster. History and Preview stay visible
+   until the real mobile menu takes over at 680px. */
+.kyxos-studio-shell[data-topbar-density='compact'] .studio-topbar-slot[data-kx-topbar-layout='true'] {
+  grid-template-columns: minmax(150px, 1fr) auto auto auto;
+  gap: 5px;
+}
+
+.kyxos-studio-shell[data-topbar-density='compact'] .kx-topbar-transform-cluster {
   display: none;
 }
 
-.kyxos-studio-shell[data-topbar-density='compact'] .studio-topbar-slot[data-kx-topbar-layout='true'] {
-  grid-template-columns: minmax(150px, 1fr) auto auto;
+.kyxos-studio-shell[data-topbar-density='compact'] .kx-topbar-editor-tools {
+  padding: 2px;
+  gap: 4px;
 }
 
 .kyxos-studio-shell[data-topbar-density='compact'] .kx-topbar-project-copy .role-badge,
 .kyxos-studio-shell[data-topbar-density='compact'] .kx-topbar-project-copy .presence-strip {
   display: none;
+}
+
+.kyxos-studio-shell[data-topbar-density='compact'] .kx-topbar-title {
+  max-width: 22vw;
 }
 
 @media (max-width: 680px) {
@@ -145,6 +158,7 @@
     flex: 1 1 auto;
   }
 
+  .kx-topbar-editor-tools,
   .kx-topbar-context > button:first-child,
   .kx-topbar-project-copy .role-badge,
   .kx-topbar-project-copy .presence-strip,
