@@ -1,6 +1,7 @@
 import './sceneApi';
 import './sceneComponentHierarchy';
 import './cameraFrustumRuntimeParity';
+import './mobileStudioBeautyPipeline';
 import './gltfNativeLoad';
 import './embeddedGltfTextureApi';
 import './materialEditApi';
