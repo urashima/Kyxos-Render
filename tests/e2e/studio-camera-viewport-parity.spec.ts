@@ -38,8 +38,25 @@ test('Studio keeps an independent authoring camera and explicitly views through 
   const camera = await addCamera(page);
   const cameraInspector = page.locator('.kx-component-inspector').filter({ hasText: 'Camera ·' });
   await expect(cameraInspector).toBeVisible();
-  await cameraInspector.getByRole('button', { name: 'Set Active' }).click();
 
+  // Selecting an authored camera opens a separate low-resolution live runtime
+  // preview instead of reusing or stealing the authoring viewport.
+  const preview = page.getByRole('region', { name: 'Camera preview' });
+  await expect(preview).toBeVisible({ timeout: 60_000 });
+  await expect(preview.locator('.kx-camera-preview-title')).toHaveText(camera.name);
+  const previewCanvas = preview.getByLabel('Live camera preview canvas');
+  await expect.poll(() => previewCanvas.getAttribute('data-camera-preview-status')).toBe('ready');
+  await expect(previewCanvas).toHaveAttribute('data-camera-preview-id', camera.cameraId);
+
+  const pinPreview = preview.getByRole('button', { name: 'Pin camera preview' });
+  await pinPreview.click();
+  await expect(pinPreview).toHaveAttribute('aria-pressed', 'true');
+  await preview.getByTitle('Collapse camera preview').click();
+  await expect(preview).toHaveClass(/kx-camera-preview-collapsed/);
+  await preview.getByTitle('Expand camera preview').click();
+  await expect(preview).not.toHaveClass(/kx-camera-preview-collapsed/);
+
+  await cameraInspector.getByRole('button', { name: 'Set Active' }).click();
   await expect.poll(() => page.evaluate(() => {
     const scene = (globalThis as any).kyxosStudio?.api?.getScene();
     return scene?.activeCameraId;
@@ -59,9 +76,10 @@ test('Studio keeps an independent authoring camera and explicitly views through 
   await viewportView.selectOption(`scene:${camera.cameraId}`);
   await expect(canvas).toHaveAttribute('data-authoring-camera', 'scene');
   await expect(canvas).toHaveAttribute('data-editor-scene-camera-view', camera.cameraId);
+  await expect(preview).toHaveAttribute('data-view-through', 'true');
 
-  // Camera edits remain scene data while view-through is explicit. Returning to
-  // an Editor Camera is equally explicit and leaves activeCameraId unchanged.
+  // Camera edits remain scene data while view-through is explicit and the live
+  // preview keeps the same camera binding through Scene Contract patches.
   await cameraInspector.getByLabel('FOV').fill('61');
   await expect.poll(() => page.evaluate(() => {
     const scene = (globalThis as any).kyxosStudio?.api?.getScene();
@@ -69,10 +87,12 @@ test('Studio keeps an independent authoring camera and explicitly views through 
     return active?.fov;
   })).toBe(61);
   await expect(canvas).toHaveAttribute('data-editor-scene-camera-view', camera.cameraId);
+  await expect(previewCanvas).toHaveAttribute('data-camera-preview-id', camera.cameraId);
 
   await viewportView.selectOption('perspective');
   await expect(canvas).toHaveAttribute('data-authoring-camera', 'editor');
   await expect(canvas).not.toHaveAttribute('data-editor-scene-camera-view', camera.cameraId);
+  await expect(preview).toHaveAttribute('data-view-through', 'false');
   await expect.poll(() => page.evaluate(() => {
     const scene = (globalThis as any).kyxosStudio?.api?.getScene();
     return scene?.activeCameraId;
