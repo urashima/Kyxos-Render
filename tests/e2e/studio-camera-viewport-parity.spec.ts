@@ -11,7 +11,9 @@ async function createStudioProject(page: import('@playwright/test').Page): Promi
   await expect(page.locator('#studio-canvas')).toBeVisible({ timeout: 60_000 });
 }
 
-async function addCamera(page: import('@playwright/test').Page): Promise<{ cameraId: string; name: string }> {
+async function addCamera(
+  page: import('@playwright/test').Page,
+): Promise<{ cameraId: string; nodeId: string; name: string }> {
   const hierarchy = page.locator('.studio-hierarchy');
   await hierarchy.getByRole('button', { name: 'Add', exact: true }).click();
   const menu = page.locator('.studio-context-menu');
@@ -22,9 +24,10 @@ async function addCamera(page: import('@playwright/test').Page): Promise<{ camer
     const selected = document.querySelector<HTMLElement>('.hierarchy-row.selected')?.dataset.node;
     const node = scene?.nodes?.find((entry: any) => entry.id === selected);
     const camera = scene?.cameras?.find((entry: any) => entry.id === node?.cameraId);
-    return { cameraId: camera?.id as string, name: camera?.name as string };
+    return { cameraId: camera?.id as string, nodeId: node?.id as string, name: camera?.name as string };
   });
   expect(result.cameraId).toBeTruthy();
+  expect(result.nodeId).toBeTruthy();
   return result;
 }
 
@@ -47,6 +50,46 @@ test('Studio keeps an independent authoring camera and explicitly views through 
   const previewCanvas = preview.getByLabel('Live camera preview canvas');
   await expect.poll(() => previewCanvas.getAttribute('data-camera-preview-status')).toBe('ready');
   await expect(previewCanvas).toHaveAttribute('data-camera-preview-id', camera.cameraId);
+
+  // Reparent the authored camera beneath a translated/rotated rig. The runtime
+  // preview must recompute position and target from the complete node hierarchy,
+  // not keep treating the camera's local transform as world space.
+  await page.evaluate(({ nodeId }) => {
+    const api = (globalThis as any).kyxosStudio?.api;
+    const scene = api?.getScene();
+    const rigId = crypto.randomUUID();
+    const nodes = scene.nodes.map((node: any) => node.id === nodeId
+      ? { ...node, parentId: rigId }
+      : structuredClone(node));
+    nodes.push({
+      id: rigId,
+      name: 'Camera Rig',
+      parentId: null,
+      children: [nodeId],
+      transform: {
+        position: { x: 1, y: 0, z: 0 },
+        rotation: { x: 0, y: Math.PI / 2, z: 0 },
+        scale: { x: 1, y: 1, z: 1 },
+      },
+      visible: true,
+      metadata: { type: 'empty' },
+    });
+    api.applyPatch('Parent camera under rig', [{ op: 'replace', path: '/nodes', value: nodes }]);
+  }, { nodeId: camera.nodeId });
+
+  const managedCamera = await expect.poll(() => previewCanvas.evaluate((element) => {
+    const value = (element as HTMLCanvasElement).dataset.managedCameraWorld;
+    return value ? JSON.parse(value) : null;
+  })).not.toBeNull().then(() => previewCanvas.evaluate((element) => {
+    return JSON.parse((element as HTMLCanvasElement).dataset.managedCameraWorld ?? 'null');
+  }));
+  expect(managedCamera.id).toBe(camera.cameraId);
+  expect(managedCamera.position.x).toBeCloseTo(5.8, 4);
+  expect(managedCamera.position.y).toBeCloseTo(2.4, 4);
+  expect(managedCamera.position.z).toBeCloseTo(-3.4, 4);
+  expect(managedCamera.target.x).toBeCloseTo(1, 4);
+  expect(managedCamera.target.y).toBeCloseTo(0.9, 4);
+  expect(managedCamera.target.z).toBeCloseTo(0, 4);
 
   const pinPreview = preview.getByRole('button', { name: 'Pin camera preview' });
   await pinPreview.click();
