@@ -103,6 +103,13 @@ function mount(root: HTMLElement): void {
     button.setAttribute('role', 'menuitem');
     menu.append(button);
   }
+  // Core editing actions that move out of the visual topbar on phones remain
+  // first-class mobile menu sources. We mirror the original controls rather
+  // than reimplementing history/snap commands, so disabled/permission state is
+  // always inherited from the same command path.
+  undo.dataset.kxMobileActionSource = 'true';
+  redo.dataset.kxMobileActionSource = 'true';
+  if (snap) snap.dataset.kxMobileActionSource = 'true';
   if (upload) upload.dataset.kxMobileActionSource = 'true';
   publish.dataset.kxMobileActionSource = 'true';
   preview.dataset.kxMobileActionSource = 'true';
