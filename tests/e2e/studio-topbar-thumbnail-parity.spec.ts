@@ -53,6 +53,8 @@ test('Studio groups topbar actions and generates reusable project and asset thum
   await mobileMore.click();
   const mobileMenu = page.locator('.kx-mobile-actions-menu');
   await expect(mobileMenu).toBeVisible();
+  await expect(mobileMenu.getByRole('menuitem', { name: 'Undo', exact: true })).toBeVisible();
+  await expect(mobileMenu.getByRole('menuitem', { name: 'Redo', exact: true })).toBeVisible();
   await expect(mobileMenu.getByRole('menuitem', { name: 'Preview', exact: true })).toBeVisible();
   await expect(mobileMenu.getByRole('menuitem', { name: /Projects/ })).toBeVisible();
   await expect(mobileMenu.getByRole('menuitem', { name: 'Upload', exact: true })).toBeVisible();
