@@ -182,10 +182,32 @@ export function createConfiguredGltfLoader(
       }
     }
 
+    // Local durable storage can already own the exact immutable ArrayBuffer
+    // behind a Blob wrapper. Prefer those registered bytes before asking
+    // FileLoader to fetch the blob: URL. This is zero-copy for a full backing
+    // buffer and avoids the mobile WebKit/Chromium blob-fetch stall observed in
+    // Studio acceptance. Supabase assets are https: URLs and never enter here.
+    const exact = registeredObjectUrlBytes(url);
+    if (exact) {
+      const progressCallback = onProgress as ProgressCallback | undefined;
+      markLoadStage('registered-bytes-parse-start');
+      progress(progressCallback, 0, exact.byteLength);
+      const buffer = arrayBufferForRegisteredBytes(exact);
+      try {
+        const result = await loader.parseAsync(buffer, '');
+        progress(progressCallback, exact.byteLength, exact.byteLength);
+        markLoadStage('registered-bytes-parse-complete');
+        return result;
+      } catch (error) {
+        markLoadStage('registered-bytes-parse-error');
+        throw error;
+      }
+    }
+
     if (constrainedMobileDecode()) {
-      // Apple mobile gets the browser/Three blob URL path and never a second
-      // manual whole-file recovery allocation. Cloud Studio normally resolves
-      // assets to HTTPS signed URLs; this branch covers local/reload fixtures.
+      // Apple mobile gets the browser/Three blob URL path only when no exact
+      // backing buffer exists. Never add a second manual whole-file recovery
+      // allocation here. Cloud Studio normally resolves assets to signed HTTPS.
       markLoadStage('mobile-native-blob-start');
       try {
         const result = await nativeLoadAsync(url, onProgress);
@@ -198,8 +220,8 @@ export function createConfiguredGltfLoader(
     }
 
     // Local desktop/editor tests historically use object URL registry recovery
-    // because their Blob is reconstructed from IndexedDB. Keep that proven path
-    // deterministic instead of awaiting FileLoader's blob fetch indefinitely.
+    // because their Blob is reconstructed from IndexedDB. Keep that path
+    // deterministic for blobs that do not expose exact registered bytes.
     const progressCallback = onProgress as ProgressCallback | undefined;
     const buffer =
       (await loadRegisteredBlob(url, progressCallback))
