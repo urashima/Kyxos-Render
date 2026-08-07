@@ -110,8 +110,21 @@ test('Studio workspace matches dock, float, collapse, settings and mobile reacha
   await expect(shell).toHaveClass(/inspector-drawer-open/);
   await expect(page.locator('.studio-inspector')).toBeVisible();
 
+  const more = page.getByRole('button', { name: 'More editor actions' });
+  await expect(more).toBeVisible();
+  await more.click();
+  const mobileActions = page.locator('.kx-mobile-actions-menu');
+  await expect(mobileActions).toBeVisible();
+  for (const action of ['Scenes', 'State Graph', 'Collaborate', 'History', 'Code', 'Tools', 'Versions']) {
+    await expect(mobileActions.getByRole('menuitem', { name: action, exact: true })).toBeVisible();
+  }
+  await page.keyboard.press('Escape');
+  await expect(mobileActions).not.toBeVisible();
+  await expect(more).toBeFocused();
+
   await page.setViewportSize({ width: 1440, height: 900 });
   await expect.poll(() => hierarchy.evaluate((element) => element.classList.contains('kx-panel-floating'))).toBe(true);
   await expect(page.locator('.studio-topbar')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Studio Settings' })).toBeVisible();
+  await expect(more).not.toBeVisible();
 });
