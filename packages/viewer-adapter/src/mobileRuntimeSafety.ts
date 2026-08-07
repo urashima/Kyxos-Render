@@ -22,20 +22,31 @@ interface AdapterInternals {
   };
   viewer?: {
     setRenderSettings(settings: SceneRenderSettings): void;
-    getMetrics(): { pixelRatio: number };
     renderer?: { setPixelRatio(value: number): void };
     metrics?: { pixelRatio: number };
     resizeToCanvas?: () => void;
     queuePipelineRebuild?: (reason: string) => void;
   } | null;
   document?: SceneDocument | null;
+  canvas?: HTMLCanvasElement | null;
 }
 
-type AdapterPrototype = BrowserKyxosViewportAdapter & Record<symbol, boolean | undefined> & {
+interface AdapterPrototype {
+  mount(canvas: HTMLCanvasElement): Promise<void>;
+  loadDocument(document: SceneDocument): Promise<void>;
+  applyPatch(patch: ScenePatch): Promise<void>;
+  setQualityPreset(name: QualityPresetName | 'ultra'): void;
   mountCameraPreview?: (canvas: HTMLCanvasElement, cameraId: string) => Promise<void>;
-};
+  [installKey]?: boolean;
+}
 
-type ImportQueuePrototype = ImportTaskQueue<unknown> & Record<symbol, boolean | undefined>;
+interface ImportQueuePrototype {
+  enqueue(
+    name: string,
+    worker: (context: unknown) => Promise<unknown>,
+  ): string;
+  [importInstallKey]?: boolean;
+}
 
 function isiPadDesktopMode(): boolean {
   return navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1;
@@ -46,7 +57,10 @@ export function isConstrainedMobileRuntime(): boolean {
   const ua = navigator.userAgent;
   const ios = /iPhone|iPad|iPod/i.test(ua) || isiPadDesktopMode();
   const coarse = window.matchMedia?.('(pointer: coarse)').matches === true;
-  const narrow = Math.min(window.screen.width || window.innerWidth, window.screen.height || window.innerHeight) <= 1024;
+  const narrow = Math.min(
+    window.screen.width || window.innerWidth,
+    window.screen.height || window.innerHeight,
+  ) <= 1024;
   const memory = (navigator as NavigatorWithMemory).deviceMemory;
   const lowMemory = typeof memory === 'number' && memory <= 4;
   return ios || lowMemory || (coarse && narrow && /Android|Mobile/i.test(ua));
@@ -115,11 +129,14 @@ function applyPixelRatioCap(adapter: BrowserKyxosViewportAdapter): void {
 }
 
 function installMobileAdapterSafety(): void {
-  const prototype = BrowserKyxosViewportAdapter.prototype as AdapterPrototype;
+  const prototype = BrowserKyxosViewportAdapter.prototype as unknown as AdapterPrototype;
   if (prototype[installKey]) return;
 
   const originalMount = prototype.mount;
-  prototype.mount = async function mountWithMobileSafety(canvas: HTMLCanvasElement): Promise<void> {
+  prototype.mount = async function mountWithMobileSafety(
+    this: BrowserKyxosViewportAdapter,
+    canvas: HTMLCanvasElement,
+  ): Promise<void> {
     if (!isConstrainedMobileRuntime()) return originalMount.call(this, canvas);
 
     // Asset thumbnails create a second hidden Viewer. On iOS this can double
@@ -144,23 +161,26 @@ function installMobileAdapterSafety(): void {
 
   const originalLoadDocument = prototype.loadDocument;
   prototype.loadDocument = async function loadDocumentWithMobileSafety(
-    document: SceneDocument,
+    this: BrowserKyxosViewportAdapter,
+    sceneDocument: SceneDocument,
   ): Promise<void> {
-    if (!isConstrainedMobileRuntime()) return originalLoadDocument.call(this, document);
-    const authoredQuality = document.value.renderSettings.qualityPreset;
-    document.documentElement?.dataset;
-    const runtimeDocument = new SceneDocument(createMobileSafeScene(document.value));
+    if (!isConstrainedMobileRuntime()) {
+      return originalLoadDocument.call(this, sceneDocument);
+    }
+    const authoredQuality = sceneDocument.value.renderSettings.qualityPreset;
+    const runtimeDocument = new SceneDocument(createMobileSafeScene(sceneDocument.value));
     await originalLoadDocument.call(this, runtimeDocument);
     // Gizmo editing must continue to read the authoritative document, not the
     // transient runtime clone used only to reduce mobile GPU residency.
-    (this as unknown as AdapterInternals).document = document;
-    const canvas = (this as unknown as { canvas?: HTMLCanvasElement | null }).canvas;
-    if (canvas) canvas.dataset.authoredRenderQuality = authoredQuality;
-    markMobileProfile(canvas);
+    const internals = this as unknown as AdapterInternals;
+    internals.document = sceneDocument;
+    if (internals.canvas) internals.canvas.dataset.authoredRenderQuality = authoredQuality;
+    markMobileProfile(internals.canvas);
   };
 
   const originalApplyPatch = prototype.applyPatch;
   prototype.applyPatch = async function applyPatchWithMobileSafety(
+    this: BrowserKyxosViewportAdapter,
     patch: ScenePatch,
   ): Promise<void> {
     if (!isConstrainedMobileRuntime()) return originalApplyPatch.call(this, patch);
@@ -172,35 +192,40 @@ function installMobileAdapterSafety(): void {
       if (authored && internals.viewer) {
         internals.viewer.setRenderSettings(createMobileSafeRenderSettings(authored));
       }
-      const canvas = (this as unknown as { canvas?: HTMLCanvasElement | null }).canvas;
-      if (canvas && authored) canvas.dataset.authoredRenderQuality = authored.qualityPreset;
-      markMobileProfile(canvas);
+      if (internals.canvas && authored) {
+        internals.canvas.dataset.authoredRenderQuality = authored.qualityPreset;
+      }
+      markMobileProfile(internals.canvas);
     }
   };
 
   const originalSetQualityPreset = prototype.setQualityPreset;
   prototype.setQualityPreset = function setQualityPresetWithMobileSafety(
+    this: BrowserKyxosViewportAdapter,
     name: QualityPresetName | 'ultra',
   ): void {
     if (!isConstrainedMobileRuntime()) {
       originalSetQualityPreset.call(this, name);
       return;
     }
-    const canvas = (this as unknown as { canvas?: HTMLCanvasElement | null }).canvas;
-    if (canvas) canvas.dataset.authoredRenderQuality = name;
+    const internals = this as unknown as AdapterInternals;
+    if (internals.canvas) internals.canvas.dataset.authoredRenderQuality = name;
     originalSetQualityPreset.call(this, 'low');
-    markMobileProfile(canvas);
+    markMobileProfile(internals.canvas);
   };
 
   const originalMountCameraPreview = prototype.mountCameraPreview;
   if (typeof originalMountCameraPreview === 'function') {
     prototype.mountCameraPreview = async function mountCameraPreviewWithMobileSafety(
+      this: BrowserKyxosViewportAdapter,
       canvas: HTMLCanvasElement,
       cameraId: string,
     ): Promise<void> {
       if (isConstrainedMobileRuntime()) {
         canvas.dataset.mobileSecondaryViewerBlocked = 'true';
-        throw new Error('Live Camera Preview is deferred on iPhone/iPad to protect editor memory. Use View Through instead.');
+        throw new Error(
+          'Live Camera Preview is deferred on iPhone/iPad to protect editor memory. Use View Through instead.',
+        );
       }
       return originalMountCameraPreview.call(this, canvas, cameraId);
     };
@@ -215,12 +240,17 @@ function installMobileImportSerialization(): void {
   const originalEnqueue = prototype.enqueue;
   let tail: Promise<void> = Promise.resolve();
 
-  prototype.enqueue = function enqueueWithMobileSerialization(name: string, worker: any): string {
+  prototype.enqueue = function enqueueWithMobileSerialization(
+    name: string,
+    worker: (context: unknown) => Promise<unknown>,
+  ): string {
     if (!isConstrainedMobileRuntime()) return originalEnqueue.call(this, name, worker);
-    return originalEnqueue.call(this, name, async (context: any) => {
+    return originalEnqueue.call(this, name, async (context: unknown) => {
       const previous = tail.catch(() => undefined);
       let release!: () => void;
-      tail = new Promise<void>((resolve) => { release = resolve; });
+      tail = new Promise<void>((resolve) => {
+        release = resolve;
+      });
       await previous;
       document.documentElement.dataset.mobileImportConcurrency = '1';
       try {
@@ -229,7 +259,7 @@ function installMobileImportSerialization(): void {
         release();
       }
     });
-  } as ImportQueuePrototype['enqueue'];
+  };
 
   prototype[importInstallKey] = true;
 }
