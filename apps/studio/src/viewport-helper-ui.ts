@@ -19,6 +19,7 @@ trigger.title = 'Toggle editor-only viewport helpers';
 trigger.setAttribute('aria-label', 'Helpers');
 trigger.setAttribute('aria-haspopup', 'menu');
 trigger.setAttribute('aria-expanded', 'false');
+trigger.dataset.kxMobileActionSource = 'true';
 const popover = document.createElement('div');
 popover.className = 'viewport-helper-popover';
 popover.hidden = true;
@@ -73,9 +74,17 @@ function syncInputs(settings?: ViewportHelperSettings): void {
   }
 }
 
+function triggerRect(): DOMRect {
+  const rect = trigger.getBoundingClientRect();
+  if (rect.width > 0 && rect.height > 0) return rect;
+  const mobileTrigger = document.querySelector<HTMLElement>('.kx-mobile-actions-trigger');
+  const mobileRect = mobileTrigger?.getBoundingClientRect();
+  return mobileRect && mobileRect.width > 0 ? mobileRect : rect;
+}
+
 function positionPopover(): void {
   if (!menu.isConnected) return;
-  const rect = trigger.getBoundingClientRect();
+  const rect = triggerRect();
   const width = Math.min(210, window.innerWidth - 16);
   const left = Math.max(8, Math.min(window.innerWidth - width - 8, rect.right - width));
   popover.style.width = `${width}px`;
