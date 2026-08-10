@@ -123,15 +123,9 @@ function mount(root: HTMLElement): void {
     attributes: true,
     attributeFilter: ['disabled', 'data-kx-mobile-action-source'],
   });
-  // Portal source nodes are outside the shell after topbar organization. Watch
-  // body only while this shell is alive so permission/disabled state mirrors in
-  // an already-open mobile menu as those sources change.
-  syncDisabled.observe(document.body, {
-    childList: true,
-    subtree: true,
-    attributes: true,
-    attributeFilter: ['disabled', 'data-kx-mobile-action-source'],
-  });
+  // Portaled project actions are queried fresh every time the mobile menu opens.
+  // Do not observe document.body: the mobile menu itself lives there and a broad
+  // subtree observer would be able to re-enter render() on its own mutations.
 
   end.prepend(trigger, menu);
 }
