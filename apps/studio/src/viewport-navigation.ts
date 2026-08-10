@@ -50,6 +50,9 @@ interface NavigationBinding {
   sceneViews: HTMLElement;
   bookmarkSelect: HTMLSelectElement;
   onKeyDown: (event: KeyboardEvent) => void;
+  onPointerDown: (event: PointerEvent) => void;
+  onResize: () => void;
+  onScroll: () => void;
 }
 
 const VIEW_OPTIONS: ReadonlyArray<readonly [string, EditorViewPreset]> = [
@@ -98,18 +101,13 @@ function cameraBookmarks(): CameraBookmarkRecord[] {
     .sort((left, right) => left.slot - right.slot);
 }
 
-function writeBookmarks(
-  label: string,
-  bookmarks: CameraBookmarkRecord[],
-): void {
+function writeBookmarks(label: string, bookmarks: CameraBookmarkRecord[]): void {
   const api = studioApi();
   if (!api) return;
   const scene = api.getScene();
   const editorState: BookmarkEditorState = {
     ...(scene.editorState ?? {}),
-    cameraBookmarks: bookmarks
-      .slice()
-      .sort((left, right) => left.slot - right.slot),
+    cameraBookmarks: bookmarks.slice().sort((left, right) => left.slot - right.slot),
   };
   api.applyPatch(label, [{
     op: scene.editorState ? 'replace' : 'add',
@@ -118,9 +116,7 @@ function writeBookmarks(
   }]);
 }
 
-function requestCameraState(
-  canvas: HTMLCanvasElement,
-): Promise<EditorCameraBookmarkState> {
+function requestCameraState(canvas: HTMLCanvasElement): Promise<EditorCameraBookmarkState> {
   const requestId = crypto.randomUUID();
   return new Promise((resolve, reject) => {
     const timeout = window.setTimeout(() => {
@@ -293,8 +289,16 @@ function refreshViewItems(current: NavigationBinding): void {
   refreshBookmarkSelect(current.bookmarkSelect);
 }
 
+function menuAnchor(current: NavigationBinding): DOMRect {
+  const triggerRect = current.trigger.getBoundingClientRect();
+  if (triggerRect.width > 0 && triggerRect.height > 0) return triggerRect;
+  const mobileTrigger = document.querySelector<HTMLElement>('.kx-mobile-actions-trigger');
+  const mobileRect = mobileTrigger?.getBoundingClientRect();
+  return mobileRect && mobileRect.width > 0 ? mobileRect : triggerRect;
+}
+
 function positionMenu(current: NavigationBinding): void {
-  const rect = current.trigger.getBoundingClientRect();
+  const rect = menuAnchor(current);
   const width = Math.min(260, window.innerWidth - 16);
   const left = Math.max(8, Math.min(window.innerWidth - width - 8, rect.right - width));
   current.menu.style.width = `${width}px`;
@@ -322,6 +326,9 @@ function preferredHost(topbar: HTMLElement): HTMLElement {
 function detach(): void {
   if (!binding) return;
   window.removeEventListener('keydown', binding.onKeyDown);
+  document.removeEventListener('pointerdown', binding.onPointerDown);
+  window.removeEventListener('resize', binding.onResize);
+  window.removeEventListener('scroll', binding.onScroll, true);
   binding.controls.remove();
   binding.menu.remove();
   binding = null;
@@ -348,6 +355,7 @@ function attach(canvas: HTMLCanvasElement, topbar: HTMLElement): void {
   trigger.setAttribute('aria-label', 'View');
   trigger.setAttribute('aria-haspopup', 'menu');
   trigger.setAttribute('aria-expanded', 'false');
+  trigger.dataset.kxMobileActionSource = 'true';
   controls.append(trigger);
 
   const menu = document.createElement('div');
@@ -438,9 +446,21 @@ function attach(canvas: HTMLCanvasElement, topbar: HTMLElement): void {
     event.preventDefault();
     dispatch(canvas, { command: 'view', preset });
   };
-  window.addEventListener('keydown', onKeyDown);
 
-  const current: NavigationBinding = {
+  const current = {} as NavigationBinding;
+  const onPointerDown = (event: PointerEvent) => {
+    if (binding !== current || menu.hidden) return;
+    const target = event.target as Node;
+    if (controls.contains(target) || menu.contains(target)) return;
+    closeMenu(current);
+  };
+  const onResize = () => {
+    if (binding === current && !menu.hidden) positionMenu(current);
+  };
+  const onScroll = () => {
+    if (binding === current && !menu.hidden) positionMenu(current);
+  };
+  Object.assign(current, {
     canvas,
     topbar,
     controls,
@@ -450,7 +470,10 @@ function attach(canvas: HTMLCanvasElement, topbar: HTMLElement): void {
     sceneViews,
     bookmarkSelect,
     onKeyDown,
-  };
+    onPointerDown,
+    onResize,
+    onScroll,
+  });
   binding = current;
 
   trigger.addEventListener('click', (event) => {
@@ -459,18 +482,10 @@ function attach(canvas: HTMLCanvasElement, topbar: HTMLElement): void {
     else closeMenu(current);
   });
   menu.addEventListener('pointerdown', (event) => event.stopPropagation());
-  document.addEventListener('pointerdown', (event) => {
-    if (binding !== current || menu.hidden) return;
-    const target = event.target as Node;
-    if (controls.contains(target) || menu.contains(target)) return;
-    closeMenu(current);
-  });
-  window.addEventListener('resize', () => {
-    if (binding === current && !menu.hidden) positionMenu(current);
-  });
-  window.addEventListener('scroll', () => {
-    if (binding === current && !menu.hidden) positionMenu(current);
-  }, true);
+  window.addEventListener('keydown', onKeyDown);
+  document.addEventListener('pointerdown', onPointerDown);
+  window.addEventListener('resize', onResize);
+  window.addEventListener('scroll', onScroll, true);
 
   preferredHost(topbar).prepend(controls);
   refreshViewItems(current);
