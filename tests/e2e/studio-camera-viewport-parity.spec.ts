@@ -31,6 +31,14 @@ async function addCamera(
   return result;
 }
 
+async function openViewMenu(page: import('@playwright/test').Page) {
+  const trigger = page.getByRole('button', { name: 'View', exact: true });
+  const menu = page.locator('.kx-viewport-view-menu');
+  if (!(await menu.isVisible())) await trigger.click();
+  await expect(menu).toBeVisible();
+  return menu;
+}
+
 test('Studio keeps an independent authoring camera and explicitly views through authored cameras', async ({ page }) => {
   test.setTimeout(180_000);
   await createStudioProject(page);
@@ -120,13 +128,14 @@ test('Studio keeps an independent authoring camera and explicitly views through 
   await expect(canvas).toHaveAttribute('data-authoring-camera', 'editor');
   await expect(canvas).toHaveAttribute('data-authored-scene-camera', camera.cameraId);
 
-  const viewportView = page.getByLabel('Viewport view');
-  await viewportView.focus();
-  await expect(viewportView.locator(`option[value="scene:${camera.cameraId}"]`)).toHaveText(
-    `${camera.name} · Active`,
-  );
+  let viewMenu = await openViewMenu(page);
+  const sceneCameraItem = viewMenu.getByRole('menuitem', {
+    name: `${camera.name} · Active`,
+    exact: true,
+  });
+  await expect(sceneCameraItem).toBeVisible();
+  await sceneCameraItem.click();
 
-  await viewportView.selectOption(`scene:${camera.cameraId}`);
   await expect(canvas).toHaveAttribute('data-authoring-camera', 'scene');
   await expect(canvas).toHaveAttribute('data-editor-scene-camera-view', camera.cameraId);
   await expect(canvas).toHaveAttribute('data-managed-camera-frustum-culling', 'false');
@@ -144,7 +153,8 @@ test('Studio keeps an independent authoring camera and explicitly views through 
   await expect(previewCanvas).toHaveAttribute('data-camera-preview-id', camera.cameraId);
   await expect(previewCanvas).toHaveAttribute('data-managed-camera-frustum-culling', 'false');
 
-  await viewportView.selectOption('perspective');
+  viewMenu = await openViewMenu(page);
+  await viewMenu.getByRole('menuitem', { name: 'Perspective', exact: true }).click();
   await expect(canvas).toHaveAttribute('data-authoring-camera', 'editor');
   await expect(canvas).not.toHaveAttribute('data-editor-scene-camera-view', camera.cameraId);
   await expect(canvas).toHaveAttribute('data-managed-camera-frustum-culling', 'true');
