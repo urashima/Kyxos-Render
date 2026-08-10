@@ -1,0 +1,40 @@
+name: Editor Scene Systems
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'packages/editor-core/src/scene-systems.ts'
+      - 'packages/editor-core/src/index.ts'
+      - 'packages/editor-core/package.json'
+      - 'tests/unit/editor-scene-systems.spec.ts'
+      - '.github/workflows/editor-scene-systems.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: editor-scene-systems-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  acceptance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install workspace
+        run: pnpm install --no-frozen-lockfile
+      - name: Typecheck Editor Core
+        run: pnpm --filter @kyxos/editor-core typecheck
+      - name: Run Scene Systems acceptance
+        run: pnpm exec vitest run tests/unit/editor-scene-systems.spec.ts --reporter=verbose
