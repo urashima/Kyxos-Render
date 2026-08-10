@@ -61,10 +61,11 @@
   border-left: 1px solid color-mix(in srgb, var(--kx-border, #5a6472) 45%, transparent);
 }
 
-.kx-topbar-editor-tools .tool-group {
-  display: flex;
-  align-items: center;
-  gap: 2px;
+/* The viewport rail owns Select / Move / Rotate / Scale. These original controls
+   stay mounted only as command sources for the rail and keyboard bridge. */
+.tool-group[data-kx-topbar-command-source='true'],
+.tool-group[data-kx-topbar-command-source='true'][hidden] {
+  display: none !important;
 }
 
 .kx-topbar-editor-tools button,
@@ -87,12 +88,15 @@
   justify-self: end;
 }
 
+/* Menus are mounted in document.body rather than under .studio-topbar. Fixed
+   positioning keeps them below the trigger even when the topbar or project
+   context uses overflow clipping. */
 .kx-topbar-overflow-menu {
-  position: absolute;
-  z-index: 1100;
-  top: calc(100% + 8px);
-  right: 0;
-  width: min(240px, calc(100vw - 24px));
+  position: fixed;
+  z-index: 2400;
+  width: min(240px, calc(100vw - 16px));
+  max-height: min(480px, calc(100vh - 64px));
+  overflow: auto;
   padding: 6px;
   border: 1px solid color-mix(in srgb, var(--kx-border, #5a6472) 70%, transparent);
   border-radius: 10px;
@@ -114,17 +118,13 @@
   border-radius: 7px;
 }
 
-.kyxos-studio-shell[data-topbar-density='comfortable'] .kx-topbar-transform-cluster .tool-group {
-  display: none;
-}
-
 .kyxos-studio-shell[data-topbar-density='comfortable'] .kx-topbar-title {
   max-width: 26vw;
 }
 
-/* Narrow desktop / landscape tablet: the left rail already owns the transform
-   tools, so hide only that duplicate cluster. History and Preview stay visible
-   until the real mobile menu takes over at 680px. */
+/* Narrow desktop / landscape tablet: coordinate/snap are the least important
+   remaining transform settings. History, View and Preview stay visible until
+   the real mobile actions menu takes over at 680px. */
 .kyxos-studio-shell[data-topbar-density='compact'] .studio-topbar-slot[data-kx-topbar-layout='true'] {
   grid-template-columns: minmax(150px, 1fr) auto auto auto;
   gap: 5px;
