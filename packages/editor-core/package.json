@@ -6,7 +6,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./experience": "./src/experience.ts",
-    "./reimport": "./src/reimport.ts"
+    "./reimport": "./src/reimport.ts",
+    "./version-control": "./src/version-control.ts"
   },
   "scripts": { "build": "tsc -p tsconfig.json --noEmit", "typecheck": "tsc -p tsconfig.json --noEmit" },
   "dependencies": { "@kyxos/scene-contract": "workspace:*" }
