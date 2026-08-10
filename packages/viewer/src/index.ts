@@ -1,4 +1,5 @@
 import './sceneApi';
+import './studioSceneLoadPipelineBudget';
 import './sceneComponentHierarchy';
 import './cameraFrustumRuntimeParity';
 import './mobileStudioBeautyPipeline';
