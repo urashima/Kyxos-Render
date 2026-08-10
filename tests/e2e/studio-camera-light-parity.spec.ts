@@ -158,7 +158,7 @@ test('Studio camera and light selection, inspector edits and transforms stay syn
   expect(light.lightId).toBeTruthy();
   expect(light.parentId).toBe(camera.nodeId);
 
-  await lightInspector.getByLabel('Intensity').fill('7.5');
+  await lightInspector.getByLabel('Intensity', { exact: true }).fill('7.5');
   await lightInspector.getByLabel('Range').fill('18');
   await lightInspector.getByLabel('Position X').fill('0');
   await lightInspector.getByLabel('Position Y').fill('1');
