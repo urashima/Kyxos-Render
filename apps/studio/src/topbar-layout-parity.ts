@@ -22,6 +22,19 @@ function findButton(slot: HTMLElement, label: string): HTMLButtonElement | undef
   return directButtons(slot).find((button) => labelOf(button) === label);
 }
 
+function positionPortalMenu(trigger: HTMLElement, menu: HTMLElement): void {
+  const rect = trigger.getBoundingClientRect();
+  const viewportPadding = 8;
+  const menuWidth = Math.min(240, Math.max(180, window.innerWidth - viewportPadding * 2));
+  const left = Math.max(
+    viewportPadding,
+    Math.min(window.innerWidth - menuWidth - viewportPadding, rect.right - menuWidth),
+  );
+  menu.style.width = `${menuWidth}px`;
+  menu.style.left = `${Math.round(left)}px`;
+  menu.style.top = `${Math.round(rect.bottom + 8)}px`;
+}
+
 function mount(root: HTMLElement): void {
   const slot = root.querySelector<HTMLElement>('.studio-topbar-slot');
   if (!slot || slot.dataset.kxTopbarLayout === 'true') return;
@@ -45,6 +58,14 @@ function mount(root: HTMLElement): void {
   if (!publish || !projects || !title || !save || !tools || !coordinate || !undo || !redo || !preview) return;
   slot.dataset.kxTopbarLayout = 'true';
 
+  // Select / Move / Rotate / Scale are already permanently available in the
+  // viewport rail. Keep the original command buttons mounted as hidden command
+  // sources so the rail and legacy keyboard integration still call the exact
+  // same handlers without paying for a duplicate visible toolbar.
+  tools.hidden = true;
+  tools.dataset.kxTopbarCommandSource = 'true';
+  tools.setAttribute('aria-hidden', 'true');
+
   const context = document.createElement('div');
   context.className = 'kx-topbar-context';
   context.setAttribute('aria-label', 'Project context');
@@ -60,7 +81,7 @@ function mount(root: HTMLElement): void {
   editorTools.setAttribute('aria-label', 'Editor tools');
   const transformCluster = document.createElement('div');
   transformCluster.className = 'kx-topbar-cluster kx-topbar-transform-cluster';
-  transformCluster.append(tools, coordinate);
+  transformCluster.append(coordinate);
   if (snap) transformCluster.append(snap);
 
   const historyCluster = document.createElement('div');
@@ -90,10 +111,11 @@ function mount(root: HTMLElement): void {
   overflowTrigger.setAttribute('aria-haspopup', 'menu');
   overflowTrigger.setAttribute('aria-expanded', 'false');
   const menu = document.createElement('div');
-  menu.className = 'kx-topbar-overflow-menu';
+  menu.className = 'kx-topbar-overflow-menu kx-topbar-portal-menu';
   menu.hidden = true;
   menu.setAttribute('role', 'menu');
-  overflow.append(overflowTrigger, menu);
+  overflow.append(overflowTrigger);
+  document.body.append(menu);
 
   for (const button of directButtons(slot)) {
     const label = labelOf(button);
@@ -127,10 +149,14 @@ function mount(root: HTMLElement): void {
     if (restoreFocus) overflowTrigger.focus({ preventScroll: true });
   };
   const open = () => {
+    positionPortalMenu(overflowTrigger, menu);
     menu.hidden = false;
     overflowTrigger.setAttribute('aria-expanded', 'true');
     overflow.classList.add('is-open');
     requestAnimationFrame(() => menu.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus());
+  };
+  const reposition = () => {
+    if (!menu.hidden) positionPortalMenu(overflowTrigger, menu);
   };
 
   overflowTrigger.addEventListener('click', (event) => {
@@ -144,7 +170,9 @@ function mount(root: HTMLElement): void {
     event.stopPropagation();
   });
   document.addEventListener('pointerdown', (event) => {
-    if (menu.hidden || overflow.contains(event.target as Node)) return;
+    if (menu.hidden) return;
+    const target = event.target as Node;
+    if (overflowTrigger.contains(target) || menu.contains(target)) return;
     close();
   });
   document.addEventListener('keydown', (event) => {
@@ -166,16 +194,24 @@ function mount(root: HTMLElement): void {
       items[(Math.max(0, active) + direction + items.length) % items.length].focus();
     }
   });
+  window.addEventListener('resize', reposition);
+  window.addEventListener('scroll', reposition, true);
 
   const syncCompactState = () => {
     const width = root.getBoundingClientRect().width;
     root.dataset.topbarDensity = width < 980 ? 'compact' : width < 1280 ? 'comfortable' : 'full';
+    reposition();
   };
   const resizeObserver = new ResizeObserver(syncCompactState);
   resizeObserver.observe(root);
   syncCompactState();
 
-  root.addEventListener('kx:destroy', () => resizeObserver.disconnect(), { once: true });
+  root.addEventListener('kx:destroy', () => {
+    resizeObserver.disconnect();
+    window.removeEventListener('resize', reposition);
+    window.removeEventListener('scroll', reposition, true);
+    menu.remove();
+  }, { once: true });
 }
 
 function scan(): void {
