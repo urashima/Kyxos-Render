@@ -64,7 +64,6 @@ interface ViewerPrototypeInternals {
   restoreEditorCameraBookmark?(state: EditorCameraBookmarkState): void;
   setEditorViewPreset?(preset: 'perspective'): void;
   setEditorSceneCameraView?(cameraId?: string): boolean;
-  resetTemporal?(reason?: string): void;
   __kyxosEditorSceneModeInstalled?: boolean;
 }
 
@@ -129,13 +128,18 @@ function resumeStudioPipelineAfter(viewer: KyxosViewer, delay = 80): void {
   internal.editorResumeTimer = window.setTimeout(() => {
     internal.editorResumeTimer = undefined;
     if (internal.editorImportActive || internal.editorSceneLoading) return;
+
+    // loadScene/loadModel already invalidates temporal history while rendering is
+    // suspended. Rebuilding the complete RenderPipeline again at resume used to
+    // allocate a second MRT/temporal target set immediately after GLB textures
+    // were uploaded. That produced the highest memory spike in Studio and could
+    // freeze desktop Chromium or terminate iOS WebContent. Resume the already
+    // prepared pipeline instead of forcing another generation.
     internal.editorRenderSuspended = false;
     viewer.canvas.dataset.authoringReady = 'true';
     viewer.canvas.dataset.authoringRender = 'pipeline';
     viewer.canvas.dataset.authoringPipeline = 'playground';
-    (viewer as unknown as ViewerPrototypeInternals).resetTemporal?.(
-      'studio-authoring-pipeline-resume',
-    );
+    viewer.canvas.dataset.authoringResume = 'reuse-loaded-pipeline';
   }, delay);
 }
 
