@@ -60,6 +60,13 @@ interface TransformChangeDetail {
   mergeKey: string;
 }
 
+interface DocumentChangeDetail {
+  patch: ScenePatch;
+  source?: string;
+}
+
+const FULL_DOCUMENT_IMPORT_SOURCES = new Set(['import-glb', 'import-asset']);
+
 export class BrowserKyxosViewportAdapter
   extends EventTarget
   implements KyxosViewportAdapter
@@ -234,12 +241,28 @@ export class BrowserKyxosViewportAdapter
 
   bindSession(session: ProjectSession): () => void {
     const onDocument = (event: Event) => {
-      const detail = (event as CustomEvent<{ patch: ScenePatch }>).detail;
-      if (detail.patch.length) {
-        void this.applyPatch(detail.patch).catch((error) => {
-          this.dispatchEvent(new CustomEvent('error', { detail: { error } }));
-        });
+      const detail = (event as CustomEvent<DocumentChangeDetail>).detail;
+      if (!detail?.patch?.length) return;
+
+      // Import/reimport replaces the authoritative SceneDocument first and then
+      // performs one explicit loadDocument() in the activate-asset stage. If we
+      // also feed that same full-document replacement through applyPatch(), the
+      // Viewer loads the GLB twice: once from this EventTarget listener and once
+      // from activate-asset. Besides duplicating GPU/texture allocations, the
+      // queued patch can run at the await boundary before build-contract reports
+      // completion, which is especially destructive in WebKit under memory
+      // pressure. The explicit activation owns these transaction sources.
+      if (FULL_DOCUMENT_IMPORT_SOURCES.has(detail.source ?? '')) {
+        if (this.canvas) {
+          this.canvas.dataset.importViewportSync = 'deferred-to-activation';
+          this.canvas.dataset.importViewportSyncSource = detail.source ?? '';
+        }
+        return;
       }
+
+      void this.applyPatch(detail.patch).catch((error) => {
+        this.dispatchEvent(new CustomEvent('error', { detail: { error } }));
+      });
     };
     const onSelection = (event: Event) =>
       this.select((event as CustomEvent<{ nodeIds: string[] }>).detail.nodeIds);

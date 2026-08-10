@@ -1,5 +1,6 @@
 import './glb-import-parity';
 import './image-bitmap-guard';
+import { registerLocalBlobBytes } from './local-blob-byte-registry';
 
 interface GltfBuffer { uri?: string; byteLength: number; [key: string]: unknown }
 interface GltfBufferView { buffer: number; byteOffset?: number; byteLength: number; [key: string]: unknown }
@@ -188,8 +189,16 @@ export async function bundleExternalGltf(
   }
 
   const outputName = entry.name.replace(/\.gltf$/i, '.glb');
+  const file = new File([output], outputName, {
+    type: 'model/gltf-binary',
+    lastModified: entry.lastModified,
+  });
+  // This File is authored by Kyxos, so the backing bytes are immutable and may
+  // be reused safely. User-picked files are never registered here and therefore
+  // never enter the generated-byte fast path.
+  registerLocalBlobBytes(file, output);
   return {
-    file: new File([output], outputName, { type: 'model/gltf-binary', lastModified: entry.lastModified }),
+    file,
     sourceName: entry.name,
     resourceNames: [...resourceNames].sort(),
   };

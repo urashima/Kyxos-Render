@@ -2,6 +2,7 @@ import * as THREE from 'three/webgpu';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 
 import { KyxosViewer } from './KyxosViewer';
+import { resolveEditorViewportNodeObject } from './editorViewportHelpers';
 
 export type EditorTransformMode = 'select' | 'translate' | 'rotate' | 'scale';
 export type EditorTransformSpace = 'local' | 'world';
@@ -68,11 +69,7 @@ function internals(viewer: KyxosViewer): ViewerInternals {
 }
 
 function findNodeObject(viewer: KyxosViewer, nodeId: string): THREE.Object3D | null {
-  let result: THREE.Object3D | null = null;
-  internals(viewer).modelRoot.traverse((object) => {
-    if (!result && object.userData.kyxosNodeId === nodeId) result = object;
-  });
-  return result;
+  return resolveEditorViewportNodeObject(viewer, nodeId);
 }
 
 function selectedObjects(viewer: KyxosViewer, state: EditorControlState): SelectedObject[] {
@@ -246,6 +243,9 @@ function applySnap(state: EditorControlState): void {
 }
 
 function attachCurrent(viewer: KyxosViewer, state: EditorControlState): void {
+  // Scene Camera projection changes can replace the Viewer's camera object.
+  // Keep Three.js TransformControls bound to the current authoring camera.
+  state.controls.camera = internals(viewer).camera;
   syncCanvasState(viewer, state);
   if (state.mode === 'select' || !updatePivotTransform(viewer, state)) {
     state.controls.detach();

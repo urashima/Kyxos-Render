@@ -9,6 +9,7 @@ import { BrowserKyxosViewportAdapter } from './index';
 
 export type EditorViewportCommand =
   | { command: 'view'; preset: EditorViewPreset }
+  | { command: 'scene-camera'; cameraId?: string }
   | { command: 'frame-all' }
   | { command: 'render-mode'; mode: EditorRenderMode }
   | { command: 'capture-bookmark'; requestId: string }
@@ -93,6 +94,8 @@ export function installEditorViewportCommandBridge(): void {
       if (!viewer || !command) return;
       if (command.command === 'view') {
         viewer.setEditorViewPreset(command.preset);
+      } else if (command.command === 'scene-camera') {
+        viewer.setEditorSceneCameraView(command.cameraId);
       } else if (command.command === 'frame-all') {
         viewer.frameAllEditorContent();
       } else if (command.command === 'render-mode') {

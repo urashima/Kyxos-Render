@@ -1,5 +1,6 @@
 import './gltf-node-inspector-bootstrap';
 import { createGlbImportReport } from './glb-report';
+import { readGlbMetadataPrefix } from './glb-metadata-prefix';
 
 export interface GlbWorkerResponse<T = unknown> {
   ok: boolean;
@@ -74,8 +75,15 @@ export async function parseGlbInWorker<T = unknown>(
   } = options;
   if (signal?.aborted) throw abortError(signal);
 
-  const buffer = await file.arrayBuffer();
+  // Only read GLB header + JSON chunk. The previous file.arrayBuffer() path
+  // duplicated the entire binary payload before GLTFLoader decoded it, causing
+  // a very large transient memory spike on iPhone/iPad for texture-heavy GLBs.
+  const buffer = await readGlbMetadataPrefix(file, signal);
   if (signal?.aborted) throw abortError(signal);
+  if (typeof document !== 'undefined') {
+    document.documentElement.dataset.glbMetadataBytes = String(buffer.byteLength);
+    document.documentElement.dataset.glbSourceBytes = String(file.size);
+  }
 
   const parseLocally = (reason?: unknown): T => {
     if (signal?.aborted) throw abortError(signal);
@@ -107,8 +115,8 @@ export async function parseGlbInWorker<T = unknown>(
     }
   }
 
-  // Explicit diagnostic mode keeps a local byte copy because transferring the
-  // Worker buffer detaches it. If the Worker fails, the same parser still
+  // Explicit diagnostic mode keeps a small JSON-prefix copy because transferring
+  // the Worker buffer detaches it. If the Worker fails, the same parser still
   // produces the report without changing import semantics.
   let worker: Worker;
   try {

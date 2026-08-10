@@ -1,15 +1,22 @@
 import './sceneApi';
+import './studioSceneLoadPipelineBudget';
+import './sceneComponentHierarchy';
+import './cameraFrustumRuntimeParity';
+import './mobileStudioBeautyPipeline';
 import './gltfNativeLoad';
+import './mobileStudioFrameBudget';
 import './embeddedGltfTextureApi';
 import './materialEditApi';
 import './materialCompleteApi';
 import './materialTransparencyApi';
 import './animationApi';
 import './lightingApi';
+import './lightShadowRuntimeParity';
 import './capabilityApi';
 import './environmentApi';
 import './editorTransformControls';
 import './editorViewportHelpers';
+import './editorLightVisualization';
 import './editorViewportNavigation';
 import './editorRenderModes';
 
