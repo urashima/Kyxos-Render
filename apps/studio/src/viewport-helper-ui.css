@@ -1,9 +1,10 @@
 .viewport-helper-menu {
-  position: relative;
+  display: inline-flex;
+  align-items: center;
   align-self: center;
 }
 
-.viewport-helper-menu > summary {
+.viewport-helper-trigger {
   min-height: 30px;
   display: inline-flex;
   align-items: center;
@@ -11,32 +12,33 @@
   border: 1px solid var(--kyxos-border, rgba(255, 255, 255, 0.12));
   border-radius: 6px;
   background: var(--kyxos-control-bg, rgba(255, 255, 255, 0.05));
+  color: inherit;
   cursor: pointer;
-  list-style: none;
   user-select: none;
 }
 
-.viewport-helper-menu > summary::-webkit-details-marker {
-  display: none;
-}
-
-.viewport-helper-menu[open] > summary {
+.viewport-helper-menu.is-open > .viewport-helper-trigger {
   border-color: var(--kyxos-accent, #6f8fff);
 }
 
 .viewport-helper-popover {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
-  z-index: 80;
+  position: fixed;
+  z-index: 2450;
   min-width: 190px;
+  max-height: min(420px, calc(100vh - 64px));
+  overflow: auto;
   display: grid;
   gap: 7px;
   padding: 10px;
   border: 1px solid var(--kyxos-border, rgba(255, 255, 255, 0.14));
   border-radius: 8px;
-  background: rgba(15, 19, 27, 0.97);
+  background: rgba(15, 19, 27, 0.98);
   box-shadow: 0 14px 36px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(14px);
+}
+
+.viewport-helper-popover[hidden] {
+  display: none;
 }
 
 .viewport-helper-option {
@@ -44,9 +46,17 @@
   grid-template-columns: 18px 1fr;
   align-items: center;
   gap: 8px;
-  min-height: 25px;
+  min-height: 28px;
+  padding: 2px 4px;
+  border-radius: 5px;
   font-size: 12px;
   white-space: nowrap;
+  cursor: pointer;
+}
+
+.viewport-helper-option:hover,
+.viewport-helper-option:focus-within {
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .viewport-helper-option input {
