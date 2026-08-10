@@ -1,0 +1,41 @@
+name: Editor Component Suite
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'packages/editor-core/src/component-authoring.ts'
+      - 'packages/editor-core/src/component-authoring-entry.ts'
+      - 'packages/editor-core/package.json'
+      - 'tests/unit/editor-component-authoring.spec.ts'
+      - '.github/workflows/editor-component-suite.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: editor-component-suite-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  acceptance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install workspace
+        run: pnpm install --no-frozen-lockfile
+      - name: Typecheck Editor Core
+        run: pnpm --filter @kyxos/editor-core typecheck
+      - name: Run component authoring acceptance
+        run: pnpm exec vitest run tests/unit/editor-component-authoring.spec.ts --reporter=verbose
