@@ -20,22 +20,66 @@ test('Studio groups topbar actions and generates reusable project and asset thum
   await expect(slot.locator('.kx-topbar-editor-tools')).toBeVisible();
   await expect(slot.locator('.kx-topbar-primary').getByRole('button', { name: 'Publish', exact: true })).toBeVisible();
 
+  // Transform tools live in the permanent viewport rail. Their original command
+  // nodes remain mounted but hidden so the rail invokes the same listeners.
+  await expect(slot.locator('.tool-group[data-kx-topbar-command-source="true"]')).toBeHidden();
+  const rail = page.locator('.studio-left-rail');
+  for (const label of ['Select', 'Move', 'Rotate', 'Scale']) {
+    await expect(rail.getByRole('button', { name: label, exact: true })).toBeVisible();
+  }
+
+  // View owns camera/view/zoom actions. Frame All is no longer a standalone
+  // topbar action and sits immediately in the Zoom section after selection zoom.
+  const view = slot.getByRole('button', { name: 'View', exact: true });
+  await view.click();
+  const viewMenu = page.locator('.kx-viewport-view-menu');
+  await expect(viewMenu).toBeVisible();
+  const zoomSection = viewMenu.locator('[data-section="zoom"]');
+  await expect(zoomSection.getByRole('menuitem', { name: 'Zoom to Selection', exact: true })).toBeVisible();
+  await expect(zoomSection.getByRole('menuitem', { name: 'Frame All', exact: true })).toBeVisible();
+  await expect(slot.getByRole('button', { name: 'Frame All', exact: true })).toHaveCount(0);
+  const viewGeometry = await Promise.all([view.boundingBox(), viewMenu.boundingBox()]);
+  expect(viewGeometry[0]).not.toBeNull();
+  expect(viewGeometry[1]).not.toBeNull();
+  expect(viewGeometry[1]!.y).toBeGreaterThanOrEqual(viewGeometry[0]!.y + viewGeometry[0]!.height);
+  await page.keyboard.press('Escape');
+  await expect(viewMenu).toBeHidden();
+
+  // Helpers uses the same body-level popover policy and must not be clipped by
+  // the topbar's project-context overflow region.
+  const helpers = slot.getByRole('button', { name: 'Helpers', exact: true });
+  await helpers.click();
+  const helpersMenu = page.locator('.viewport-helper-popover');
+  await expect(helpersMenu).toBeVisible();
+  await expect(helpersMenu.getByLabel('Ground grid')).toBeVisible();
+  const helperGeometry = await Promise.all([helpers.boundingBox(), helpersMenu.boundingBox()]);
+  expect(helperGeometry[0]).not.toBeNull();
+  expect(helperGeometry[1]).not.toBeNull();
+  expect(helperGeometry[1]!.y).toBeGreaterThanOrEqual(helperGeometry[0]!.y + helperGeometry[0]!.height);
+  await page.keyboard.press('Escape');
+  await expect(helpersMenu).toBeHidden();
+
   const more = slot.getByRole('button', { name: 'More project tools', exact: true });
   await more.click();
-  const menu = slot.locator('.kx-topbar-overflow-menu');
+  const menu = page.locator('.kx-topbar-overflow-menu');
   await expect(menu).toBeVisible();
   await expect(menu.getByRole('menuitem', { name: 'Scenes', exact: true })).toBeVisible();
   await expect(menu.getByRole('menuitem', { name: 'Code', exact: true })).toBeVisible();
   await expect(menu.getByRole('menuitem', { name: 'Versions', exact: true })).toBeVisible();
+  const overflowGeometry = await Promise.all([more.boundingBox(), menu.boundingBox()]);
+  expect(overflowGeometry[0]).not.toBeNull();
+  expect(overflowGeometry[1]).not.toBeNull();
+  expect(overflowGeometry[1]!.y).toBeGreaterThanOrEqual(overflowGeometry[0]!.y + overflowGeometry[0]!.height);
   await page.keyboard.press('Escape');
   await expect(menu).toBeHidden();
 
   await page.setViewportSize({ width: 1100, height: 820 });
   await expect(shell).toHaveAttribute('data-topbar-density', 'comfortable');
   await expect(slot.locator('.kx-topbar-editor-tools')).toBeVisible();
-  await expect(slot.locator('.kx-topbar-transform-cluster .tool-group')).toBeHidden();
+  await expect(slot.locator('.tool-group[data-kx-topbar-command-source="true"]')).toBeHidden();
   await expect(slot.getByLabel('Coordinate space')).toBeVisible();
   await expect(slot.getByRole('button', { name: 'Preview', exact: true })).toBeVisible();
+  await expect(slot.getByRole('button', { name: 'View', exact: true })).toBeVisible();
 
   await page.setViewportSize({ width: 900, height: 760 });
   await expect(shell).toHaveAttribute('data-topbar-density', 'compact');
@@ -56,9 +100,23 @@ test('Studio groups topbar actions and generates reusable project and asset thum
   await expect(mobileMenu.getByRole('menuitem', { name: 'Undo', exact: true })).toBeVisible();
   await expect(mobileMenu.getByRole('menuitem', { name: 'Redo', exact: true })).toBeVisible();
   await expect(mobileMenu.getByRole('menuitem', { name: 'Preview', exact: true })).toBeVisible();
+  await expect(mobileMenu.getByRole('menuitem', { name: 'View', exact: true })).toBeVisible();
+  await expect(mobileMenu.getByRole('menuitem', { name: 'Helpers', exact: true })).toBeVisible();
   await expect(mobileMenu.getByRole('menuitem', { name: /Projects/ })).toBeVisible();
   await expect(mobileMenu.getByRole('menuitem', { name: 'Upload', exact: true })).toBeVisible();
+
+  await mobileMenu.getByRole('menuitem', { name: 'View', exact: true }).click();
+  await expect(viewMenu).toBeVisible();
+  await expect(viewMenu.locator('[data-section="zoom"]').getByRole('menuitem', { name: 'Frame All', exact: true })).toBeVisible();
   await page.keyboard.press('Escape');
+  await expect(viewMenu).toBeHidden();
+
+  await mobileMore.click();
+  await mobileMenu.getByRole('menuitem', { name: 'Helpers', exact: true }).click();
+  await expect(helpersMenu).toBeVisible();
+  await expect(helpersMenu.getByLabel('Ground grid')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(helpersMenu).toBeHidden();
 
   await page.setViewportSize({ width: 1440, height: 900 });
   await expect(shell).toHaveAttribute('data-topbar-density', 'full');
