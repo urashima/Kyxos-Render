@@ -9,7 +9,14 @@ function visibleLabel(button: HTMLButtonElement): string {
 function actionableButtons(root: HTMLElement): HTMLButtonElement[] {
   const slot = root.querySelector<HTMLElement>('.studio-topbar-slot');
   if (!slot) return [];
-  const explicitlyGrouped = [...slot.querySelectorAll<HTMLButtonElement>('button[data-kx-mobile-action-source="true"]')];
+  const groupedInTopbar = [...slot.querySelectorAll<HTMLButtonElement>('button[data-kx-mobile-action-source="true"]')];
+  // Desktop low-frequency actions are physically portaled into document.body so
+  // the topbar cannot clip their dropdown. They remain the authoritative command
+  // nodes, therefore the mobile menu deliberately consumes those same sources.
+  const portaledProjectActions = [...document.querySelectorAll<HTMLButtonElement>(
+    '.kx-topbar-overflow-menu button[data-kx-mobile-action-source="true"]',
+  )];
+  const explicitlyGrouped = [...groupedInTopbar, ...portaledProjectActions];
   const candidates = explicitlyGrouped.length
     ? explicitlyGrouped
     : [...slot.querySelectorAll<HTMLButtonElement>(':scope > button')];
@@ -111,6 +118,15 @@ function mount(root: HTMLElement): void {
   });
   const slot = root.querySelector<HTMLElement>('.studio-topbar-slot');
   if (slot) syncDisabled.observe(slot, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ['disabled', 'data-kx-mobile-action-source'],
+  });
+  // Portal source nodes are outside the shell after topbar organization. Watch
+  // body only while this shell is alive so permission/disabled state mirrors in
+  // an already-open mobile menu as those sources change.
+  syncDisabled.observe(document.body, {
     childList: true,
     subtree: true,
     attributes: true,
