@@ -1,0 +1,84 @@
+.viewport-navigation-group {
+  display: inline-flex;
+  align-items: center;
+}
+
+.viewport-view-trigger {
+  min-height: 30px;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
+.viewport-view-trigger[aria-expanded='true'] {
+  border-color: var(--kyxos-accent, #6f8fff);
+}
+
+.kx-viewport-view-menu {
+  position: fixed;
+  z-index: 2460;
+  width: min(260px, calc(100vw - 16px));
+  max-height: min(560px, calc(100vh - 64px));
+  overflow: auto;
+  padding: 6px;
+  border: 1px solid var(--kyxos-border, rgba(255, 255, 255, 0.14));
+  border-radius: 9px;
+  background: rgba(15, 19, 27, 0.985);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.42);
+  backdrop-filter: blur(14px);
+}
+
+.kx-viewport-view-menu[hidden] {
+  display: none;
+}
+
+.kx-viewport-menu-label {
+  padding: 7px 8px 4px;
+  color: var(--kyxos-muted, rgba(255, 255, 255, 0.52));
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.kx-viewport-menu-section + .kx-viewport-menu-section {
+  margin-top: 5px;
+  padding-top: 5px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.kx-viewport-view-menu button[role='menuitem'] {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 32px;
+  justify-content: flex-start;
+  padding: 0 9px;
+  border-radius: 6px;
+  text-align: left;
+}
+
+.kx-viewport-view-menu button[role='menuitem'][aria-current='true'] {
+  background: color-mix(in srgb, var(--kyxos-accent, #6f8fff) 18%, transparent);
+}
+
+.kx-viewport-bookmark-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  padding: 4px 6px 6px;
+}
+
+.kx-viewport-bookmark-row select {
+  min-width: 0;
+}
+
+.kx-viewport-bookmark-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+  padding: 0 6px 6px;
+}
+
+.kx-viewport-bookmark-actions button {
+  min-height: 30px;
+}
