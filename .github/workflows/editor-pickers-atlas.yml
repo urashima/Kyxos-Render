@@ -1,0 +1,65 @@
+name: Editor Pickers and Texture Atlas
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'apps/studio/src/texture-atlas-app.ts'
+      - 'apps/studio/src/texture-atlas.css'
+      - 'apps/studio/texture-atlas/**'
+      - 'apps/studio/vite.config.ts'
+      - 'packages/editor-core/src/pickers.ts'
+      - 'packages/editor-core/src/texture-atlas.ts'
+      - 'packages/editor-core/package.json'
+      - 'tests/unit/editor-pickers-atlas.spec.ts'
+      - 'tests/e2e/studio-texture-atlas.spec.ts'
+      - '.github/workflows/editor-pickers-atlas.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: editor-pickers-atlas-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  acceptance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install workspace
+        run: pnpm install --no-frozen-lockfile
+      - name: Typecheck Editor Core and Studio
+        run: pnpm --filter @kyxos/editor-core typecheck && pnpm --filter @kyxos/studio typecheck
+      - name: Run picker and atlas unit acceptance
+        run: pnpm exec vitest run tests/unit/editor-pickers-atlas.spec.ts --reporter=verbose
+      - name: Install Chromium
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Run Texture Atlas browser acceptance
+        env:
+          CI: true
+        run: pnpm exec playwright test tests/e2e/studio-texture-atlas.spec.ts --project=chromium --workers=1 --retries=0
+      - name: Build Studio pages
+        run: pnpm --filter @kyxos/studio build
+      - name: Verify Texture Atlas output
+        shell: bash
+        run: test -f apps/studio/dist/texture-atlas/index.html
+      - name: Upload browser diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: editor-pickers-atlas
+          if-no-files-found: ignore
+          path: |
+            test-results
+            playwright-report

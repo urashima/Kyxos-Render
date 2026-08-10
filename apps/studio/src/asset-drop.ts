@@ -1,3 +1,5 @@
+export {};
+
 const ACCEPTED_EXTENSIONS = new Set([
   'glb',
   'hdr',
