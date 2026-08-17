@@ -1,4 +1,9 @@
 import {
+  DEFAULT_ADVANCED_RENDER_SETTINGS,
+  normalizeAdvancedRenderSettings,
+  type SceneAdvancedRenderSettings,
+} from '@kyxos/scene-contract/advanced-render-settings';
+import {
   SCREEN_SPACE_SSS_EFFECT,
   resolveScreenSpaceSssRenderSettings,
 } from '@kyxos/scene-contract/render-settings';
@@ -8,9 +13,11 @@ import type { ScreenSpaceSSSSettings } from './types';
 
 const installKey = Symbol.for('kyxos.viewer.render-settings-parity');
 
+type RenderSettingsWithAdvanced = SceneRenderSettings & { advanced?: SceneAdvancedRenderSettings };
 type RenderSettingsViewer = KyxosViewer & {
   setRenderSettings(settings: SceneRenderSettings): void;
   setScreenSpaceSSS(settings: Partial<ScreenSpaceSSSSettings>): unknown;
+  setAdvancedRenderSettings(settings: SceneAdvancedRenderSettings): void;
 };
 
 type ViewerConstructor = { prototype: KyxosViewer };
@@ -41,6 +48,12 @@ export function installRenderSettingsParity(ViewerClass: ViewerConstructor): voi
     });
 
     this.setScreenSpaceSSS(sssSettings as ScreenSpaceSSSSettings);
+    const advanced = normalizeAdvancedRenderSettings(
+      (settings as RenderSettingsWithAdvanced).advanced ?? DEFAULT_ADVANCED_RENDER_SETTINGS,
+    );
+    // AdvancedRenderingApi is installed immediately after this wrapper. Scene loading
+    // can still invoke setRenderSettings later, when the method is guaranteed to exist.
+    if (typeof this.setAdvancedRenderSettings === 'function') this.setAdvancedRenderSettings(advanced);
 
     const enabledEffects = Object.values(standardEffects).filter(
       (entry) => entry?.enabled,
@@ -49,6 +62,7 @@ export function installRenderSettingsParity(ViewerClass: ViewerConstructor): voi
     this.canvas.dataset.renderQuality = settings.qualityPreset;
     this.canvas.dataset.renderToneMapping = settings.toneMapping;
     this.canvas.dataset.renderEffectCount = String(enabledEffects);
+    this.canvas.dataset.renderingMode = advanced.renderingMode;
     this.canvas.dispatchEvent(
       new CustomEvent('kyxos-render-settings-applied', {
         detail: {
@@ -58,6 +72,7 @@ export function installRenderSettingsParity(ViewerClass: ViewerConstructor): voi
           toneMapping: settings.toneMapping,
           enabledEffects,
           screenSpaceSSS: sssSettings.enabled,
+          advanced,
         },
       }),
     );

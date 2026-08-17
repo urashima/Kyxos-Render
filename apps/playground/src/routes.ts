@@ -165,6 +165,22 @@ export const demoRoutes: DemoRoute[] = [
     animate: true,
   },
   {
+    slug: 'rt-lab',
+    title: 'WebGPU Hybrid Ray Tracing',
+    eyebrow: 'Software BVH · ReSTIR DI · Radiance Cache',
+    description:
+      'Kyxos WebGPU Enhanced path: CPU-built BVH, WGSL software ray queries, unified HDRI/analytic/emissive light candidates, ReSTIR reuse and world-space radiance caching.',
+    quality: 'cinematic',
+  },
+  {
+    slug: 'path-tracing',
+    title: 'Progressive Path Tracing',
+    eyebrow: 'Ground Truth Renderer',
+    description:
+      'Progressive WebGPU path integration with software BVH traversal, PBR sampling, NEE, ReSTIR primary lighting, radiance cache and edge-aware denoise.',
+    quality: 'capture',
+  },
+  {
     slug: 'performance',
     title: 'Performance Telemetry',
     eyebrow: 'Renderer Metrics',

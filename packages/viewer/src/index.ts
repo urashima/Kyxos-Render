@@ -20,6 +20,7 @@ import './editorLightVisualization';
 import './editorViewportNavigation';
 import './editorRenderModes';
 
+import { installAdvancedRenderingApi } from './advancedRenderingApi';
 import { KyxosViewer } from './KyxosViewer';
 import { installEditorSceneModeExtension } from './editorSceneMode';
 import { installGltfAuthoringFidelityExtension } from './gltfAuthoringFidelity';
@@ -53,6 +54,10 @@ installSSSStudyModelExtension(KyxosViewer);
 installScreenSpaceSSSExtension(KyxosViewer);
 installScreenSpaceSSSDebugExtension(KyxosViewer);
 installRenderSettingsParity(KyxosViewer);
+// Advanced rendering is deliberately installed after the existing authoring and
+// render-settings wrappers so geometry/material/light edits invalidate the new
+// software-ray histories without changing Studio -> Viewer package boundaries.
+installAdvancedRenderingApi(KyxosViewer);
 installViewerMetricsBroadcast(KyxosViewer);
 
 export { KyxosViewer };
@@ -87,6 +92,35 @@ export {
   type RenderParameterDefinition,
   type ScreenSpaceSssRenderSettings,
 } from '@kyxos/scene-contract/render-settings';
+export {
+  DEFAULT_ADVANCED_RENDER_SETTINGS,
+  normalizeAdvancedRenderSettings,
+} from '@kyxos/scene-contract/advanced-render-settings';
+export type {
+  AdvancedRendererTier,
+  AdvancedRenderingCapabilityDescription,
+  AdvancedRenderingMode,
+  RestirDIMode,
+  SceneAdvancedRenderSettings,
+  ScenePathTracingSettings,
+  SceneRadianceCacheSettings,
+  SceneRestirDISettings,
+} from '@kyxos/scene-contract/advanced-render-settings';
+export type { AdvancedRenderRuntimeState, AdvancedRenderStatus } from './advancedRenderingApi';
+export {
+  balanceHeuristic,
+  buildAliasTable,
+  buildBvh,
+  buildEnvironmentAliasTable,
+  environmentSolidAnglePdf,
+  powerHeuristic,
+  RadianceHashCache,
+  reservoirFinalWeight,
+  reservoirUpdate,
+  TemporalHistoryRegistry,
+  traceAny,
+  traceClosest,
+} from './render/advanced';
 export type { AnimationState, CameraState, PickResult } from './sceneTypes';
 export type {
   EditorTransformMode,

@@ -28,6 +28,8 @@ const playgroundRoutes = [
   'background',
   'sparkle',
   'full-stack',
+  'rt-lab',
+  'path-tracing',
   'performance',
   'lifecycle',
 ];
