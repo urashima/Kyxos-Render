@@ -1,9 +1,11 @@
 import * as THREE from 'three/webgpu';
 import { buildBvh, type BuiltBvh, type RayTriangle, type Vec3Tuple } from './bvh';
+import { buildBvhAsync } from './bvhWorkerClient';
 import { buildAliasTable, buildEnvironmentAliasTable } from './sampling';
 
 export interface ExtractedAdvancedScene {
   bvh: BuiltBvh;
+  bvhWorkerUsed: boolean;
   triangles: Float32Array;
   nodes: Float32Array;
   materials: Float32Array;
@@ -40,6 +42,13 @@ interface LightRecord {
   color: [number, number, number];
   intensity: number;
   power: number;
+}
+
+interface ExtractedGeometry {
+  triangles: RayTriangle[];
+  materialRecords: MaterialRecord[];
+  emissiveLights: LightRecord[];
+  dynamicMeshes: boolean;
 }
 
 function finite(value: unknown, fallback: number): number {
@@ -99,12 +108,7 @@ function resolveTriangleMaterial(mesh: any, triangleOffset: number): any {
   return materials[group?.materialIndex ?? 0] ?? materials[0];
 }
 
-function extractGeometry(scene: any): {
-  triangles: RayTriangle[];
-  materialRecords: MaterialRecord[];
-  emissiveLights: LightRecord[];
-  dynamicMeshes: boolean;
-} {
+function extractGeometry(scene: any): ExtractedGeometry {
   const triangles: RayTriangle[] = [];
   const materialRecords: MaterialRecord[] = [];
   const materialIndices = new Map<any, number>();
@@ -329,11 +333,13 @@ function extractEnvironment(scene: any, resource: any): {
   return { pixels, alias, width, height };
 }
 
-export function extractAdvancedScene(viewer: unknown): ExtractedAdvancedScene {
-  const runtime = viewer as any;
+function finalizeAdvancedScene(
+  runtime: any,
+  geometry: ExtractedGeometry,
+  bvh: BuiltBvh,
+  bvhWorkerUsed: boolean,
+): ExtractedAdvancedScene {
   const scene = runtime.scene;
-  const geometry = extractGeometry(scene);
-  const bvh = buildBvh(geometry.triangles, 4);
   const analytic = extractAnalyticLights(scene);
   const lightRecords = [...analytic, ...geometry.emissiveLights];
   const packedLights = packLights(lightRecords);
@@ -347,6 +353,7 @@ export function extractAdvancedScene(viewer: unknown): ExtractedAdvancedScene {
 
   return {
     bvh,
+    bvhWorkerUsed,
     triangles,
     nodes,
     materials,
@@ -363,4 +370,20 @@ export function extractAdvancedScene(viewer: unknown): ExtractedAdvancedScene {
     dynamicMeshes: geometry.dynamicMeshes,
     estimatedBytes,
   };
+}
+
+export function extractAdvancedScene(viewer: unknown): ExtractedAdvancedScene {
+  const runtime = viewer as any;
+  const geometry = extractGeometry(runtime.scene);
+  return finalizeAdvancedScene(runtime, geometry, buildBvh(geometry.triangles, 4), false);
+}
+
+export async function extractAdvancedSceneAsync(viewer: unknown): Promise<ExtractedAdvancedScene> {
+  const runtime = viewer as any;
+  const geometry = extractGeometry(runtime.scene);
+  // Yield once before starting the worker so the existing raster frame can be
+  // presented and Studio can display the Building state immediately.
+  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+  const { bvh, workerUsed } = await buildBvhAsync(geometry.triangles, 4);
+  return finalizeAdvancedScene(runtime, geometry, bvh, workerUsed);
 }
