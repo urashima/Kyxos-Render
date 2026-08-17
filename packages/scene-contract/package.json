@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./render-settings": "./src/render-settings.ts"
+    "./render-settings": "./src/render-settings.ts",
+    "./advanced-render-settings": "./src/advanced-render-settings.ts"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json --noEmit",
