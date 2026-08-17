@@ -111,7 +111,8 @@ function augmentComponentTransforms(scene: KyxosSceneContract, patch: ScenePatch
 
 function arrayValue<T>(patch: ScenePatch, path: string): T[] | null {
   const operation = patch.find((entry) => entry.path === path && (entry.op === 'replace' || entry.op === 'add'));
-  return operation && Array.isArray(operation.value) ? operation.value as T[] : null;
+  if (!operation || (operation.op !== 'replace' && operation.op !== 'add')) return null;
+  return Array.isArray(operation.value) ? operation.value as T[] : null;
 }
 
 function normalizeAddedComponentNodeTransforms(
@@ -146,7 +147,7 @@ function normalizeAddedComponentNodeTransforms(
     operation.path === '/nodes' && (operation.op === 'replace' || operation.op === 'add')
       ? { ...operation, value: normalizedNodes }
       : operation,
-  );
+  ) as ScenePatch;
 }
 
 export function installComponentTransformCommandParity(): void {
