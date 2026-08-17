@@ -22,6 +22,10 @@ import {
   TemporalHistoryRegistry,
 } from '../../packages/viewer/src/render/advanced/temporalHistory';
 import { resolveAdvancedRendererCapabilities } from '../../packages/viewer/src/render/advanced/backendCapabilities';
+import {
+  createDefaultAdvancedFeatureGraph,
+  requestedFeaturesForMode,
+} from '../../packages/viewer/src/render/advanced/featureGraph';
 import { normalizeAdvancedRenderSettings } from '../../packages/scene-contract/src/advanced-render-settings';
 
 describe('Truvis-inspired render foundation', () => {
@@ -110,6 +114,32 @@ describe('Truvis-inspired render foundation', () => {
       maxBufferSize: 256 * 1024 * 1024,
     });
     expect(strong.pathTracing).toBe(true);
+  });
+
+  it('resolves capability-gated advanced features and dependencies in order', () => {
+    const graph = createDefaultAdvancedFeatureGraph();
+    const webgl = resolveAdvancedRendererCapabilities('webgl2');
+    const rejected = graph.resolve(
+      webgl,
+      requestedFeaturesForMode('pathTracing', { restir: true, radianceCache: true, denoise: true }),
+    );
+    expect(rejected.enabled).toContain('environmentImportance');
+    expect(rejected.enabled).not.toContain('softwareRayQuery');
+    expect(rejected.unavailable.some((entry) => entry.feature === 'pathTracing')).toBe(true);
+
+    const webgpu = resolveAdvancedRendererCapabilities('webgpu', {
+      maxStorageBufferBindingSize: 128 * 1024 * 1024,
+      maxBufferSize: 256 * 1024 * 1024,
+    });
+    const resolved = graph.resolve(
+      webgpu,
+      requestedFeaturesForMode('pathTracing', { restir: true, radianceCache: true, denoise: true }),
+    );
+    expect(resolved.unavailable).toHaveLength(0);
+    expect(resolved.enabled.indexOf('softwareRayQuery')).toBeLessThan(resolved.enabled.indexOf('pathTracing'));
+    expect(resolved.enabled).toContain('restirDI');
+    expect(resolved.enabled).toContain('radianceCache');
+    expect(resolved.enabled).toContain('pathDenoise');
   });
 
   it('normalizes advanced scene settings into bounded production values', () => {
