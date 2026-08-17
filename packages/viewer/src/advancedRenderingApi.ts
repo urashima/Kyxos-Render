@@ -391,9 +391,11 @@ export function installAdvancedRenderingApi(ViewerClass: { prototype: KyxosViewe
 
   const originalGetCapabilities = prototype.getCapabilities;
   if (typeof originalGetCapabilities === 'function') {
-    prototype.getCapabilities = function getCapabilitiesWithAdvancedRendering(...args: unknown[]): unknown {
+    prototype.getCapabilities = function getCapabilitiesWithAdvancedRendering(
+      ...args: unknown[]
+    ): ReturnType<typeof originalGetCapabilities> {
       const capabilities = originalGetCapabilities.apply(this, args);
-      return { ...(capabilities as Record<string, unknown>), advancedRendering: controller(this).getCapabilities() };
+      return { ...capabilities, advancedRendering: controller(this).getCapabilities() } as ReturnType<typeof originalGetCapabilities>;
     };
   }
 
