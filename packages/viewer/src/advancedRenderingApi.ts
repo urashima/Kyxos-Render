@@ -16,7 +16,12 @@ import {
   resolveAdvancedRendererCapabilities,
   type AdvancedRendererCapabilities,
 } from './render/advanced/backendCapabilities';
-import { extractAdvancedScene, type ExtractedAdvancedScene } from './render/advanced/sceneExtraction';
+import {
+  createDefaultAdvancedFeatureGraph,
+  requestedFeaturesForMode,
+  type AdvancedRenderFeatureName,
+} from './render/advanced/featureGraph';
+import { extractAdvancedSceneAsync, type ExtractedAdvancedScene } from './render/advanced/sceneExtraction';
 import {
   DEFAULT_TEMPORAL_DEPENDENCIES,
   TemporalHistoryRegistry,
@@ -43,10 +48,13 @@ export interface AdvancedRenderStatus {
   lights: number;
   emissiveLights: number;
   dynamicMeshes: boolean;
+  bvhWorkerUsed: boolean;
   cpuFrameTimeMs: number;
   advancedGpuBytes: number;
   historyBytes: number;
   radianceCacheBytes: number;
+  enabledFeatures: AdvancedRenderFeatureName[];
+  unavailableFeatures: AdvancedRenderFeatureName[];
 }
 
 declare module './KyxosViewer' {
@@ -86,6 +94,7 @@ function mergeSettings(
 class AdvancedRenderingController {
   private readonly viewer: KyxosViewer;
   private readonly history = new TemporalHistoryRegistry();
+  private readonly featureGraph = createDefaultAdvancedFeatureGraph();
   private renderer: WebGpuHybridRenderer | null = null;
   private settings = cloneSettings(DEFAULT_ADVANCED_RENDER_SETTINGS);
   private capabilities: AdvancedRendererCapabilities;
@@ -95,6 +104,8 @@ class AdvancedRenderingController {
   private disposed = false;
   private frameHandle = 0;
   private initialization: Promise<void> | null = null;
+  private sceneBuild: Promise<void> | null = null;
+  private sceneBuildGeneration = 0;
 
   constructor(viewer: KyxosViewer) {
     this.viewer = viewer;
@@ -116,15 +127,20 @@ class AdvancedRenderingController {
       lights: 0,
       emissiveLights: 0,
       dynamicMeshes: false,
+      bvhWorkerUsed: false,
       cpuFrameTimeMs: 0,
       advancedGpuBytes: 0,
       historyBytes: 0,
       radianceCacheBytes: 0,
+      enabledFeatures: [],
+      unavailableFeatures: [],
     };
+    this.resolveFeatures();
     if (backend === 'webgpu') {
       void queryBrowserAdvancedRendererCapabilities().then((capabilities) => {
         if (this.disposed || (this.viewer as any).backend !== 'webgpu') return;
         this.capabilities = capabilities;
+        this.resolveFeatures();
         this.emitStatus();
       });
     }
@@ -135,12 +151,27 @@ class AdvancedRenderingController {
   }
 
   getStatus(): AdvancedRenderStatus {
-    return { ...this.status };
+    return {
+      ...this.status,
+      enabledFeatures: [...this.status.enabledFeatures],
+      unavailableFeatures: [...this.status.unavailableFeatures],
+    };
   }
 
   getCapabilities(): AdvancedRenderingCapabilityDescription {
     const { limits: _limits, ...description } = this.capabilities;
     return { ...description };
+  }
+
+  private resolveFeatures(): void {
+    const requested = requestedFeaturesForMode(this.settings.renderingMode, {
+      restir: this.settings.restirDI.mode !== 'off',
+      radianceCache: this.settings.radianceCache.enabled,
+      denoise: this.settings.pathTracing.denoise,
+    });
+    const resolved = this.featureGraph.resolve(this.capabilities, requested);
+    this.status.enabledFeatures = resolved.enabled;
+    this.status.unavailableFeatures = resolved.unavailable.map((entry) => entry.feature);
   }
 
   setSettings(update: Partial<SceneAdvancedRenderSettings> | SceneAdvancedRenderSettings): void {
@@ -149,6 +180,7 @@ class AdvancedRenderingController {
     if (previous.renderingMode !== this.settings.renderingMode) {
       this.status.requestedMode = this.settings.renderingMode;
     }
+    this.resolveFeatures();
     this.renderer?.setSettings(this.settings);
     this.history.invalidate('restir');
     this.history.invalidate('pathTracing');
@@ -163,7 +195,12 @@ class AdvancedRenderingController {
 
   markDirty(...keys: TemporalRevisionKey[]): void {
     if (keys.length) this.history.bump(...keys);
-    this.sceneDirty ||= keys.some((key) => key === 'geometry' || key === 'transform' || key === 'material' || key === 'lighting' || key === 'environment');
+    const sceneAffectsAcceleration = keys.some((key) =>
+      key === 'geometry' || key === 'transform' || key === 'material' || key === 'lighting' || key === 'environment');
+    if (sceneAffectsAcceleration) {
+      this.sceneDirty = true;
+      this.sceneBuildGeneration += 1;
+    }
     this.resetAccumulation(keys.join('+') || 'scene-change');
   }
 
@@ -186,6 +223,7 @@ class AdvancedRenderingController {
       const renderer = new WebGpuHybridRenderer(this.viewer.canvas, {
         onDeviceLost: (message) => {
           this.capabilities = resolveAdvancedRendererCapabilities('webgl2');
+          this.resolveFeatures();
           this.setState('fallback', message, 'realtime');
           this.warn(message);
         },
@@ -198,9 +236,11 @@ class AdvancedRenderingController {
           return;
         }
         this.capabilities = capabilities;
+        this.resolveFeatures();
         renderer.setSettings(this.settings);
         this.renderer = renderer;
         this.sceneDirty = true;
+        this.sceneBuildGeneration += 1;
       } catch (error) {
         renderer.dispose();
         this.renderer = null;
@@ -213,27 +253,48 @@ class AdvancedRenderingController {
     return this.initialization;
   }
 
-  private rebuildScene(): void {
-    if (!this.renderer) return;
+  private async rebuildScene(): Promise<void> {
+    if (!this.renderer || this.disposed) return;
+    if (this.sceneBuild) return this.sceneBuild;
+    const generation = this.sceneBuildGeneration;
+    this.sceneDirty = false;
     this.setState('building', 'Building software BVH and unified light tables.');
     const started = performance.now();
-    this.scene = extractAdvancedScene(this.viewer);
-    this.renderer.setScene(this.scene);
-    this.sceneDirty = false;
-    this.status.triangles = this.scene.triangleCount;
-    this.status.bvhNodes = this.scene.bvh.nodes.length;
-    this.status.lights = this.scene.lightCount;
-    this.status.emissiveLights = this.scene.emissiveLightCount;
-    this.status.dynamicMeshes = this.scene.dynamicMeshes;
-    this.status.message = `BVH ready in ${(performance.now() - started).toFixed(1)} ms.`;
-    this.history.commit('restir');
-    this.history.commit('radianceCache');
-    this.history.commit('pathTracing');
+    this.sceneBuild = (async () => {
+      try {
+        const extracted = await extractAdvancedSceneAsync(this.viewer);
+        if (this.disposed || generation !== this.sceneBuildGeneration || !this.renderer) {
+          this.sceneDirty = true;
+          return;
+        }
+        this.scene = extracted;
+        this.renderer.setScene(extracted);
+        this.status.triangles = extracted.triangleCount;
+        this.status.bvhNodes = extracted.bvh.nodes.length;
+        this.status.lights = extracted.lightCount;
+        this.status.emissiveLights = extracted.emissiveLightCount;
+        this.status.dynamicMeshes = extracted.dynamicMeshes;
+        this.status.bvhWorkerUsed = extracted.bvhWorkerUsed;
+        this.status.message = `BVH ready in ${(performance.now() - started).toFixed(1)} ms · ${extracted.bvhWorkerUsed ? 'worker' : 'main-thread fallback'}.`;
+        this.history.commit('restir');
+        this.history.commit('radianceCache');
+        this.history.commit('pathTracing');
+      } catch (error) {
+        this.sceneDirty = true;
+        const message = error instanceof Error ? error.message : String(error);
+        this.setState('error', `BVH build failed: ${message}`, 'realtime');
+        this.warn(`Advanced scene acceleration build failed: ${message}`);
+      }
+    })().finally(() => {
+      this.sceneBuild = null;
+    });
+    return this.sceneBuild;
   }
 
   async activate(): Promise<void> {
     if (this.disposed) return;
     this.status.requestedMode = this.settings.renderingMode;
+    this.resolveFeatures();
     if (this.settings.renderingMode === 'realtime') {
       this.renderer?.hide();
       this.stopLoop();
@@ -248,13 +309,25 @@ class AdvancedRenderingController {
       this.warn(message);
       return;
     }
+    const requiredFeature: AdvancedRenderFeatureName = this.settings.renderingMode === 'pathTracing'
+      ? 'pathTracing'
+      : 'softwareRayQuery';
+    if (this.status.unavailableFeatures.includes(requiredFeature)) {
+      const message = this.capabilities.reason ?? `${requiredFeature} is unavailable on the active WebGPU adapter.`;
+      this.renderer?.hide();
+      this.stopLoop();
+      this.setState('fallback', message, 'realtime');
+      this.warn(message);
+      return;
+    }
     try {
       await this.ensureRenderer();
     } catch {
       return;
     }
     if (!this.renderer) return;
-    if (this.sceneDirty || !this.scene) this.rebuildScene();
+    if (this.sceneDirty || !this.scene) await this.rebuildScene();
+    if (!this.scene || this.sceneDirty) return;
     this.renderer.setSettings(this.settings);
     this.setState('rendering', this.status.message, this.settings.renderingMode);
     this.startLoop();
@@ -266,7 +339,17 @@ class AdvancedRenderingController {
       this.frameHandle = 0;
       if (this.disposed || this.settings.renderingMode === 'realtime') return;
       const runtime = this.viewer as any;
-      if (this.sceneDirty && this.renderer) this.rebuildScene();
+      if (this.sceneDirty && this.renderer && !this.sceneBuild) {
+        void this.rebuildScene().then(() => {
+          if (!this.disposed && !this.sceneDirty && this.scene) {
+            this.setState('rendering', this.status.message, this.settings.renderingMode);
+          }
+        });
+      }
+      if (this.sceneBuild || this.sceneDirty) {
+        this.frameHandle = requestAnimationFrame(tick);
+        return;
+      }
       if (this.scene?.dynamicMeshes && runtime.animationEnabled) {
         this.renderer?.hide();
         this.setState(
@@ -338,6 +421,7 @@ class AdvancedRenderingController {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.sceneBuildGeneration += 1;
     this.stopLoop();
     this.renderer?.dispose();
     this.renderer = null;
