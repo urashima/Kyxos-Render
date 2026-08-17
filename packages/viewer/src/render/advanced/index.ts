@@ -1,3 +1,4 @@
+export * from './accelerationStructure';
 export * from './backendCapabilities';
 export * from './bvh';
 export * from './featureGraph';
