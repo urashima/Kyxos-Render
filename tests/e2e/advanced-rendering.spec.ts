@@ -58,6 +58,7 @@ for (const route of ['rt-lab', 'path-tracing'] as const) {
         triangles: metrics?.triangles ?? 0,
         state: canvas?.dataset.advancedRenderState ?? null,
         mode: canvas?.dataset.advancedRenderMode ?? null,
+        architecture: canvas?.dataset.advancedRenderArchitecture ?? null,
         canvasWidth: canvas?.width ?? 0,
         canvasHeight: canvas?.height ?? 0,
         overlayDisplay: overlay ? getComputedStyle(overlay).display : 'none',
@@ -75,6 +76,14 @@ for (const route of ['rt-lab', 'path-tracing'] as const) {
 
     if (result.state === 'fallback') {
       expect(result.mode).toBe('realtime');
+      expect(result.overlayDisplay === 'none' || result.overlayVisibility === 'hidden').toBe(true);
+    }
+
+    if (route === 'rt-lab' && result.state === 'rendering') {
+      expect(result.mode).toBe('cinematic');
+      expect(result.architecture).toBe('realtime-hybrid-feature-pass');
+      // Hybrid RT must never replace the realtime viewport with the old
+      // progressive full-frame advanced overlay.
       expect(result.overlayDisplay === 'none' || result.overlayVisibility === 'hidden').toBe(true);
     }
 
