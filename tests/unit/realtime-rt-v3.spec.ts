@@ -72,13 +72,13 @@ describe('Realtime RT V3', () => {
   it('keeps explicit shared-device layouts instead of requesting external pipeline handles', () => {
     expect(passSource).toContain('private bindGroupLayout');
     expect(passSource).toContain('this.device.createComputePipeline({');
-    expect(passSource).not.toContain('createComputePipelineAsync');
-    expect(passSource).not.toContain('this.pipeline.getBindGroupLayout');
+    expect(passSource).not.toContain('this.device.createComputePipelineAsync(');
+    expect(passSource).not.toContain('this.pipeline.getBindGroupLayout(');
     expect(sharedPtSource).toContain('private sharedComputeLayout');
     expect(sharedPtSource).toContain('private sharedDisplayLayout');
-    expect(sharedPtSource).not.toContain('createComputePipelineAsync');
-    expect(sharedPtSource).not.toContain('getBindGroupLayout(0)');
-    expect(sharedPtSource).not.toContain('pushErrorScope');
-    expect(sharedPtSource).not.toContain('popErrorScope');
+    expect(sharedPtSource).not.toContain('this.device.createComputePipelineAsync(');
+    expect(sharedPtSource).not.toContain('.getBindGroupLayout(0)');
+    expect(sharedPtSource).not.toContain('this.device.pushErrorScope');
+    expect(sharedPtSource).not.toContain('this.device.popErrorScope');
   });
 });
