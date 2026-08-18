@@ -56,9 +56,15 @@ interface LightRecord {
   power: number;
 }
 
+interface SmoothRayTriangle extends RayTriangle {
+  normalA?: Vec3Tuple;
+  normalB?: Vec3Tuple;
+  normalC?: Vec3Tuple;
+}
+
 interface MeshInput {
   id: string;
-  triangles: RayTriangle[];
+  triangles: SmoothRayTriangle[];
   world: Mat4Tuple;
   inverseWorld: Mat4Tuple;
 }
@@ -111,6 +117,13 @@ function getVertex(mesh: any, index: number, target: THREE.Vector3): THREE.Vecto
   return target.fromBufferAttribute(mesh.geometry.attributes.position, index);
 }
 
+function getVertexNormal(mesh: any, index: number, target: THREE.Vector3): THREE.Vector3 | null {
+  const attribute = mesh.geometry?.attributes?.normal;
+  if (!attribute) return null;
+  target.fromBufferAttribute(attribute, index).normalize();
+  return target;
+}
+
 function resolveTriangleMaterial(mesh: any, triangleOffset: number): any {
   const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
   if (materials.length <= 1) return materials[0];
@@ -132,6 +145,12 @@ function extractGeometry(scene: any): ExtractedGeometry {
   const a = new THREE.Vector3();
   const b = new THREE.Vector3();
   const c = new THREE.Vector3();
+  const normalA = new THREE.Vector3();
+  const normalB = new THREE.Vector3();
+  const normalC = new THREE.Vector3();
+  const fallbackNormal = new THREE.Vector3();
+  const edgeA = new THREE.Vector3();
+  const edgeB = new THREE.Vector3();
   const wa = new THREE.Vector3();
   const wb = new THREE.Vector3();
   const wc = new THREE.Vector3();
@@ -145,7 +164,7 @@ function extractGeometry(scene: any): ExtractedGeometry {
     const geometry = object.geometry;
     const index = geometry.index;
     const triangleVertexCount = index ? index.count : geometry.attributes.position.count;
-    const triangles: RayTriangle[] = [];
+    const triangles: SmoothRayTriangle[] = [];
     for (let offset = 0; offset + 2 < triangleVertexCount; offset += 3) {
       const ia = index ? index.getX(offset) : offset;
       const ib = index ? index.getX(offset + 1) : offset + 1;
@@ -156,6 +175,12 @@ function extractGeometry(scene: any): ExtractedGeometry {
       const va: Vec3Tuple = [a.x, a.y, a.z];
       const vb: Vec3Tuple = [b.x, b.y, b.z];
       const vc: Vec3Tuple = [c.x, c.y, c.z];
+      edgeA.copy(b).sub(a);
+      edgeB.copy(c).sub(a);
+      fallbackNormal.copy(edgeA).cross(edgeB).normalize();
+      const na = getVertexNormal(object, ia, normalA)?.clone() ?? fallbackNormal.clone();
+      const nb = getVertexNormal(object, ib, normalB)?.clone() ?? fallbackNormal.clone();
+      const nc = getVertexNormal(object, ic, normalC)?.clone() ?? fallbackNormal.clone();
       const material = resolveTriangleMaterial(object, offset);
       let materialIndex = materialIndices.get(material);
       if (materialIndex == null) {
@@ -163,7 +188,17 @@ function extractGeometry(scene: any): ExtractedGeometry {
         materialIndices.set(material, materialIndex);
         materialRecords.push(materialRecord(material));
       }
-      triangles.push({ a: va, b: vb, c: vc, materialIndex, sourceIndex: triangles.length });
+      triangles.push({
+        a: va,
+        b: vb,
+        c: vc,
+        normal: [fallbackNormal.x, fallbackNormal.y, fallbackNormal.z],
+        normalA: [na.x, na.y, na.z],
+        normalB: [nb.x, nb.y, nb.z],
+        normalC: [nc.x, nc.y, nc.z],
+        materialIndex,
+        sourceIndex: triangles.length,
+      });
       const record = materialRecords[materialIndex];
       if (luminance3(record.emissive) > 1e-6 && emissiveLights.length < 8192) {
         wa.copy(a).applyMatrix4(object.matrixWorld);
@@ -232,14 +267,24 @@ function extractAnalyticLights(scene: any): LightRecord[] {
 }
 
 function packTriangles(triangles: readonly RayTriangle[]): Float32Array {
-  const output = new Float32Array(Math.max(16, triangles.length * 16));
+  const stride = 28;
+  const output = new Float32Array(Math.max(stride, triangles.length * stride));
   triangles.forEach((triangle, index) => {
-    const base = index * 16;
+    const base = index * stride;
     output.set([...triangle.a, 1, ...triangle.b, 1, ...triangle.c, 1], base);
     const ab = new THREE.Vector3(triangle.b[0] - triangle.a[0], triangle.b[1] - triangle.a[1], triangle.b[2] - triangle.a[2]);
     const ac = new THREE.Vector3(triangle.c[0] - triangle.a[0], triangle.c[1] - triangle.a[1], triangle.c[2] - triangle.a[2]);
-    const normal = ab.cross(ac).normalize();
-    output.set([normal.x, normal.y, normal.z, triangle.materialIndex ?? 0], base + 12);
+    const faceNormal = triangle.normal
+      ? new THREE.Vector3(...triangle.normal).normalize()
+      : ab.cross(ac).normalize();
+    const smooth = triangle as SmoothRayTriangle;
+    const na = smooth.normalA ?? [faceNormal.x, faceNormal.y, faceNormal.z] as Vec3Tuple;
+    const nb = smooth.normalB ?? [faceNormal.x, faceNormal.y, faceNormal.z] as Vec3Tuple;
+    const nc = smooth.normalC ?? [faceNormal.x, faceNormal.y, faceNormal.z] as Vec3Tuple;
+    output.set([faceNormal.x, faceNormal.y, faceNormal.z, triangle.materialIndex ?? 0], base + 12);
+    output.set([na[0], na[1], na[2], 0], base + 16);
+    output.set([nb[0], nb[1], nb[2], 0], base + 20);
+    output.set([nc[0], nc[1], nc[2], 0], base + 24);
   });
   return output;
 }
