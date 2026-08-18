@@ -1,4 +1,5 @@
 import { realtimeHybridRtWGSL as realtimeHybridRtV2WGSL } from './realtimeHybridRtShaderV2';
+import { findReservedWGSLIdentifiers, sanitizePortableWGSL } from './webgpuShadersPortable';
 
 const FEATURE_BINDINGS = `@group(0) @binding(7) var reflectionOutput: texture_storage_2d<rgba16float, write>;`;
 const FEATURE_BINDINGS_V3 = `${FEATURE_BINDINGS}\n@group(0) @binding(8) var refractionOutput: texture_storage_2d<rgba16float, write>;`;
@@ -18,7 +19,7 @@ const VISIBILITY_STORE_V3 = `textureStore(visibilityOutput, pixel, vec4<f32>(min
 const REFLECTION_STORE = `  textureStore(reflectionOutput, pixel, vec4<f32>(reflectionColor, rayLength));`;
 const REFLECTION_AND_REFRACTION_STORE = `${REFLECTION_STORE}\n  var refractionColor = vec3<f32>(0.0);\n  var refractionRayLength = 1e4;\n  if (globals.refractionInfo.x > 0.5 && transmissionValue > 1e-4 && metalRough.y <= globals.refractionInfo.y) {\n    let eta = 1.0 / max(primaryIor, 1.0001);\n    let idealRefraction = refract(rayValue.xyz, worldNormal, eta);\n    if (dot(idealRefraction, idealRefraction) > 1e-8) {\n      let roughnessMix = clamp(metalRough.y * metalRough.y, 0.0, 0.95);\n      let refractionDirection = safeDirection(mix(idealRefraction, randomHemisphere(-worldNormal), roughnessMix));\n      let refractionOrigin = worldPosition - worldNormal * bias + refractionDirection * bias * 2.0;\n      let refractionHit = traceClosest(refractionOrigin, refractionDirection, 1e20);\n      if (refractionHit.positionDistance.w > 0.0) {\n        refractionRayLength = refractionHit.positionDistance.w;\n        let materialCount = max(1u, u32(globals.sceneCounts1.w + 0.5));\n        let materialIndex = min(u32(max(0.0, refractionHit.normalMaterial.w)), materialCount - 1u);\n        let materialValue = loadMaterial(materialIndex);\n        let throughEnvironment = environmentRadiance(refractionDirection);\n        refractionColor = max(materialValue.emissiveRough.rgb, vec3<f32>(0.0)) + max(materialValue.baseMetal.rgb, vec3<f32>(0.0)) * throughEnvironment;\n      } else {\n        refractionColor = environmentRadiance(refractionDirection);\n      }\n    }\n  }\n  textureStore(refractionOutput, pixel, vec4<f32>(refractionColor, refractionRayLength));`;
 
-let realtimeHybridRtWGSL = realtimeHybridRtV2WGSL
+const migratedRealtimeRtWGSL = realtimeHybridRtV2WGSL
   .replace(GLOBALS_END, GLOBALS_END_V3)
   .replace(FEATURE_BINDINGS, FEATURE_BINDINGS_V3)
   .replaceAll(NEUTRAL_REFLECTION, NEUTRAL_REFLECTION_V3)
@@ -26,16 +27,20 @@ let realtimeHybridRtWGSL = realtimeHybridRtV2WGSL
   .replace(VISIBILITY_STORE, VISIBILITY_STORE_V3)
   .replace(REFLECTION_STORE, REFLECTION_AND_REFRACTION_STORE);
 
+const realtimeHybridRtWGSL = sanitizePortableWGSL(migratedRealtimeRtWGSL);
+const reservedIdentifiers = findReservedWGSLIdentifiers(realtimeHybridRtWGSL);
+
 if (
-  realtimeHybridRtWGSL === realtimeHybridRtV2WGSL ||
+  migratedRealtimeRtWGSL === realtimeHybridRtV2WGSL ||
   !realtimeHybridRtWGSL.includes('refractionInfo: vec4<f32>') ||
   !realtimeHybridRtWGSL.includes('@binding(8) var refractionOutput') ||
   !realtimeHybridRtWGSL.includes('transmissionValue') ||
   !realtimeHybridRtWGSL.includes('refract(rayValue.xyz') ||
   !realtimeHybridRtWGSL.includes('textureStore(refractionOutput') ||
-  realtimeHybridRtWGSL.includes('.negate()')
+  realtimeHybridRtWGSL.includes('.negate()') ||
+  reservedIdentifiers.length > 0
 ) {
-  throw new Error('Realtime RT V3 refraction migration did not match the pinned V2 shader.');
+  throw new Error(`Realtime RT V3 WGSL portability migration failed${reservedIdentifiers.length ? `: ${reservedIdentifiers.join(', ')}` : ''}.`);
 }
 
 export { realtimeHybridRtWGSL };
