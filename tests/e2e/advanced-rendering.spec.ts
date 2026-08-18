@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 
 const completeControlIds = [
+  '#advanced-rt-enabled',
   '#advanced-env-importance',
   '#advanced-emissive-sampling',
   '#advanced-ray-shadows',
@@ -10,6 +11,14 @@ const completeControlIds = [
   '#advanced-ao-strength',
   '#advanced-ray-reflections',
   '#advanced-reflection-roughness',
+  '#advanced-ray-refractions',
+  '#advanced-refraction-roughness',
+  '#advanced-refraction-strength',
+  '#advanced-rt-denoise-enabled',
+  '#advanced-rt-denoise-radius',
+  '#advanced-rt-denoise-strength',
+  '#advanced-rt-fusion-enabled',
+  '#advanced-rt-fusion-strength',
   '#advanced-restir-mode',
   '#advanced-restir-candidates',
   '#advanced-restir-spatial',
@@ -35,8 +44,9 @@ for (const route of ['rt-lab', 'path-tracing'] as const) {
     await page.waitForFunction(() => window.__kyxosTestApi?.ready(), null, { timeout: 90_000 });
 
     await expect(page.locator('#advanced-render-panel')).toBeVisible();
-    await expect(page.locator('#advanced-render-mode')).toHaveValue(route === 'path-tracing' ? 'pathTracing' : 'cinematic');
+    await expect(page.locator('#advanced-render-mode')).toHaveValue(route === 'path-tracing' ? 'pathTracing' : 'realtime');
     await expect(page.locator('#advanced-restir-mode')).toHaveValue('temporalSpatial');
+    if (route === 'rt-lab') await expect(page.locator('#advanced-rt-enabled')).toBeChecked();
     for (const selector of completeControlIds) await expect(page.locator(selector)).toHaveCount(1);
     await expect(page.locator('#loading')).not.toHaveClass(/fatal/);
     await expect(page.locator('#viewport')).toBeVisible();
@@ -72,7 +82,7 @@ for (const route of ['rt-lab', 'path-tracing'] as const) {
     expect(result.canvasWidth).toBeGreaterThan(0);
     expect(result.canvasHeight).toBeGreaterThan(0);
     expect(result.state).toMatch(/rendering|fallback/);
-    expect(result.mode).toMatch(/realtime|cinematic|pathTracing/);
+    expect(result.mode).toMatch(/realtime|pathTracing/);
 
     if (result.state === 'fallback') {
       expect(result.mode).toBe('realtime');
@@ -80,10 +90,8 @@ for (const route of ['rt-lab', 'path-tracing'] as const) {
     }
 
     if (route === 'rt-lab' && result.state === 'rendering') {
-      expect(result.mode).toBe('cinematic');
-      expect(result.architecture).toBe('realtime-hybrid-feature-pass');
-      // Hybrid RT must never replace the realtime viewport with the old
-      // progressive full-frame advanced overlay.
+      expect(result.mode).toBe('realtime');
+      expect(result.architecture).toBe('realtime-rt-feature-pass-v3');
       expect(result.overlayDisplay === 'none' || result.overlayVisibility === 'hidden').toBe(true);
     }
 
@@ -91,19 +99,19 @@ for (const route of ['rt-lab', 'path-tracing'] as const) {
   });
 }
 
-test('ordinary Playground routes expose the same advanced render controls', async ({ page }) => {
+test('ordinary Playground can enable RT without leaving Realtime mode', async ({ page }) => {
   await page.goto('/overview/');
   await page.waitForFunction(() => window.__kyxosTestApi?.ready(), null, { timeout: 90_000 });
   await expect(page.locator('#advanced-render-panel')).toBeVisible();
   await expect(page.locator('#advanced-render-mode')).toHaveValue('realtime');
   for (const selector of completeControlIds) await expect(page.locator(selector)).toHaveCount(1);
 
-  // Controls are live, not decorative: toggling an inexpensive feature should
-  // update the UI without producing a fatal Viewer state.
-  const importance = page.locator('#advanced-env-importance');
-  const before = await importance.isChecked();
-  await importance.click();
-  await expect(importance).toBeChecked({ checked: !before });
+  const rt = page.locator('#advanced-rt-enabled');
+  if (await rt.isChecked()) await rt.click();
+  await expect(rt).not.toBeChecked();
+  await rt.click();
+  await expect(rt).toBeChecked();
+  await expect(page.locator('#advanced-render-mode')).toHaveValue('realtime');
   await expect(page.locator('#loading')).not.toHaveClass(/fatal/);
 });
 
