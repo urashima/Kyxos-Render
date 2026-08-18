@@ -6,7 +6,10 @@ import { mix, renderOutput, sample, screenUV, texture, uniform, vec4 } from 'thr
 import { temporalReproject } from 'three/addons/tsl/display/TemporalReprojectNode.js';
 import { recurrentDenoise } from 'three/addons/tsl/display/RecurrentDenoiseNode.js';
 import { extractAdvancedSceneAsync } from './render/advanced/sceneExtraction';
-import { RealtimeRtFeaturePassV3 } from './render/advanced/realtimeHybridRtFeaturePassV3';
+import {
+  RealtimeRtFeaturePassV3,
+  type RealtimeRtSkipReason,
+} from './render/advanced/realtimeHybridRtFeaturePassV3';
 
 interface AdvancedMethods {
   setRenderingMode: (mode: 'realtime' | 'cinematic' | 'pathTracing') => void;
@@ -50,6 +53,10 @@ class RealtimeRtControllerV3 {
   private triangles = 0;
   private bvhNodes = 0;
   private lights = 0;
+  private hookFrames = 0;
+  private frameAttempts = 0;
+  private frameSubmitted = 0;
+  private lastSkipReason = 'not-started';
   private disposed = false;
 
   constructor(viewer: any, methods: AdvancedMethods) {
@@ -67,12 +74,19 @@ class RealtimeRtControllerV3 {
   }
 
   private passRealtimeSettings(): void {
-    // The legacy advanced controller owns PT only. Realtime RT always keeps its
-    // full-frame renderer in raster mode so no opaque overlay can replace Beauty.
     this.methods.setAdvancedRenderSettings.call(this.viewer, {
       ...this.settings,
       renderingMode: 'realtime',
     });
+  }
+
+  private recordFrameReason(reason: string): void {
+    this.lastSkipReason = reason;
+    const canvas = this.viewer.canvas as HTMLCanvasElement;
+    canvas.dataset.realtimeRtHookFrames = String(this.hookFrames);
+    canvas.dataset.realtimeRtFrameAttempts = String(this.frameAttempts);
+    canvas.dataset.realtimeRtFrameSubmitted = String(this.frameSubmitted);
+    canvas.dataset.realtimeRtSkipReason = reason;
   }
 
   setSettings(update: Partial<SceneAdvancedRenderSettings>): void {
@@ -228,25 +242,42 @@ class RealtimeRtControllerV3 {
   }
 
   private renderFeatureFrame(): void {
-    if (!this.active || !this.featurePass || this.sceneDirty || this.sceneBuild || this.disposed) return;
-    if (this.viewer.animationEnabled) {
+    this.frameAttempts += 1;
+    if (!this.active) { this.recordFrameReason('inactive'); return; }
+    if (!this.featurePass) { this.recordFrameReason('no-feature-pass'); return; }
+    if (this.sceneDirty) { this.recordFrameReason('scene-dirty'); return; }
+    if (this.sceneBuild) { this.recordFrameReason('scene-building'); return; }
+    if (this.disposed) { this.recordFrameReason('disposed'); return; }
+    if (this.viewer.getAnimationEnabled?.() === true) {
       this.message = 'Realtime RT currently uses a static software BVH; skinned/morph animation stays on raster until realtime BVH refit is added.';
+      this.recordFrameReason('animation-bvh-refit-required');
       return;
     }
     const inputs = this.currentFrameInputs();
-    if (!inputs) return;
+    if (!inputs) {
+      this.recordFrameReason('no-realtime-gbuffer');
+      return;
+    }
     try {
       const frame = this.featurePass.render(this.viewer.camera, inputs);
       this.frameIndex = frame.frameIndex;
       this.cpuFrameTimeMs = frame.cpuFrameTimeMs;
       if (frame.ready) this.readyUniform.value = 1;
       if (frame.submitted) {
+        this.frameSubmitted += 1;
         this.message = 'Realtime RT phase submitted; temporal reprojection and denoise reconstruct continuously during camera motion.';
-      } else if (frame.ready) {
-        this.message = 'Realtime RT GPU query is still in flight; raster frame continues and the last filtered RT result is reprojected.';
+        this.recordFrameReason('submitted');
+        if (frame.frameIndex === 1 || frame.frameIndex % 16 === 0) this.emitStatus();
+      } else {
+        const reason = frame.skipReason ?? ('unknown-feature-skip' as RealtimeRtSkipReason | 'unknown-feature-skip');
+        this.recordFrameReason(reason);
+        if (frame.ready) {
+          this.message = `Realtime RT reused the filtered history while optional RT work was skipped (${reason}).`;
+        }
       }
     } catch (error) {
       this.readyUniform.value = 0;
+      this.recordFrameReason('frame-error');
       this.setState('fallback', `Realtime RT frame failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
@@ -255,11 +286,15 @@ class RealtimeRtControllerV3 {
     if (!pipeline || pipeline.__kyxosRealtimeRtV3Wrapped) return;
     const originalRender = pipeline.render.bind(pipeline);
     pipeline.render = (...args: any[]) => {
-      const result = originalRender(...args);
-      // Submit RT after the current raster frame so depth/normal/roughness and
-      // camera matrices describe the same frame. The next raster frame consumes
-      // this result through velocity reprojection, giving one-frame RT latency
-      // instead of mixing current-camera rays with previous-frame GBuffer data.
+      this.hookFrames += 1;
+      this.recordFrameReason(this.lastSkipReason);
+      let result: any;
+      try {
+        result = originalRender(...args);
+      } catch (error) {
+        this.recordFrameReason('raster-render-error');
+        throw error;
+      }
       this.renderFeatureFrame();
       return result;
     };
@@ -379,6 +414,7 @@ class RealtimeRtControllerV3 {
     pipeline.needsUpdate = true;
     this.wrapPipelineRender(pipeline);
     this.viewer.canvas.dataset.advancedRenderArchitecture = 'realtime-rt-feature-pass-v3';
+    this.recordFrameReason('pipeline-decorated');
   }
 
   getStatus(): any {
@@ -403,6 +439,10 @@ class RealtimeRtControllerV3 {
       bvhNodes: this.bvhNodes,
       lights: this.lights,
       cpuFrameTimeMs: this.cpuFrameTimeMs,
+      rtFrameHookCount: this.hookFrames,
+      rtFrameAttempts: this.frameAttempts,
+      rtFrameSubmitted: this.frameSubmitted,
+      rtFrameSkipReason: this.lastSkipReason,
       enabledFeatures,
       unavailableFeatures: this.settings.radianceCache.enabled ? ['radianceCache'] : [],
     };
