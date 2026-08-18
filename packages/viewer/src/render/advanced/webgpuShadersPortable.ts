@@ -4,19 +4,44 @@ import {
 } from './webgpuShaders';
 
 /**
- * Keep the browser-facing WGSL compatible with the current WGSL grammar.
- * The generated shader is assembled from pinned migration snippets, so a
- * reserved identifier can otherwise survive until a stricter browser compiler
- * rejects the module. Rename identifiers before any pipeline sees the source.
+ * WGSL reserved words from the GPUWeb WGSL Editor's Draft (2026-08-17),
+ * section 16.2. Keep this list local to the renderer so generated migration
+ * snippets are validated deterministically instead of relying on how permissive
+ * a particular browser's shader compiler happens to be.
  */
-const RESERVED_IDENTIFIER_RENAMES: ReadonlyArray<readonly [string, string]> = [
-  ['meta', 'nodeInfo'],
-  ['target', 'targetValue'],
-];
+export const WGSL_RESERVED_WORDS = [
+  'NULL', 'Self', 'abstract', 'active', 'alignas', 'alignof', 'as', 'asm', 'asm_fragment',
+  'async', 'attribute', 'auto', 'await', 'become', 'cast', 'catch', 'class', 'co_await',
+  'co_return', 'co_yield', 'coherent', 'column_major', 'common', 'compile', 'compile_fragment',
+  'concept', 'const_cast', 'consteval', 'constexpr', 'constinit', 'crate', 'debugger', 'decltype',
+  'delete', 'demote', 'demote_to_helper', 'do', 'dynamic_cast', 'enum', 'explicit', 'export',
+  'extends', 'extern', 'external', 'fallthrough', 'filter', 'final', 'finally', 'friend', 'from',
+  'fxgroup', 'get', 'goto', 'groupshared', 'highp', 'impl', 'implements', 'import', 'inline',
+  'instanceof', 'interface', 'layout', 'lowp', 'macro', 'macro_rules', 'match', 'mediump', 'meta',
+  'mod', 'module', 'move', 'mut', 'mutable', 'namespace', 'new', 'nil', 'noexcept', 'noinline',
+  'nointerpolation', 'non_coherent', 'noncoherent', 'noperspective', 'null', 'nullptr', 'of',
+  'operator', 'package', 'packoffset', 'partition', 'pass', 'patch', 'pixelfragment', 'precise',
+  'precision', 'premerge', 'priv', 'protected', 'pub', 'public', 'readonly', 'ref', 'regardless',
+  'register', 'reinterpret_cast', 'require', 'resource', 'restrict', 'self', 'set', 'shared',
+  'sizeof', 'smooth', 'snorm', 'static', 'static_assert', 'static_cast', 'std', 'subroutine',
+  'super', 'target', 'template', 'this', 'thread_local', 'throw', 'trait', 'try', 'type', 'typedef',
+  'typeid', 'typename', 'typeof', 'union', 'unless', 'unorm', 'unsafe', 'unsized', 'use', 'using',
+  'varying', 'virtual', 'volatile', 'wgsl', 'where', 'with', 'writeonly', 'yield',
+] as const;
+
+const RESERVED_IDENTIFIER_RENAMES: Readonly<Record<string, string>> = {
+  meta: 'nodeInfo',
+  target: 'targetValue',
+};
+
+export function findReservedWGSLIdentifiers(source: string): string[] {
+  return WGSL_RESERVED_WORDS.filter((word) => new RegExp(`\\b${word}\\b`).test(source));
+}
 
 export function sanitizePortableWGSL(source: string): string {
   let result = source;
-  for (const [reserved, replacement] of RESERVED_IDENTIFIER_RENAMES) {
+  for (const reserved of WGSL_RESERVED_WORDS) {
+    const replacement = RESERVED_IDENTIFIER_RENAMES[reserved] ?? `kx_${reserved}`;
     result = result.replace(new RegExp(`\\b${reserved}\\b`, 'g'), replacement);
   }
   return result;
@@ -175,3 +200,11 @@ export const advancedPathTracingDisplayWGSL = sanitizedDisplay.replace(
   GLOBALS_LAYOUT_TAIL,
   PACKED_GLOBALS_LAYOUT_TAIL,
 );
+
+const remainingReserved = [
+  ...findReservedWGSLIdentifiers(advancedPathTracingComputeWGSL),
+  ...findReservedWGSLIdentifiers(advancedPathTracingDisplayWGSL),
+];
+if (remainingReserved.length) {
+  throw new Error(`Kyxos portable WGSL still contains reserved identifiers: ${[...new Set(remainingReserved)].join(', ')}`);
+}
