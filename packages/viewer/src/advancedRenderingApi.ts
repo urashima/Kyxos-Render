@@ -270,7 +270,7 @@ class AdvancedRenderingController {
         this.scene = extracted;
         this.renderer.setScene(extracted);
         this.status.triangles = extracted.triangleCount;
-        this.status.bvhNodes = extracted.bvh.nodes.length;
+        this.status.bvhNodes = extracted.blasNodeCount + extracted.tlasNodeCount;
         this.status.lights = extracted.lightCount;
         this.status.emissiveLights = extracted.emissiveLightCount;
         this.status.dynamicMeshes = extracted.dynamicMeshes;
