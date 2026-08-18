@@ -80,6 +80,8 @@ jobs:
           cp -R main-src/site combined-site
           mkdir -p "combined-site/${PREVIEW_ROUTE}"
           cp -R preview-src/apps/playground/dist/. "combined-site/${PREVIEW_ROUTE}/"
+          mkdir -p "combined-site/${PREVIEW_ROUTE}/studio"
+          cp -R preview-src/apps/studio/dist/. "combined-site/${PREVIEW_ROUTE}/studio/"
           rm -rf combined-site/preview/pr-12/studio
           mkdir -p combined-site/preview/pr-12/studio
           cp -R combined-site/studio/. combined-site/preview/pr-12/studio/
