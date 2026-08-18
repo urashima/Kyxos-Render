@@ -1,5 +1,25 @@
 import { expect, test } from '@playwright/test';
 
+test.describe.configure({ retries: 0, timeout: 90_000 });
+
+async function diagnostic(page: any) {
+  return page.evaluate(() => {
+    const canvas = document.querySelector<HTMLCanvasElement>('#viewport');
+    const overlay = document.querySelector<HTMLCanvasElement>('canvas[data-kyxos-advanced-renderer="webgpu"]');
+    const warning = document.querySelector('#advanced-render-warning');
+    const status = document.querySelector('#advanced-render-status');
+    return {
+      backend: window.__kyxosTestApi.getMetrics?.().backend ?? null,
+      state: canvas?.dataset.advancedRenderState ?? null,
+      mode: canvas?.dataset.advancedRenderMode ?? null,
+      architecture: canvas?.dataset.advancedRenderArchitecture ?? null,
+      warning: warning?.textContent?.trim() ?? '',
+      status: status?.textContent?.trim() ?? '',
+      overlayVisible: overlay ? getComputedStyle(overlay).display !== 'none' && getComputedStyle(overlay).visibility !== 'hidden' : false,
+    };
+  });
+}
+
 test('Hybrid RT stays inside the realtime WebGPU viewport while the camera moves', async ({ page }) => {
   const pageErrors: string[] = [];
   const gpuErrors: string[] = [];
@@ -11,17 +31,21 @@ test('Hybrid RT stays inside the realtime WebGPU viewport while the camera moves
   });
 
   await page.goto('/rt-lab/');
-  await page.waitForFunction(() => window.__kyxosTestApi?.ready(), null, { timeout: 120_000 });
+  await page.waitForFunction(() => window.__kyxosTestApi?.ready(), null, { timeout: 60_000 });
   expect(await page.evaluate(() => Boolean((navigator as Navigator & { gpu?: unknown }).gpu))).toBe(true);
-  await expect.poll(async () => page.evaluate(() => window.__kyxosTestApi.getMetrics?.().backend), { timeout: 60_000 }).toBe('webgpu');
+  await expect.poll(async () => page.evaluate(() => window.__kyxosTestApi.getMetrics?.().backend), { timeout: 30_000 }).toBe('webgpu');
   await expect(page.locator('#advanced-render-mode')).toHaveValue('cinematic');
 
-  await page.waitForFunction(() => {
-    const canvas = document.querySelector<HTMLCanvasElement>('#viewport');
-    return canvas?.dataset.advancedRenderState === 'rendering' &&
-      canvas.dataset.advancedRenderMode === 'cinematic' &&
-      canvas.dataset.advancedRenderArchitecture === 'realtime-hybrid-feature-pass';
-  }, null, { timeout: 120_000 });
+  await page.waitForTimeout(15_000);
+  const initial = await diagnostic(page);
+  console.log(`HYBRID_WEBGPU_DIAGNOSTIC ${JSON.stringify({ ...initial, pageErrors, gpuErrors })}`);
+  expect(initial, `Hybrid RT did not enter the same-device realtime feature path: ${JSON.stringify({ ...initial, pageErrors, gpuErrors })}`).toMatchObject({
+    backend: 'webgpu',
+    state: 'rendering',
+    mode: 'cinematic',
+    architecture: 'realtime-hybrid-feature-pass',
+    overlayVisible: false,
+  });
 
   const viewport = page.locator('#viewport');
   const box = await viewport.boundingBox();
@@ -34,33 +58,18 @@ test('Hybrid RT stays inside the realtime WebGPU viewport while the camera moves
     for (let step = 1; step <= 10; step += 1) {
       await page.mouse.move(x + step * 9, y + Math.sin(step * 0.8) * 10, { steps: 2 });
     }
-    const moving = await page.evaluate(() => {
-      const canvas = document.querySelector<HTMLCanvasElement>('#viewport')!;
-      const overlay = document.querySelector<HTMLCanvasElement>('canvas[data-kyxos-advanced-renderer="webgpu"]');
-      return {
-        state: canvas.dataset.advancedRenderState,
-        mode: canvas.dataset.advancedRenderMode,
-        architecture: canvas.dataset.advancedRenderArchitecture,
-        overlayVisible: overlay ? getComputedStyle(overlay).display !== 'none' && getComputedStyle(overlay).visibility !== 'hidden' : false,
-      };
+    const moving = await diagnostic(page);
+    expect(moving, `Hybrid RT left the realtime feature path during camera motion: ${JSON.stringify(moving)}`).toMatchObject({
+      state: 'rendering',
+      mode: 'cinematic',
+      architecture: 'realtime-hybrid-feature-pass',
+      overlayVisible: false,
     });
-    expect(moving.state).toBe('rendering');
-    expect(moving.mode).toBe('cinematic');
-    expect(moving.architecture).toBe('realtime-hybrid-feature-pass');
-    expect(moving.overlayVisible).toBe(false);
     await page.mouse.up();
   }
 
   await page.waitForTimeout(500);
-  const settled = await page.evaluate(() => {
-    const canvas = document.querySelector<HTMLCanvasElement>('#viewport')!;
-    const overlay = document.querySelector<HTMLCanvasElement>('canvas[data-kyxos-advanced-renderer="webgpu"]');
-    return {
-      state: canvas.dataset.advancedRenderState,
-      architecture: canvas.dataset.advancedRenderArchitecture,
-      overlayVisible: overlay ? getComputedStyle(overlay).display !== 'none' && getComputedStyle(overlay).visibility !== 'hidden' : false,
-    };
-  });
+  const settled = await diagnostic(page);
   expect(settled.state).toBe('rendering');
   expect(settled.architecture).toBe('realtime-hybrid-feature-pass');
   expect(settled.overlayVisible).toBe(false);
@@ -70,10 +79,16 @@ test('Hybrid RT stays inside the realtime WebGPU viewport while the camera moves
 
 test('progressive PT hides reset accumulation during camera motion and reveals only stable samples', async ({ page }) => {
   const pageErrors: string[] = [];
+  const gpuErrors: string[] = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
+  page.on('console', (message) => {
+    if (message.type() === 'error' && /wgsl|gpuvalidation|computepipeline|bindgroup|validation error/i.test(message.text())) {
+      gpuErrors.push(message.text());
+    }
+  });
   await page.goto('/path-tracing/');
-  await page.waitForFunction(() => window.__kyxosTestApi?.ready(), null, { timeout: 120_000 });
-  await expect.poll(async () => page.evaluate(() => window.__kyxosTestApi.getMetrics?.().backend), { timeout: 60_000 }).toBe('webgpu');
+  await page.waitForFunction(() => window.__kyxosTestApi?.ready(), null, { timeout: 60_000 });
+  await expect.poll(async () => page.evaluate(() => window.__kyxosTestApi.getMetrics?.().backend), { timeout: 30_000 }).toBe('webgpu');
 
   const viewport = page.locator('#viewport');
   const box = await viewport.boundingBox();
@@ -84,20 +99,20 @@ test('progressive PT hides reset accumulation during camera motion and reveals o
     await page.mouse.move(x, y);
     await page.mouse.down();
     await page.mouse.move(x + 90, y + 18, { steps: 10 });
-    const visibleWhileMoving = await page.evaluate(() => {
-      const overlay = document.querySelector<HTMLCanvasElement>('canvas[data-kyxos-advanced-renderer="webgpu"]');
-      return overlay ? getComputedStyle(overlay).display !== 'none' && getComputedStyle(overlay).visibility !== 'hidden' : false;
-    });
-    expect(visibleWhileMoving).toBe(false);
+    const moving = await diagnostic(page);
+    expect(moving.overlayVisible).toBe(false);
     await page.mouse.up();
   }
 
-  await page.waitForFunction(() => {
-    const canvas = document.querySelector<HTMLCanvasElement>('#viewport');
-    const overlay = document.querySelector<HTMLCanvasElement>('canvas[data-kyxos-advanced-renderer="webgpu"]');
-    const overlayVisible = overlay ? getComputedStyle(overlay).display !== 'none' && getComputedStyle(overlay).visibility !== 'hidden' : false;
-    return canvas?.dataset.advancedRenderState === 'rendering' &&
-      canvas.dataset.advancedRenderMode === 'pathTracing' && overlayVisible;
-  }, null, { timeout: 120_000 });
+  await page.waitForTimeout(20_000);
+  const settled = await diagnostic(page);
+  console.log(`PT_WEBGPU_DIAGNOSTIC ${JSON.stringify({ ...settled, pageErrors, gpuErrors })}`);
+  expect(settled, `PT did not reach stable progressive presentation: ${JSON.stringify({ ...settled, pageErrors, gpuErrors })}`).toMatchObject({
+    backend: 'webgpu',
+    state: 'rendering',
+    mode: 'pathTracing',
+    overlayVisible: true,
+  });
   expect(pageErrors).toEqual([]);
+  expect(gpuErrors).toEqual([]);
 });
