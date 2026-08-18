@@ -3,6 +3,7 @@ import {
   ADVANCED_STORAGE_BUFFERS_PER_STAGE,
   resolveAdvancedRendererCapabilities,
 } from '../../packages/viewer/src/render/advanced/backendCapabilities';
+import { realtimeHybridRtWGSL } from '../../packages/viewer/src/render/advanced/realtimeHybridRtShader';
 import {
   advancedPathTracingComputeWGSL,
   advancedPathTracingDisplayWGSL,
@@ -37,6 +38,7 @@ describe('packed WebGPU advanced renderer', () => {
   it('removes every identifier reserved by the current WGSL grammar', () => {
     expect(findReservedWGSLIdentifiers(advancedPathTracingComputeWGSL)).toEqual([]);
     expect(findReservedWGSLIdentifiers(advancedPathTracingDisplayWGSL)).toEqual([]);
+    expect(findReservedWGSLIdentifiers(realtimeHybridRtWGSL)).toEqual([]);
     expect(advancedPathTracingComputeWGSL).toContain('nodeInfo');
     expect(advancedPathTracingComputeWGSL).toContain('targetValue');
   });
@@ -56,5 +58,26 @@ describe('packed WebGPU advanced renderer', () => {
     expect(advancedPathTracingComputeWGSL).not.toMatch(/\bnodes\[/);
     expect(advancedPathTracingComputeWGSL).not.toMatch(/\binstances\[/);
     expect(advancedPathTracingComputeWGSL).not.toMatch(/\btlasNodes\[/);
+  });
+
+  it('keeps Hybrid RT as realtime feature queries rather than a second accumulated full-frame renderer', () => {
+    expect(realtimeHybridRtWGSL).toContain('depthTexture: texture_depth_2d');
+    expect(realtimeHybridRtWGSL).toContain('normalTexture: texture_2d<f32>');
+    expect(realtimeHybridRtWGSL).toContain('metalRoughTexture: texture_2d<f32>');
+    expect(realtimeHybridRtWGSL).toContain('visibilityOutput: texture_storage_2d<rgba16float, write>');
+    expect(realtimeHybridRtWGSL).toContain('reflectionOutput: texture_storage_2d<rgba16float, write>');
+    expect(realtimeHybridRtWGSL).not.toContain('previousReservoir');
+    expect(realtimeHybridRtWGSL).not.toContain('nextReservoir');
+    expect(realtimeHybridRtWGSL).not.toContain('accumulation:');
+    expect(realtimeHybridRtWGSL).toContain('indexValue * 7u');
+  });
+
+  it('interpolates smooth vertex normals in the progressive PT reference path', () => {
+    expect(advancedPathTracingComputeWGSL).toContain('normalA: vec4<f32>');
+    expect(advancedPathTracingComputeWGSL).toContain('normalB: vec4<f32>');
+    expect(advancedPathTracingComputeWGSL).toContain('normalC: vec4<f32>');
+    expect(advancedPathTracingComputeWGSL).toContain('index * 7u');
+    expect(advancedPathTracingComputeWGSL).toContain('fn triangleShadingNormal(');
+    expect(advancedPathTracingComputeWGSL).toContain('let shadingNormal = triangleShadingNormal');
   });
 });
