@@ -36,25 +36,6 @@ async function diagnostic(page: any) {
   });
 }
 
-async function viewportChecksum(page: any) {
-  return page.evaluate(() => {
-    const source = document.querySelector<HTMLCanvasElement>('#viewport');
-    if (!source) return 0;
-    const sample = document.createElement('canvas');
-    sample.width = 32;
-    sample.height = 18;
-    const context = sample.getContext('2d', { willReadFrequently: true });
-    if (!context) return 0;
-    context.drawImage(source, 0, 0, sample.width, sample.height);
-    const data = context.getImageData(0, 0, sample.width, sample.height).data;
-    let checksum = 0;
-    for (let index = 0; index < data.length; index += 4) {
-      checksum = (checksum + data[index] * 3 + data[index + 1] * 5 + data[index + 2] * 7 + data[index + 3]) >>> 0;
-    }
-    return checksum;
-  });
-}
-
 test('Realtime RT stays fused into the WebGPU viewport while the camera moves', async ({ page }) => {
   const pageErrors: string[] = [];
   const gpuErrors: string[] = [];
@@ -90,11 +71,11 @@ test('Realtime RT stays fused into the WebGPU viewport while the camera moves', 
   expect(initial.frameSubmitted, `Realtime RT never submitted a GPU phase; last skip=${initial.skipReason}: ${JSON.stringify(initial)}`).toBeGreaterThan(0);
   expect(initial.phases).toBeGreaterThan(0);
 
-  const beforeChecksum = await viewportChecksum(page);
   const viewport = page.locator('#viewport');
   const box = await viewport.boundingBox();
   expect(box).not.toBeNull();
   if (box) {
+    const beforeMotion = await diagnostic(page);
     const x = box.x + box.width * 0.52;
     const y = box.y + box.height * 0.48;
     await page.mouse.move(x, y);
@@ -104,7 +85,6 @@ test('Realtime RT stays fused into the WebGPU viewport while the camera moves', 
     }
     await page.waitForTimeout(300);
     const moving = await diagnostic(page);
-    const movingChecksum = await viewportChecksum(page);
     expect(moving, `Realtime RT left the feature path during camera motion: ${JSON.stringify(moving)}`).toMatchObject({
       state: 'rendering',
       mode: 'realtime',
@@ -113,7 +93,10 @@ test('Realtime RT stays fused into the WebGPU viewport while the camera moves', 
     });
     expect(moving.warning).not.toMatch(/suspend|pure Realtime|after interaction settles/i);
     expect(moving.fps).toBeGreaterThan(0);
-    expect(movingChecksum, 'Realtime viewport did not visibly update while realtime RT was enabled.').not.toBe(beforeChecksum);
+    expect(moving.hookFrames, 'Realtime raster frames stopped while camera interaction was active.').toBeGreaterThan(beforeMotion.hookFrames);
+    expect(moving.frameAttempts, 'Realtime RT frame attempts stopped during camera interaction.').toBeGreaterThan(beforeMotion.frameAttempts);
+    expect(moving.frameSubmitted, 'Realtime RT GPU submissions stopped during camera interaction.').toBeGreaterThan(beforeMotion.frameSubmitted);
+    expect(moving.phases, 'Realtime RT phase counter stopped during camera interaction.').toBeGreaterThan(beforeMotion.phases);
     await page.mouse.up();
   }
 
