@@ -160,6 +160,23 @@ function replaceArrayReads(source: string, name: string, loader: string): string
   return source.replace(new RegExp(`\\b${name}\\[([^\\]\\n]+)\\]`, 'g'), `${loader}($1)`);
 }
 
+function fixRestirEnergyEstimator(source: string): string {
+  const legacy = 'return evaluateCandidate(hit, viewDirection, selected) * reservoirFinalWeight(reservoir);';
+  if (!source.includes(legacy)) {
+    throw new Error('Kyxos ReSTIR energy normalization migration did not match the pinned shader.');
+  }
+  return source.replace(
+    legacy,
+    `let selectedContribution = selected.radiancePdf.rgb * evaluateBrdf(
+    materialAt(hit),
+    hit.normalMaterial.xyz,
+    viewDirection,
+    selected.directionDistance.xyz
+  );
+  return selectedContribution * reservoirFinalWeight(reservoir);`,
+  );
+}
+
 function packComputeWGSL(source: string): string {
   let result = source
     .replace(GLOBALS_LAYOUT_TAIL, PACKED_GLOBALS_LAYOUT_TAIL)
@@ -192,7 +209,7 @@ function packComputeWGSL(source: string): string {
   return result;
 }
 
-const sanitizedCompute = sanitizePortableWGSL(generatedComputeWGSL);
+const sanitizedCompute = fixRestirEnergyEstimator(sanitizePortableWGSL(generatedComputeWGSL));
 const sanitizedDisplay = sanitizePortableWGSL(generatedDisplayWGSL);
 
 export const advancedPathTracingComputeWGSL = packComputeWGSL(sanitizedCompute);
