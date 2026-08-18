@@ -4,8 +4,8 @@ import {
   validateSceneContract,
   type SceneRenderSettings,
   type ViewerCapabilityDescription,
-} from '@kyxos/scene-contract';
-import { DEFAULT_ADVANCED_RENDER_SETTINGS } from '@kyxos/scene-contract/advanced-render-settings';
+} from '../../packages/scene-contract/src/index';
+import { DEFAULT_ADVANCED_RENDER_SETTINGS } from '../../packages/scene-contract/src/advanced-render-settings';
 
 describe('advanced rendering Scene Contract', () => {
   it('adds backend-independent advanced defaults to new scenes', () => {
