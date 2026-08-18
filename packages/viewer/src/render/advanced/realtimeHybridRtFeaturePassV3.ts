@@ -51,6 +51,11 @@ function packFloatPools(arrays: readonly Float32Array[]): PackedPool {
   return { data, offsets };
 }
 
+function stageError(stage: string, error: unknown): Error {
+  const message = error instanceof Error ? error.message : String(error);
+  return new Error(`Realtime RT ${stage} failed: ${message}`);
+}
+
 /**
  * Realtime RT feature pass.
  *
@@ -70,6 +75,7 @@ export class RealtimeRtFeaturePassV3 {
   private readonly device: any;
   private settings: SceneAdvancedRenderSettings;
   private pipeline: any = null;
+  private bindGroupLayout: any = null;
   private globalsBuffer: any = null;
   private staticSceneBuffer: any = null;
   private dynamicSceneBuffer: any = null;
@@ -118,49 +124,68 @@ export class RealtimeRtFeaturePassV3 {
       throw new Error(`Realtime RT requires 3 storage textures per compute stage; this device exposes ${storageTextureLimit}.`);
     }
 
-    const module = this.device.createShaderModule({
-      label: 'Kyxos.RealtimeRT.FeatureCompute.V3',
-      code: realtimeHybridRtWGSL,
-    });
-    const layout = this.device.createBindGroupLayout({
-      label: 'Kyxos.RealtimeRT.FeatureLayout.V3',
-      entries: [
-        { binding: 0, visibility: SHADER_STAGE.COMPUTE, buffer: { type: 'uniform' } },
-        { binding: 1, visibility: SHADER_STAGE.COMPUTE, buffer: { type: 'read-only-storage' } },
-        { binding: 2, visibility: SHADER_STAGE.COMPUTE, buffer: { type: 'read-only-storage' } },
-        { binding: 3, visibility: SHADER_STAGE.COMPUTE, texture: { sampleType: 'depth', viewDimension: '2d', multisampled: false } },
-        { binding: 4, visibility: SHADER_STAGE.COMPUTE, texture: { sampleType: 'float', viewDimension: '2d', multisampled: false } },
-        { binding: 5, visibility: SHADER_STAGE.COMPUTE, texture: { sampleType: 'float', viewDimension: '2d', multisampled: false } },
-        { binding: 6, visibility: SHADER_STAGE.COMPUTE, storageTexture: { access: 'write-only', format: 'rgba16float', viewDimension: '2d' } },
-        { binding: 7, visibility: SHADER_STAGE.COMPUTE, storageTexture: { access: 'write-only', format: 'rgba16float', viewDimension: '2d' } },
-        { binding: 8, visibility: SHADER_STAGE.COMPUTE, storageTexture: { access: 'write-only', format: 'rgba16float', viewDimension: '2d' } },
-      ],
-    });
-    const pipelineLayout = this.device.createPipelineLayout({
-      label: 'Kyxos.RealtimeRT.FeaturePipelineLayout.V3',
-      bindGroupLayouts: [layout],
-    });
+    let module: any;
+    try {
+      module = this.device.createShaderModule({
+        label: 'Kyxos.RealtimeRT.FeatureCompute.V3',
+        code: realtimeHybridRtWGSL,
+      });
+    } catch (error) {
+      throw stageError('shader-module creation', error);
+    }
 
-    // Shared-device rule: pipeline creation is the validation boundary. Do not
-    // manipulate Three.js' error scopes from an out-of-band feature pass.
-    this.pipeline = typeof this.device.createComputePipelineAsync === 'function'
-      ? await this.device.createComputePipelineAsync({
-          label: 'Kyxos.RealtimeRT.FeaturePipeline.V3',
-          layout: pipelineLayout,
-          compute: { module, entryPoint: 'main' },
-        })
-      : this.device.createComputePipeline({
-          label: 'Kyxos.RealtimeRT.FeaturePipeline.V3',
-          layout: pipelineLayout,
-          compute: { module, entryPoint: 'main' },
-        });
-    this.pipeline.getBindGroupLayout(0);
+    try {
+      this.bindGroupLayout = this.device.createBindGroupLayout({
+        label: 'Kyxos.RealtimeRT.FeatureLayout.V3',
+        entries: [
+          { binding: 0, visibility: SHADER_STAGE.COMPUTE, buffer: { type: 'uniform' } },
+          { binding: 1, visibility: SHADER_STAGE.COMPUTE, buffer: { type: 'read-only-storage' } },
+          { binding: 2, visibility: SHADER_STAGE.COMPUTE, buffer: { type: 'read-only-storage' } },
+          { binding: 3, visibility: SHADER_STAGE.COMPUTE, texture: { sampleType: 'depth', viewDimension: '2d', multisampled: false } },
+          { binding: 4, visibility: SHADER_STAGE.COMPUTE, texture: { sampleType: 'float', viewDimension: '2d', multisampled: false } },
+          { binding: 5, visibility: SHADER_STAGE.COMPUTE, texture: { sampleType: 'float', viewDimension: '2d', multisampled: false } },
+          { binding: 6, visibility: SHADER_STAGE.COMPUTE, storageTexture: { access: 'write-only', format: 'rgba16float', viewDimension: '2d' } },
+          { binding: 7, visibility: SHADER_STAGE.COMPUTE, storageTexture: { access: 'write-only', format: 'rgba16float', viewDimension: '2d' } },
+          { binding: 8, visibility: SHADER_STAGE.COMPUTE, storageTexture: { access: 'write-only', format: 'rgba16float', viewDimension: '2d' } },
+        ],
+      });
+    } catch (error) {
+      throw stageError('bind-group-layout creation', error);
+    }
 
-    this.globalsBuffer = this.device.createBuffer({
-      label: 'Kyxos.RealtimeRT.Globals.V3',
-      size: GLOBAL_FLOAT_COUNT * 4,
-      usage: BUFFER_USAGE.UNIFORM | BUFFER_USAGE.COPY_DST,
-    });
+    let pipelineLayout: any;
+    try {
+      pipelineLayout = this.device.createPipelineLayout({
+        label: 'Kyxos.RealtimeRT.FeaturePipelineLayout.V3',
+        bindGroupLayouts: [this.bindGroupLayout],
+      });
+    } catch (error) {
+      throw stageError('pipeline-layout creation', error);
+    }
+
+    // The realtime renderer owns this GPUDevice. On Dawn/SwiftShader, awaiting
+    // createComputePipelineAsync() or asking a pipeline for another external
+    // GPUBindGroupLayout wrapper can invalidate the native external Instance.
+    // Keep the explicitly-created layout and use the synchronous pipeline API.
+    try {
+      this.pipeline = this.device.createComputePipeline({
+        label: 'Kyxos.RealtimeRT.FeaturePipeline.V3',
+        layout: pipelineLayout,
+        compute: { module, entryPoint: 'main' },
+      });
+    } catch (error) {
+      throw stageError('compute-pipeline creation', error);
+    }
+
+    try {
+      this.globalsBuffer = this.device.createBuffer({
+        label: 'Kyxos.RealtimeRT.Globals.V3',
+        size: GLOBAL_FLOAT_COUNT * 4,
+        usage: BUFFER_USAGE.UNIFORM | BUFFER_USAGE.COPY_DST,
+      });
+    } catch (error) {
+      throw stageError('globals-buffer creation', error);
+    }
     this.initialized = true;
   }
 
@@ -237,7 +262,7 @@ export class RealtimeRtFeaturePassV3 {
   }
 
   private ensureBindGroup(inputs: RealtimeRtFrameInputs): boolean {
-    if (!this.pipeline || !this.globalsBuffer || !this.staticSceneBuffer || !this.dynamicSceneBuffer) return false;
+    if (!this.pipeline || !this.bindGroupLayout || !this.globalsBuffer || !this.staticSceneBuffer || !this.dynamicSceneBuffer) return false;
     this.ensureOutputs(inputs.width, inputs.height);
     const depthGpu = this.rawTexture(inputs.depth);
     const normalGpu = this.rawTexture(inputs.normal);
@@ -254,7 +279,7 @@ export class RealtimeRtFeaturePassV3 {
 
     this.bindGroup = this.device.createBindGroup({
       label: 'Kyxos.RealtimeRT.FeatureBindGroup.V3',
-      layout: this.pipeline.getBindGroupLayout(0),
+      layout: this.bindGroupLayout,
       entries: [
         { binding: 0, resource: { buffer: this.globalsBuffer } },
         { binding: 1, resource: { buffer: this.staticSceneBuffer } },
@@ -355,6 +380,7 @@ export class RealtimeRtFeaturePassV3 {
     this.globalsBuffer = null;
     this.staticSceneBuffer = null;
     this.dynamicSceneBuffer = null;
+    this.bindGroupLayout = null;
     this.bindGroup = null;
     this.visibilityTexture.dispose?.();
     this.reflectionTexture.dispose?.();
