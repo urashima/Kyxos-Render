@@ -8,6 +8,8 @@ export interface SceneAdvancedLightSamplingSettings {
 }
 
 export interface SceneRayTracingSettings {
+  /** Enables RT feature passes inside the authoritative realtime pipeline. */
+  enabled: boolean;
   shadows: boolean;
   shadowBias: number;
   ambientOcclusion: boolean;
@@ -15,6 +17,16 @@ export interface SceneRayTracingSettings {
   aoStrength: number;
   reflections: boolean;
   reflectionMaxRoughness: number;
+  refractions: boolean;
+  refractionMaxRoughness: number;
+  refractionStrength: number;
+  /** Temporal reprojection + recurrent denoise runs continuously while moving. */
+  realtimeDenoise: boolean;
+  denoiseRadius: number;
+  denoiseStrength: number;
+  /** Controls whether filtered RT feature buffers are fused into realtime Beauty. */
+  realtimeFusion: boolean;
+  fusionStrength: number;
 }
 
 export interface SceneRestirDISettings {
@@ -67,6 +79,7 @@ export const DEFAULT_ADVANCED_RENDER_SETTINGS: SceneAdvancedRenderSettings = {
     emissiveTriangles: true,
   },
   rayTracing: {
+    enabled: false,
     shadows: true,
     shadowBias: 0.0015,
     ambientOcclusion: false,
@@ -74,6 +87,14 @@ export const DEFAULT_ADVANCED_RENDER_SETTINGS: SceneAdvancedRenderSettings = {
     aoStrength: 0.65,
     reflections: true,
     reflectionMaxRoughness: 1,
+    refractions: false,
+    refractionMaxRoughness: 0.35,
+    refractionStrength: 1,
+    realtimeDenoise: true,
+    denoiseRadius: 1.5,
+    denoiseStrength: 0.75,
+    realtimeFusion: true,
+    fusionStrength: 1,
   },
   restirDI: {
     mode: 'temporalSpatial',
@@ -141,6 +162,9 @@ export function normalizeAdvancedRenderSettings(value: unknown): SceneAdvancedRe
       emissiveTriangles: lightSampling.emissiveTriangles !== false,
     },
     rayTracing: {
+      // `cinematic` used to be the only way to request Hybrid RT. Preserve old
+      // scenes while allowing realtime mode to enable the same feature layer.
+      enabled: rayTracing.enabled === true || renderingMode === 'cinematic',
       shadows: rayTracing.shadows !== false,
       shadowBias: finite(rayTracing.shadowBias, defaults.rayTracing.shadowBias, 0.0001, 0.02),
       ambientOcclusion: rayTracing.ambientOcclusion === true,
@@ -153,6 +177,19 @@ export function normalizeAdvancedRenderSettings(value: unknown): SceneAdvancedRe
         0.02,
         1,
       ),
+      refractions: rayTracing.refractions === true,
+      refractionMaxRoughness: finite(
+        rayTracing.refractionMaxRoughness,
+        defaults.rayTracing.refractionMaxRoughness,
+        0.02,
+        1,
+      ),
+      refractionStrength: finite(rayTracing.refractionStrength, defaults.rayTracing.refractionStrength, 0, 2),
+      realtimeDenoise: rayTracing.realtimeDenoise !== false,
+      denoiseRadius: finite(rayTracing.denoiseRadius, defaults.rayTracing.denoiseRadius, 0.5, 3),
+      denoiseStrength: finite(rayTracing.denoiseStrength, defaults.rayTracing.denoiseStrength, 0, 1),
+      realtimeFusion: rayTracing.realtimeFusion !== false,
+      fusionStrength: finite(rayTracing.fusionStrength, defaults.rayTracing.fusionStrength, 0, 1.5),
     },
     restirDI: {
       mode,
