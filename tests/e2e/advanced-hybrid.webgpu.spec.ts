@@ -8,6 +8,7 @@ async function diagnostic(page: any) {
     const overlay = document.querySelector<HTMLCanvasElement>('canvas[data-kyxos-advanced-renderer="webgpu"]');
     const warning = document.querySelector('#advanced-render-warning');
     const status = document.querySelector('#advanced-render-status');
+    const phases = Number(document.querySelector('#advanced-render-samples')?.textContent?.replace(/,/g, '') ?? 0);
     return {
       backend: window.__kyxosTestApi.getMetrics?.().backend ?? null,
       fps: window.__kyxosTestApi.getMetrics?.().fps ?? 0,
@@ -16,6 +17,7 @@ async function diagnostic(page: any) {
       architecture: canvas?.dataset.advancedRenderArchitecture ?? null,
       warning: warning?.textContent?.trim() ?? '',
       status: status?.textContent?.trim() ?? '',
+      phases,
       overlayVisible: overlay ? getComputedStyle(overlay).display !== 'none' && getComputedStyle(overlay).visibility !== 'hidden' : false,
     };
   });
@@ -40,7 +42,7 @@ async function viewportChecksum(page: any) {
   });
 }
 
-test('Hybrid RT stays inside the realtime WebGPU viewport while the camera moves', async ({ page }) => {
+test('Realtime RT stays fused into the WebGPU viewport while the camera moves', async ({ page }) => {
   const pageErrors: string[] = [];
   const gpuErrors: string[] = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
@@ -54,18 +56,22 @@ test('Hybrid RT stays inside the realtime WebGPU viewport while the camera moves
   await page.waitForFunction(() => window.__kyxosTestApi?.ready(), null, { timeout: 60_000 });
   expect(await page.evaluate(() => Boolean((navigator as Navigator & { gpu?: unknown }).gpu))).toBe(true);
   await expect.poll(async () => page.evaluate(() => window.__kyxosTestApi.getMetrics?.().backend), { timeout: 30_000 }).toBe('webgpu');
-  await expect(page.locator('#advanced-render-mode')).toHaveValue('cinematic');
+  await expect(page.locator('#advanced-render-mode')).toHaveValue('realtime');
+  await expect(page.locator('#advanced-rt-enabled')).toBeChecked();
+  await expect(page.locator('#advanced-rt-denoise-enabled')).toBeChecked();
+  await expect(page.locator('#advanced-rt-fusion-enabled')).toBeChecked();
 
   await page.waitForTimeout(15_000);
   const initial = await diagnostic(page);
-  console.log(`HYBRID_WEBGPU_DIAGNOSTIC ${JSON.stringify({ ...initial, pageErrors, gpuErrors })}`);
-  expect(initial, `Hybrid RT did not enter the interaction-safe realtime feature path: ${JSON.stringify({ ...initial, pageErrors, gpuErrors })}`).toMatchObject({
+  console.log(`REALTIME_RT_WEBGPU_DIAGNOSTIC ${JSON.stringify({ ...initial, pageErrors, gpuErrors })}`);
+  expect(initial, `Realtime RT did not enter the realtime feature path: ${JSON.stringify({ ...initial, pageErrors, gpuErrors })}`).toMatchObject({
     backend: 'webgpu',
     state: 'rendering',
-    mode: 'cinematic',
-    architecture: 'realtime-hybrid-feature-pass-v2',
+    mode: 'realtime',
+    architecture: 'realtime-rt-feature-pass-v3',
     overlayVisible: false,
   });
+  expect(initial.phases).toBeGreaterThan(0);
 
   const beforeChecksum = await viewportChecksum(page);
   const viewport = page.locator('#viewport');
@@ -79,24 +85,25 @@ test('Hybrid RT stays inside the realtime WebGPU viewport while the camera moves
     for (let step = 1; step <= 10; step += 1) {
       await page.mouse.move(x + step * 9, y + Math.sin(step * 0.8) * 10, { steps: 2 });
     }
-    await page.waitForTimeout(250);
+    await page.waitForTimeout(300);
     const moving = await diagnostic(page);
     const movingChecksum = await viewportChecksum(page);
-    expect(moving, `Hybrid RT left the realtime feature path during camera motion: ${JSON.stringify(moving)}`).toMatchObject({
+    expect(moving, `Realtime RT left the feature path during camera motion: ${JSON.stringify(moving)}`).toMatchObject({
       state: 'rendering',
-      mode: 'cinematic',
-      architecture: 'realtime-hybrid-feature-pass-v2',
+      mode: 'realtime',
+      architecture: 'realtime-rt-feature-pass-v3',
       overlayVisible: false,
     });
+    expect(moving.warning).not.toMatch(/suspend|pure Realtime|after interaction settles/i);
     expect(moving.fps).toBeGreaterThan(0);
-    expect(movingChecksum, 'Realtime viewport did not visibly update while Hybrid RT was suspended for camera interaction.').not.toBe(beforeChecksum);
+    expect(movingChecksum, 'Realtime viewport did not visibly update while realtime RT was enabled.').not.toBe(beforeChecksum);
     await page.mouse.up();
   }
 
   await page.waitForTimeout(750);
   const settled = await diagnostic(page);
   expect(settled.state).toBe('rendering');
-  expect(settled.architecture).toBe('realtime-hybrid-feature-pass-v2');
+  expect(settled.architecture).toBe('realtime-rt-feature-pass-v3');
   expect(settled.overlayVisible).toBe(false);
   expect(pageErrors).toEqual([]);
   expect(gpuErrors).toEqual([]);
