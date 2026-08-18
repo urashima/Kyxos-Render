@@ -1,7 +1,7 @@
 import type { SceneAdvancedRenderSettings } from '@kyxos/scene-contract/advanced-render-settings';
 import { normalizeAdvancedRenderSettings } from '@kyxos/scene-contract/advanced-render-settings';
 import type { AdvancedRendererCapabilities } from './backendCapabilities';
-import { resolveAdvancedRendererCapabilities } from './backendCapabilities';
+import { ADVANCED_STORAGE_BUFFERS_PER_STAGE, resolveAdvancedRendererCapabilities } from './backendCapabilities';
 import type { ExtractedAdvancedScene } from './sceneExtraction';
 import { advancedPathTracingComputeWGSL, advancedPathTracingDisplayWGSL } from './webgpuShaders';
 
@@ -117,7 +117,11 @@ export class WebGpuHybridRenderer {
     if (!this.adapter) throw new Error('No WebGPU adapter is available.');
     const capabilities = resolveAdvancedRendererCapabilities('webgpu', this.adapter.limits as Record<string, unknown>);
     if (!capabilities.softwareRayQuery) throw new Error(capabilities.reason ?? 'WebGPU RT Enhanced limits are unavailable.');
-    this.device = await this.adapter.requestDevice();
+    this.device = await this.adapter.requestDevice({
+      requiredLimits: {
+        maxStorageBuffersPerShaderStage: ADVANCED_STORAGE_BUFFERS_PER_STAGE,
+      },
+    });
     this.device.lost?.then?.((info: any) => {
       if (this.disposed) return;
       const message = `Advanced WebGPU device lost: ${String(info?.message ?? info?.reason ?? 'unknown reason')}`;
