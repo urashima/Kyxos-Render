@@ -19,6 +19,19 @@ function configure(instance: KyxosViewer): void {
   if (!isRtLab && !isPathLab) return;
   if (!instance.canvas.isConnected) return;
   labViewer = instance;
+  let capabilityRetryIssued = false;
+
+  const retryAfterCapabilityNegotiation = (status: AdvancedRenderStatus): void => {
+    if (capabilityRetryIssued || status.state !== 'fallback' || requestedMode() === 'realtime') return;
+    const capabilities = instance.getAdvancedCapabilities();
+    if (!capabilities.softwareRayQuery) return;
+    capabilityRetryIssued = true;
+    queueMicrotask(() => {
+      if (labViewer !== instance || !instance.canvas.isConnected) return;
+      instance.setRenderingMode(requestedMode());
+    });
+  };
+
   instance.setAdvancedRenderSettings({
     renderingMode: requestedMode(),
     restirDI: {
@@ -41,7 +54,9 @@ function configure(instance: KyxosViewer): void {
     },
   });
   instance.canvas.addEventListener('kyxos-advanced-render-status', (event) => {
-    updatePanel((event as CustomEvent<AdvancedRenderStatus>).detail);
+    const status = (event as CustomEvent<AdvancedRenderStatus>).detail;
+    updatePanel(status);
+    retryAfterCapabilityNegotiation(status);
   });
   instance.canvas.addEventListener('kyxos-advanced-render-warning', (event) => {
     const message = (event as CustomEvent<{ message: string }>).detail.message;
@@ -49,7 +64,9 @@ function configure(instance: KyxosViewer): void {
     if (warning) warning.textContent = message;
   });
   mountPanel();
-  updatePanel(instance.getAdvancedRenderStatus());
+  const initialStatus = instance.getAdvancedRenderStatus();
+  updatePanel(initialStatus);
+  retryAfterCapabilityNegotiation(initialStatus);
 }
 
 if (isRtLab || isPathLab) {
