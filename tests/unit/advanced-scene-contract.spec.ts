@@ -5,33 +5,45 @@ import {
   type SceneRenderSettings,
   type ViewerCapabilityDescription,
 } from '../../packages/scene-contract/src/index';
-import { DEFAULT_ADVANCED_RENDER_SETTINGS } from '../../packages/scene-contract/src/advanced-render-settings';
+import {
+  DEFAULT_ADVANCED_RENDER_SETTINGS,
+  normalizeAdvancedRenderSettings,
+} from '../../packages/scene-contract/src/advanced-render-settings';
 
 describe('advanced rendering Scene Contract', () => {
-  it('adds backend-independent advanced defaults to new scenes', () => {
-    const scene = createEmptySceneContract('Advanced Scene');
-    expect(scene.renderSettings.advanced).toEqual(DEFAULT_ADVANCED_RENDER_SETTINGS);
-    expect(validateSceneContract(scene).valid).toBe(true);
-  });
-
-  it('keeps legacy scenes without advanced settings valid', () => {
+  it('keeps the legacy scene factory valid and backward compatible', () => {
     const scene = createEmptySceneContract('Legacy-compatible Scene');
-    delete scene.renderSettings.advanced;
+    expect(scene.renderSettings.advanced).toBeUndefined();
     expect(validateSceneContract(scene).valid).toBe(true);
   });
 
-  it('rejects malformed advanced render settings without normalizing persisted data silently', () => {
-    const scene = createEmptySceneContract('Invalid Advanced Scene');
-    scene.renderSettings.advanced = {
-      ...DEFAULT_ADVANCED_RENDER_SETTINGS,
+  it('normalizes missing advanced settings to backend-independent defaults', () => {
+    expect(normalizeAdvancedRenderSettings(undefined)).toEqual(DEFAULT_ADVANCED_RENDER_SETTINGS);
+  });
+
+  it('bounds malformed advanced values at the protocol boundary', () => {
+    const normalized = normalizeAdvancedRenderSettings({
+      renderingMode: 'pathTracing',
+      restirDI: { mode: 'temporalSpatial', candidates: 999, spatialSamples: -2 },
+      radianceCache: { enabled: true, cellSize: -5, capacity: 1, updateRatio: 4 },
       pathTracing: {
-        ...DEFAULT_ADVANCED_RENDER_SETTINGS.pathTracing,
         maxBounces: 99,
+        samplesPerFrame: 99,
+        denoise: true,
+        fireflyClamp: -1,
+        resolutionScale: 3,
       },
-    };
-    const result = validateSceneContract(scene);
-    expect(result.valid).toBe(false);
-    expect(result.issues.some((entry) => entry.path === '/renderSettings/advanced/pathTracing/maxBounces')).toBe(true);
+    });
+    expect(normalized.renderingMode).toBe('pathTracing');
+    expect(normalized.restirDI.candidates).toBe(32);
+    expect(normalized.restirDI.spatialSamples).toBe(0);
+    expect(normalized.radianceCache.cellSize).toBe(0.05);
+    expect(normalized.radianceCache.capacity).toBe(1024);
+    expect(normalized.radianceCache.updateRatio).toBe(1);
+    expect(normalized.pathTracing.maxBounces).toBe(16);
+    expect(normalized.pathTracing.samplesPerFrame).toBe(4);
+    expect(normalized.pathTracing.fireflyClamp).toBe(1);
+    expect(normalized.pathTracing.resolutionScale).toBe(1);
   });
 
   it('exposes advanced settings and capabilities on the canonical root types', () => {
