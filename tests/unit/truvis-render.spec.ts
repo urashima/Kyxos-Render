@@ -32,7 +32,7 @@ import {
 import {
   advancedPathTracingComputeWGSL,
   advancedPathTracingDisplayWGSL,
-} from '../../packages/viewer/src/render/advanced/webgpuShaders';
+} from '../../packages/viewer/src/render/advanced/webgpuShadersPortable';
 import { normalizeAdvancedRenderSettings } from '../../packages/scene-contract/src/advanced-render-settings';
 
 const strongWebGpuLimits = {
@@ -205,5 +205,11 @@ describe('Truvis-inspired render foundation', () => {
     expect(advancedPathTracingDisplayWGSL).toContain('displayInfo: vec4<f32>');
     expect(advancedPathTracingDisplayWGSL).toContain('denoiseRadius');
     expect(advancedPathTracingDisplayWGSL).toContain('globals.displayInfo.z');
+  });
+
+  it('removes reserved WGSL identifiers from the final browser shader source', () => {
+    expect(advancedPathTracingComputeWGSL).not.toMatch(/\bmeta\b/);
+    expect(advancedPathTracingDisplayWGSL).not.toMatch(/\bmeta\b/);
+    expect(advancedPathTracingComputeWGSL).toContain('nodeInfo');
   });
 });
