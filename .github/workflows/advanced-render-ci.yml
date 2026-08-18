@@ -16,7 +16,7 @@ jobs:
   verify-advanced-rendering:
     if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
 
@@ -36,7 +36,7 @@ jobs:
         run: pnpm typecheck
 
       - name: Run advanced rendering unit acceptance
-        run: pnpm exec vitest run tests/unit/truvis-render.spec.ts tests/unit/viewer-ssr-environment.spec.ts
+        run: pnpm exec vitest run tests/unit/truvis-render.spec.ts tests/unit/viewer-ssr-environment.spec.ts tests/unit/advanced-scene-contract.spec.ts
 
       - name: Build production products
         run: pnpm build
@@ -47,3 +47,9 @@ jobs:
           test -f apps/studio/dist/index.html
           grep -q "Kyxos Studio" apps/studio/dist/index.html
           grep -R -q "advanced-render" apps/playground/dist/assets apps/studio/dist/assets
+
+      - name: Install Chromium for advanced lab acceptance
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Run advanced lab browser acceptance
+        run: pnpm exec playwright test tests/e2e/advanced-rendering.spec.ts --project=chromium
