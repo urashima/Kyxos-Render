@@ -1,3 +1,4 @@
+import type { SceneAdvancedRenderSettings } from '@kyxos/scene-contract/advanced-render-settings';
 import {
   WebGpuHybridRenderer as BaseWebGpuHybridRenderer,
   type AdvancedGpuMetrics,
@@ -8,18 +9,22 @@ import { ADVANCED_STORAGE_BUFFERS_PER_STAGE } from './backendCapabilities';
 
 export type { AdvancedGpuMetrics, AdvancedGpuRendererOptions };
 
+const BUFFER_USAGE = (globalThis as any).GPUBufferUsage ?? { COPY_DST: 8, UNIFORM: 64 };
+const EXTENDED_GLOBAL_VEC4_COUNT = 12;
+
 /**
- * Safety wrapper for the experimental advanced path.
+ * Safety and control wrapper for the experimental advanced path.
  *
  * The normal Kyxos raster canvas is the authoritative visible fallback. The
  * WebGPU overlay is only revealed after the first frame passes a GPU validation
- * error scope. This prevents an invalid compute pipeline from covering a healthy
- * raster frame with an opaque black canvas.
+ * error scope. User-facing advanced controls are appended to the base renderer's
+ * uniform block here so the Scene Contract stays backend independent.
  */
 export class WebGpuHybridRenderer extends BaseWebGpuHybridRenderer {
   private firstFrameValidated = false;
   private validationPending = false;
   private validationFailure: Error | null = null;
+  private extendedGlobalsReady = false;
 
   constructor(baseCanvas: HTMLCanvasElement, options: AdvancedGpuRendererOptions = {}) {
     super(baseCanvas, options);
@@ -36,7 +41,78 @@ export class WebGpuHybridRenderer extends BaseWebGpuHybridRenderer {
         `the current Kyxos RT pipeline requires ${ADVANCED_STORAGE_BUFFERS_PER_STAGE}. High raster fallback remains active.`,
       );
     }
+
+    // BaseWebGpuHybridRenderer owns the common nine vec4 values. The unified
+    // render-control surface adds three vec4s for light sampling, hybrid RT and
+    // display/denoise controls. Replace the buffer before any scene bind groups
+    // are built so the auto-layout sees a correctly sized uniform resource.
+    if (!this.extendedGlobalsReady && this.device) {
+      try { this.globalsBuffer?.destroy?.(); } catch { /* device may already be lost */ }
+      this.globalsBuffer = this.device.createBuffer({
+        label: 'Kyxos.Advanced.Globals',
+        size: EXTENDED_GLOBAL_VEC4_COUNT * 16,
+        usage: BUFFER_USAGE.UNIFORM | BUFFER_USAGE.COPY_DST,
+      });
+      this.extendedGlobalsReady = true;
+    }
     return capabilities;
+  }
+
+  setSettings(value: SceneAdvancedRenderSettings): void {
+    const previous = this.controlSignature();
+    super.setSettings(value);
+    if (previous !== this.controlSignature()) this.resetAccumulation();
+  }
+
+  protected cameraData(camera: any): { data: Float32Array; signature: string } {
+    const base = super.cameraData(camera);
+    const data = new Float32Array(EXTENDED_GLOBAL_VEC4_COUNT * 4);
+    data.set(base.data, 0);
+
+    const lightSampling = this.settings.lightSampling;
+    const rayTracing = this.settings.rayTracing;
+    const pathTracing = this.settings.pathTracing;
+
+    // features: environment importance, emissive triangle NEE, ray shadows, ray AO
+    data.set([
+      lightSampling.environmentImportance ? 1 : 0,
+      lightSampling.emissiveTriangles ? 1 : 0,
+      rayTracing.shadows ? 1 : 0,
+      rayTracing.ambientOcclusion ? 1 : 0,
+    ], 36);
+    // rayInfo: reflections, shadow bias, AO radius, AO strength
+    data.set([
+      rayTracing.reflections ? 1 : 0,
+      rayTracing.shadowBias,
+      rayTracing.aoRadius,
+      rayTracing.aoStrength,
+    ], 40);
+    // displayInfo: reflection roughness cutoff, denoise radius, denoise strength, reserved
+    data.set([
+      rayTracing.reflectionMaxRoughness,
+      pathTracing.denoiseRadius,
+      pathTracing.denoiseStrength,
+      0,
+    ], 44);
+
+    return { data, signature: `${base.signature}|${this.controlSignature()}` };
+  }
+
+  private controlSignature(): string {
+    const value = this.settings;
+    return [
+      value.lightSampling.environmentImportance ? 1 : 0,
+      value.lightSampling.emissiveTriangles ? 1 : 0,
+      value.rayTracing.shadows ? 1 : 0,
+      value.rayTracing.shadowBias,
+      value.rayTracing.ambientOcclusion ? 1 : 0,
+      value.rayTracing.aoRadius,
+      value.rayTracing.aoStrength,
+      value.rayTracing.reflections ? 1 : 0,
+      value.rayTracing.reflectionMaxRoughness,
+      value.pathTracing.denoiseRadius,
+      value.pathTracing.denoiseStrength,
+    ].join('|');
   }
 
   render(camera: any, mode: 'cinematic' | 'pathTracing'): AdvancedGpuMetrics | null {
