@@ -29,6 +29,10 @@ import {
   createDefaultAdvancedFeatureGraph,
   requestedFeaturesForMode,
 } from '../../packages/viewer/src/render/advanced/featureGraph';
+import {
+  advancedPathTracingComputeWGSL,
+  advancedPathTracingDisplayWGSL,
+} from '../../packages/viewer/src/render/advanced/webgpuShaders';
 import { normalizeAdvancedRenderSettings } from '../../packages/scene-contract/src/advanced-render-settings';
 
 const strongWebGpuLimits = {
@@ -150,18 +154,56 @@ describe('Truvis-inspired render foundation', () => {
     expect(resolved.enabled).toContain('pathDenoise');
   });
 
-  it('normalizes advanced scene settings into bounded production values', () => {
+  it('normalizes all user-facing advanced controls into bounded production values', () => {
     const settings = normalizeAdvancedRenderSettings({
       renderingMode: 'pathTracing',
+      lightSampling: { environmentImportance: false, emissiveTriangles: false },
+      rayTracing: {
+        shadows: false,
+        shadowBias: 99,
+        ambientOcclusion: true,
+        aoRadius: -10,
+        aoStrength: 9,
+        reflections: false,
+        reflectionMaxRoughness: 9,
+      },
       restirDI: { mode: 'temporalSpatial', candidates: 999 },
       radianceCache: { capacity: 1, cellSize: -4 },
-      pathTracing: { maxBounces: 100, samplesPerFrame: 99, resolutionScale: 2 },
+      pathTracing: {
+        maxBounces: 100,
+        samplesPerFrame: 99,
+        resolutionScale: 2,
+        denoiseRadius: 99,
+        denoiseStrength: -5,
+      },
     });
     expect(settings.renderingMode).toBe('pathTracing');
+    expect(settings.lightSampling.environmentImportance).toBe(false);
+    expect(settings.lightSampling.emissiveTriangles).toBe(false);
+    expect(settings.rayTracing.shadows).toBe(false);
+    expect(settings.rayTracing.shadowBias).toBe(0.02);
+    expect(settings.rayTracing.ambientOcclusion).toBe(true);
+    expect(settings.rayTracing.aoRadius).toBe(0.01);
+    expect(settings.rayTracing.aoStrength).toBe(1);
+    expect(settings.rayTracing.reflections).toBe(false);
+    expect(settings.rayTracing.reflectionMaxRoughness).toBe(1);
     expect(settings.restirDI.candidates).toBe(32);
     expect(settings.radianceCache.capacity).toBe(1024);
     expect(settings.pathTracing.maxBounces).toBe(16);
     expect(settings.pathTracing.samplesPerFrame).toBe(4);
     expect(settings.pathTracing.resolutionScale).toBe(1);
+    expect(settings.pathTracing.denoiseRadius).toBe(2);
+    expect(settings.pathTracing.denoiseStrength).toBe(0);
+  });
+
+  it('wires right-panel advanced controls into the migrated WGSL programs', () => {
+    expect(advancedPathTracingComputeWGSL).toContain('features: vec4<f32>');
+    expect(advancedPathTracingComputeWGSL).toContain('rayInfo: vec4<f32>');
+    expect(advancedPathTracingComputeWGSL).toContain('globals.features.z < 0.5');
+    expect(advancedPathTracingComputeWGSL).toContain('globals.features.w > 0.5');
+    expect(advancedPathTracingComputeWGSL).toContain('globals.rayInfo.x > 0.5');
+    expect(advancedPathTracingDisplayWGSL).toContain('displayInfo: vec4<f32>');
+    expect(advancedPathTracingDisplayWGSL).toContain('denoiseRadius');
+    expect(advancedPathTracingDisplayWGSL).toContain('globals.displayInfo.z');
   });
 });
