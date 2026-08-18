@@ -4,7 +4,12 @@ import {
   normalizeAdvancedRenderSettings,
   type AdvancedRenderingMode,
   type RestirDIMode,
+  type SceneAdvancedLightSamplingSettings,
   type SceneAdvancedRenderSettings,
+  type ScenePathTracingSettings,
+  type SceneRadianceCacheSettings,
+  type SceneRayTracingSettings,
+  type SceneRestirDISettings,
 } from '@kyxos/scene-contract/advanced-render-settings';
 
 interface StudioAdvancedApi {
@@ -14,11 +19,36 @@ interface StudioAdvancedApi {
 
 interface KyxosStudioAdvancedGlobal { api: StudioAdvancedApi }
 
+interface RuntimeStatus {
+  requestedMode?: AdvancedRenderingMode;
+  effectiveMode?: AdvancedRenderingMode;
+  state?: string;
+  message?: string | null;
+  samples?: number;
+  triangles?: number;
+  bvhNodes?: number;
+  lights?: number;
+  advancedGpuBytes?: number;
+  enabledFeatures?: string[];
+  unavailableFeatures?: string[];
+}
+
+type AdvancedUpdate = {
+  renderingMode?: AdvancedRenderingMode;
+  lightSampling?: Partial<SceneAdvancedLightSamplingSettings>;
+  rayTracing?: Partial<SceneRayTracingSettings>;
+  restirDI?: Partial<SceneRestirDISettings>;
+  radianceCache?: Partial<SceneRadianceCacheSettings>;
+  pathTracing?: Partial<ScenePathTracingSettings>;
+};
+
 declare global {
   var kyxosStudio: KyxosStudioAdvancedGlobal | undefined;
 }
 
 let mountQueued = false;
+let boundCanvas: HTMLCanvasElement | null = null;
+let runtimeStatus: RuntimeStatus | null = null;
 
 function runtime(): KyxosStudioAdvancedGlobal | null {
   return globalThis.kyxosStudio ?? null;
@@ -29,11 +59,13 @@ function current(scene: KyxosSceneContract): SceneAdvancedRenderSettings {
   return normalizeAdvancedRenderSettings(renderSettings.advanced ?? DEFAULT_ADVANCED_RENDER_SETTINGS);
 }
 
-function update(scene: KyxosSceneContract, label: string, change: Partial<SceneAdvancedRenderSettings>): void {
+function update(scene: KyxosSceneContract, label: string, change: AdvancedUpdate): void {
   const previous = current(scene);
   const next = normalizeAdvancedRenderSettings({
     ...previous,
     ...change,
+    lightSampling: { ...previous.lightSampling, ...(change.lightSampling ?? {}) },
+    rayTracing: { ...previous.rayTracing, ...(change.rayTracing ?? {}) },
     restirDI: { ...previous.restirDI, ...(change.restirDI ?? {}) },
     radianceCache: { ...previous.radianceCache, ...(change.radianceCache ?? {}) },
     pathTracing: { ...previous.pathTracing, ...(change.pathTracing ?? {}) },
@@ -44,6 +76,7 @@ function update(scene: KyxosSceneContract, label: string, change: Partial<SceneA
     path: '/renderSettings/advanced',
     value: next,
   }]);
+  queueMicrotask(refreshMountedControls);
 }
 
 function segmented<T extends string>(
@@ -67,14 +100,23 @@ function segmented<T extends string>(
     button.textContent = option.label;
     button.dataset.value = option.value;
     button.setAttribute('aria-pressed', String(option.value === selected));
-    button.addEventListener('click', () => onSelect(option.value));
+    button.addEventListener('click', () => {
+      for (const sibling of group.querySelectorAll('button')) sibling.setAttribute('aria-pressed', 'false');
+      button.setAttribute('aria-pressed', 'true');
+      onSelect(option.value);
+    });
     group.append(button);
   }
   row.append(label, group);
   return row;
 }
 
-function switchControl(labelText: string, checked: boolean, onChange: (value: boolean) => void): HTMLElement {
+function switchControl(
+  labelText: string,
+  checked: boolean,
+  onChange: (value: boolean) => void,
+  disabled = false,
+): HTMLElement {
   const row = document.createElement('div');
   row.className = 'kx-render-row';
   const label = document.createElement('span');
@@ -86,8 +128,13 @@ function switchControl(labelText: string, checked: boolean, onChange: (value: bo
   button.setAttribute('role', 'switch');
   button.setAttribute('aria-label', labelText);
   button.setAttribute('aria-checked', String(checked));
+  button.disabled = disabled;
   button.innerHTML = '<span aria-hidden="true"></span>';
-  button.addEventListener('click', () => onChange(button.getAttribute('aria-checked') !== 'true'));
+  button.addEventListener('click', () => {
+    const next = button.getAttribute('aria-checked') !== 'true';
+    button.setAttribute('aria-checked', String(next));
+    onChange(next);
+  });
   row.append(label, button);
   return row;
 }
@@ -113,25 +160,25 @@ function rangeControl(
   slider.value = String(value);
   slider.setAttribute('aria-label', labelText);
   const output = document.createElement('output');
-  output.textContent = Number(value).toFixed(step < 0.1 ? 2 : step < 1 ? 1 : 0);
-  slider.addEventListener('input', () => {
-    output.textContent = Number(slider.value).toFixed(step < 0.1 ? 2 : step < 1 ? 1 : 0);
-  });
+  const decimals = step < 0.001 ? 4 : step < 0.01 ? 3 : step < 0.1 ? 2 : step < 1 ? 1 : 0;
+  const format = () => Number(slider.value).toFixed(decimals);
+  output.textContent = format();
+  slider.addEventListener('input', () => { output.textContent = format(); });
   slider.addEventListener('change', () => onChange(Number(slider.value)));
   row.append(label, slider, output);
   return row;
 }
 
-function detailsCard(titleText: string, enabled = true): { root: HTMLDetailsElement; body: HTMLDivElement } {
+function detailsCard(titleText: string, enabled = true, open = false): { root: HTMLDetailsElement; body: HTMLDivElement } {
   const root = document.createElement('details');
   root.className = 'kx-render-effect kx-advanced-render-card';
-  root.open = false;
+  root.open = open;
   const summary = document.createElement('summary');
   const title = document.createElement('span');
   title.textContent = titleText;
   const state = document.createElement('span');
   state.className = 'kx-advanced-render-state';
-  state.textContent = enabled ? 'WebGPU' : 'Off';
+  state.textContent = enabled ? 'On' : 'Off';
   summary.append(title, state);
   const body = document.createElement('div');
   body.className = 'kx-render-effect-body';
@@ -139,34 +186,86 @@ function detailsCard(titleText: string, enabled = true): { root: HTMLDetailsElem
   return { root, body };
 }
 
+function infoRow(labelText: string, value: string, id?: string): HTMLElement {
+  const row = document.createElement('div');
+  row.className = 'kx-render-row';
+  const label = document.createElement('span');
+  label.className = 'kx-render-label';
+  label.textContent = labelText;
+  const output = document.createElement('span');
+  if (id) output.id = id;
+  output.textContent = value;
+  row.append(label, output);
+  return row;
+}
+
+function bytes(value = 0): string {
+  return value > 0 ? `${(value / 1024 / 1024).toFixed(1)} MB` : '0 MB';
+}
+
 function mount(): void {
   const api = runtime()?.api;
   if (!api) return;
   const renderBody = document.querySelector<HTMLElement>('.kx-render-settings-body');
-  if (!renderBody || renderBody.querySelector('[data-kx-advanced-render-settings]')) return;
+  if (!renderBody || renderBody.querySelector('[data-kx-advanced-render-settings]')) {
+    bindRuntimeStatus();
+    refreshRuntimeStatus();
+    return;
+  }
+
   const scene = api.getScene();
   const settings = current(scene);
+  const advancedEnabled = settings.renderingMode !== 'realtime';
+  const pathEnabled = settings.renderingMode === 'pathTracing';
 
   const group = document.createElement('section');
   group.className = 'kx-render-group kx-advanced-render-settings';
   group.dataset.kxAdvancedRenderSettings = 'true';
-  group.innerHTML = '<h3>WebGPU Advanced Rendering</h3>';
+  group.innerHTML = '<h3>Advanced Rendering</h3>';
 
   const note = document.createElement('p');
   note.className = 'kx-render-empty';
-  note.textContent = 'Cinematic and Path Traced Preview use Kyxos software BVH / WebGPU compute. WebGL2 remains the automatic realtime fallback.';
+  note.textContent = 'Unified WebGPU RT controls. Unsupported features fall back to the normal raster viewport without hiding the scene.';
   group.append(note);
 
   group.append(segmented<AdvancedRenderingMode>(
     'Rendering mode',
     [
       { value: 'realtime', label: 'Realtime' },
-      { value: 'cinematic', label: 'Cinematic' },
-      { value: 'pathTracing', label: 'Path Traced' },
+      { value: 'cinematic', label: 'Hybrid RT' },
+      { value: 'pathTracing', label: 'Path Trace' },
     ],
     settings.renderingMode,
     (renderingMode) => update(scene, 'Advanced rendering mode', { renderingMode }),
   ));
+
+  const sampling = detailsCard('Light Sampling', true, true);
+  sampling.body.append(
+    switchControl('HDRI importance sampling', settings.lightSampling.environmentImportance, (environmentImportance) =>
+      update(scene, 'HDRI importance sampling', { lightSampling: { environmentImportance } })),
+    switchControl('Emissive triangle sampling', settings.lightSampling.emissiveTriangles, (emissiveTriangles) =>
+      update(scene, 'Emissive triangle sampling', { lightSampling: { emissiveTriangles } })),
+  );
+
+  const rt = detailsCard('Hybrid Ray Tracing', advancedEnabled, advancedEnabled);
+  rt.body.append(
+    switchControl('Enabled', advancedEnabled, (enabled) =>
+      update(scene, 'Hybrid ray tracing', { renderingMode: enabled ? 'cinematic' : 'realtime' })),
+    switchControl('Ray traced shadows', settings.rayTracing.shadows, (shadows) =>
+      update(scene, 'Ray traced shadows', { rayTracing: { shadows } })),
+    rangeControl('Shadow bias', settings.rayTracing.shadowBias, 0.0001, 0.02, 0.0001, (shadowBias) =>
+      update(scene, 'Ray shadow bias', { rayTracing: { shadowBias } })),
+    switchControl('Ray AO', settings.rayTracing.ambientOcclusion, (ambientOcclusion) =>
+      update(scene, 'Ray ambient occlusion', { rayTracing: { ambientOcclusion } })),
+    rangeControl('AO radius', settings.rayTracing.aoRadius, 0.05, 5, 0.05, (aoRadius) =>
+      update(scene, 'Ray AO radius', { rayTracing: { aoRadius } })),
+    rangeControl('AO strength', settings.rayTracing.aoStrength, 0, 1, 0.05, (aoStrength) =>
+      update(scene, 'Ray AO strength', { rayTracing: { aoStrength } })),
+    switchControl('Ray reflections', settings.rayTracing.reflections, (reflections) =>
+      update(scene, 'Ray reflections', { rayTracing: { reflections } })),
+    rangeControl('Reflection max roughness', settings.rayTracing.reflectionMaxRoughness, 0.05, 1, 0.05, (reflectionMaxRoughness) =>
+      update(scene, 'Ray reflection roughness', { rayTracing: { reflectionMaxRoughness } })),
+  );
 
   const restir = detailsCard('ReSTIR Direct Lighting', settings.restirDI.mode !== 'off');
   restir.body.append(
@@ -179,48 +278,104 @@ function mount(): void {
         { value: 'temporalSpatial', label: 'T + S' },
       ],
       settings.restirDI.mode,
-      (mode) => update(scene, 'ReSTIR DI mode', { restirDI: { ...settings.restirDI, mode } }),
+      (mode) => update(scene, 'ReSTIR DI mode', { restirDI: { mode } }),
     ),
     rangeControl('Candidates', settings.restirDI.candidates, 1, 32, 1, (candidates) =>
-      update(scene, 'ReSTIR candidates', { restirDI: { ...settings.restirDI, candidates } })),
+      update(scene, 'ReSTIR candidates', { restirDI: { candidates } })),
     rangeControl('Spatial samples', settings.restirDI.spatialSamples, 0, 32, 1, (spatialSamples) =>
-      update(scene, 'ReSTIR spatial samples', { restirDI: { ...settings.restirDI, spatialSamples } })),
+      update(scene, 'ReSTIR spatial samples', { restirDI: { spatialSamples } })),
   );
 
   const cache = detailsCard('World-Space Radiance Cache', settings.radianceCache.enabled);
   cache.body.append(
     switchControl('Enabled', settings.radianceCache.enabled, (enabled) =>
-      update(scene, 'Radiance cache', { radianceCache: { ...settings.radianceCache, enabled } })),
-    rangeControl('Cell size', settings.radianceCache.cellSize, 0.1, 4, 0.1, (cellSize) =>
-      update(scene, 'Radiance cache cell size', { radianceCache: { ...settings.radianceCache, cellSize } })),
-    rangeControl('Update ratio', settings.radianceCache.updateRatio, 0.01, 0.25, 0.01, (updateRatio) =>
-      update(scene, 'Radiance cache update ratio', { radianceCache: { ...settings.radianceCache, updateRatio } })),
+      update(scene, 'Radiance cache', { radianceCache: { enabled } })),
+    rangeControl('Cell size', settings.radianceCache.cellSize, 0.05, 4, 0.05, (cellSize) =>
+      update(scene, 'Radiance cache cell size', { radianceCache: { cellSize } })),
+    rangeControl('Capacity', settings.radianceCache.capacity, 1024, 262144, 1024, (capacity) =>
+      update(scene, 'Radiance cache capacity', { radianceCache: { capacity } })),
+    rangeControl('Update ratio', settings.radianceCache.updateRatio, 0.005, 0.5, 0.005, (updateRatio) =>
+      update(scene, 'Radiance cache update ratio', { radianceCache: { updateRatio } })),
   );
 
-  const path = detailsCard('Progressive Path Tracing', settings.renderingMode === 'pathTracing');
+  const path = detailsCard('Progressive Path Tracing', pathEnabled, pathEnabled);
   path.body.append(
+    switchControl('Enabled', pathEnabled, (enabled) =>
+      update(scene, 'Progressive path tracing', { renderingMode: enabled ? 'pathTracing' : 'cinematic' })),
     rangeControl('Max bounces', settings.pathTracing.maxBounces, 1, 16, 1, (maxBounces) =>
-      update(scene, 'Path tracing bounces', { pathTracing: { ...settings.pathTracing, maxBounces } })),
+      update(scene, 'Path tracing bounces', { pathTracing: { maxBounces } })),
     rangeControl('Samples / frame', settings.pathTracing.samplesPerFrame, 1, 4, 1, (samplesPerFrame) =>
-      update(scene, 'Path tracing samples', { pathTracing: { ...settings.pathTracing, samplesPerFrame } })),
+      update(scene, 'Path tracing samples', { pathTracing: { samplesPerFrame } })),
     rangeControl('Resolution', settings.pathTracing.resolutionScale, 0.25, 1, 0.05, (resolutionScale) =>
-      update(scene, 'Path tracing resolution', { pathTracing: { ...settings.pathTracing, resolutionScale } })),
+      update(scene, 'Path tracing resolution', { pathTracing: { resolutionScale } })),
     rangeControl('Firefly clamp', settings.pathTracing.fireflyClamp, 1, 100, 1, (fireflyClamp) =>
-      update(scene, 'Path tracing firefly clamp', { pathTracing: { ...settings.pathTracing, fireflyClamp } })),
+      update(scene, 'Path tracing firefly clamp', { pathTracing: { fireflyClamp } })),
     switchControl('Denoise', settings.pathTracing.denoise, (denoise) =>
-      update(scene, 'Path tracing denoise', { pathTracing: { ...settings.pathTracing, denoise } })),
+      update(scene, 'Path tracing denoise', { pathTracing: { denoise } })),
+    rangeControl('Denoise radius', settings.pathTracing.denoiseRadius, 0, 2, 1, (denoiseRadius) =>
+      update(scene, 'Path denoise radius', { pathTracing: { denoiseRadius } })),
+    rangeControl('Denoise strength', settings.pathTracing.denoiseStrength, 0, 1, 0.05, (denoiseStrength) =>
+      update(scene, 'Path denoise strength', { pathTracing: { denoiseStrength } })),
   );
 
-  const runtimeState = document.createElement('div');
-  runtimeState.className = 'kx-render-empty kx-advanced-runtime-status';
-  const viewerCanvas = document.querySelector<HTMLCanvasElement>('canvas[data-advanced-render-state]');
-  runtimeState.textContent = viewerCanvas
-    ? `Runtime: ${viewerCanvas.dataset.advancedRenderState ?? 'idle'} · ${viewerCanvas.dataset.advancedRenderMode ?? 'realtime'}`
-    : 'Runtime capability is negotiated by KyxosViewer when the mode is activated.';
+  const runtimeCard = detailsCard('Runtime / Capabilities', true, false);
+  runtimeCard.body.append(
+    infoRow('State', 'idle · realtime', 'kx-advanced-runtime-state'),
+    infoRow('Samples', '0', 'kx-advanced-runtime-samples'),
+    infoRow('Scene acceleration', '—', 'kx-advanced-runtime-scene'),
+    infoRow('Advanced GPU memory', '0 MB', 'kx-advanced-runtime-memory'),
+    infoRow('Active features', '—', 'kx-advanced-runtime-features'),
+    infoRow('Unavailable', '—', 'kx-advanced-runtime-unavailable'),
+    infoRow('Status', 'Capability is negotiated by KyxosViewer.', 'kx-advanced-runtime-message'),
+  );
 
-  group.append(restir.root, cache.root, path.root, runtimeState);
+  group.append(sampling.root, rt.root, restir.root, cache.root, path.root, runtimeCard.root);
   const effects = renderBody.querySelector('.kx-render-effects');
   renderBody.insertBefore(group, effects ?? null);
+  bindRuntimeStatus();
+  refreshRuntimeStatus();
+}
+
+function bindRuntimeStatus(): void {
+  const canvas = document.querySelector<HTMLCanvasElement>('#studio-canvas, canvas[data-advanced-render-state]');
+  if (!canvas || canvas === boundCanvas) return;
+  boundCanvas = canvas;
+  canvas.addEventListener('kyxos-advanced-render-status', (event) => {
+    runtimeStatus = (event as CustomEvent<RuntimeStatus>).detail;
+    refreshRuntimeStatus();
+  });
+}
+
+function refreshRuntimeStatus(): void {
+  const canvas = boundCanvas;
+  const status = runtimeStatus;
+  const state = document.querySelector<HTMLElement>('#kx-advanced-runtime-state');
+  const samples = document.querySelector<HTMLElement>('#kx-advanced-runtime-samples');
+  const scene = document.querySelector<HTMLElement>('#kx-advanced-runtime-scene');
+  const memory = document.querySelector<HTMLElement>('#kx-advanced-runtime-memory');
+  const features = document.querySelector<HTMLElement>('#kx-advanced-runtime-features');
+  const unavailable = document.querySelector<HTMLElement>('#kx-advanced-runtime-unavailable');
+  const message = document.querySelector<HTMLElement>('#kx-advanced-runtime-message');
+  if (state) state.textContent = `${status?.state ?? canvas?.dataset.advancedRenderState ?? 'idle'} · ${status?.effectiveMode ?? canvas?.dataset.advancedRenderMode ?? 'realtime'}`;
+  if (samples) samples.textContent = String(status?.samples ?? 0);
+  if (scene) scene.textContent = status ? `${status.triangles ?? 0} tri · ${status.bvhNodes ?? 0} BVH · ${status.lights ?? 0} lights` : '—';
+  if (memory) memory.textContent = bytes(status?.advancedGpuBytes ?? 0);
+  if (features) features.textContent = status?.enabledFeatures?.length ? status.enabledFeatures.join(', ') : 'Raster / environment';
+  if (unavailable) unavailable.textContent = status?.unavailableFeatures?.length ? status.unavailableFeatures.join(', ') : 'None';
+  if (message) message.textContent = status?.message || 'Capability is negotiated by KyxosViewer; raster remains visible during fallback.';
+}
+
+function refreshMountedControls(): void {
+  const existing = document.querySelector<HTMLElement>('[data-kx-advanced-render-settings]');
+  if (!existing) {
+    scheduleMount();
+    return;
+  }
+  // The main render settings panel is schema-rendered and may replace its body
+  // after a SceneDocument patch. If it did not, remount just this independent
+  // advanced group so controls always reflect the canonical persisted values.
+  existing.remove();
+  mount();
 }
 
 function scheduleMount(): void {
@@ -232,7 +387,10 @@ function scheduleMount(): void {
   });
 }
 
-const observer = new MutationObserver(scheduleMount);
+const observer = new MutationObserver(() => {
+  bindRuntimeStatus();
+  scheduleMount();
+});
 observer.observe(document.documentElement, { childList: true, subtree: true });
-window.addEventListener('kyxos-advanced-render-status', scheduleMount as EventListener);
+window.addEventListener('pagehide', () => observer.disconnect(), { once: true });
 scheduleMount();
