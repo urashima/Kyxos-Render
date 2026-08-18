@@ -21,12 +21,23 @@ import {
   DEFAULT_TEMPORAL_DEPENDENCIES,
   TemporalHistoryRegistry,
 } from '../../packages/viewer/src/render/advanced/temporalHistory';
-import { resolveAdvancedRendererCapabilities } from '../../packages/viewer/src/render/advanced/backendCapabilities';
+import {
+  ADVANCED_STORAGE_BUFFERS_PER_STAGE,
+  resolveAdvancedRendererCapabilities,
+} from '../../packages/viewer/src/render/advanced/backendCapabilities';
 import {
   createDefaultAdvancedFeatureGraph,
   requestedFeaturesForMode,
 } from '../../packages/viewer/src/render/advanced/featureGraph';
 import { normalizeAdvancedRenderSettings } from '../../packages/scene-contract/src/advanced-render-settings';
+
+const strongWebGpuLimits = {
+  maxStorageBufferBindingSize: 128 * 1024 * 1024,
+  maxBufferSize: 256 * 1024 * 1024,
+  maxComputeWorkgroupStorageSize: 16 * 1024,
+  maxComputeInvocationsPerWorkgroup: 256,
+  maxStorageBuffersPerShaderStage: ADVANCED_STORAGE_BUFFERS_PER_STAGE,
+};
 
 describe('Truvis-inspired render foundation', () => {
   it('builds a normalized alias table and samples deterministic buckets', () => {
@@ -101,18 +112,18 @@ describe('Truvis-inspired render foundation', () => {
     expect(cache.stats().occupied).toBe(0);
   });
 
-  it('keeps WebGL and weak WebGPU adapters out of the RT enhanced tier', () => {
+  it('keeps WebGL and adapters below the real binding budget out of RT enhanced', () => {
     expect(resolveAdvancedRendererCapabilities('webgl2').softwareRayQuery).toBe(false);
     const weak = resolveAdvancedRendererCapabilities('webgpu', {
-      maxStorageBufferBindingSize: 32 * 1024 * 1024,
-      maxBufferSize: 64 * 1024 * 1024,
+      maxStorageBufferBindingSize: 128 * 1024 * 1024,
+      maxBufferSize: 256 * 1024 * 1024,
+      maxComputeInvocationsPerWorkgroup: 256,
+      maxStorageBuffersPerShaderStage: ADVANCED_STORAGE_BUFFERS_PER_STAGE - 1,
     });
     expect(weak.tier).toBe('webgpu-basic');
     expect(weak.pathTracing).toBe(false);
-    const strong = resolveAdvancedRendererCapabilities('webgpu', {
-      maxStorageBufferBindingSize: 128 * 1024 * 1024,
-      maxBufferSize: 256 * 1024 * 1024,
-    });
+    expect(weak.reason).toContain('storage buffers per shader stage');
+    const strong = resolveAdvancedRendererCapabilities('webgpu', strongWebGpuLimits);
     expect(strong.pathTracing).toBe(true);
   });
 
@@ -127,10 +138,7 @@ describe('Truvis-inspired render foundation', () => {
     expect(rejected.enabled).not.toContain('softwareRayQuery');
     expect(rejected.unavailable.some((entry) => entry.feature === 'pathTracing')).toBe(true);
 
-    const webgpu = resolveAdvancedRendererCapabilities('webgpu', {
-      maxStorageBufferBindingSize: 128 * 1024 * 1024,
-      maxBufferSize: 256 * 1024 * 1024,
-    });
+    const webgpu = resolveAdvancedRendererCapabilities('webgpu', strongWebGpuLimits);
     const resolved = graph.resolve(
       webgpu,
       requestedFeaturesForMode('pathTracing', { restir: true, radianceCache: true, denoise: true }),
