@@ -2,6 +2,7 @@ import {
   normalizeAdvancedRenderSettings,
   type SceneAdvancedRenderSettings,
 } from '@kyxos/scene-contract/advanced-render-settings';
+import { Vector2 } from 'three/webgpu';
 import { mix, renderOutput, sample, screenUV, texture, uniform, vec4 } from 'three/tsl';
 import { temporalReproject } from 'three/addons/tsl/display/TemporalReprojectNode.js';
 import { recurrentDenoise } from 'three/addons/tsl/display/RecurrentDenoiseNode.js';
@@ -228,16 +229,14 @@ class RealtimeRtControllerV3 {
     const normal = prePass.getTexture?.('output');
     const metalRough = prePass.getTexture?.('metalrough');
     if (!depth || !normal || !metalRough) return null;
-    const size = this.viewer.renderer?.getDrawingBufferSize?.({
-      width: 1, height: 1,
-      set(x: number, y: number) { this.width = x; this.height = y; return this; },
-    }) ?? { width: normal.image?.width ?? 1, height: normal.image?.height ?? 1 };
+    const drawingBufferSize = new Vector2(1, 1);
+    const size = this.viewer.renderer?.getDrawingBufferSize?.(drawingBufferSize) ?? drawingBufferSize;
     return {
       depth,
       normal,
       metalRough,
-      width: Math.max(1, Number(size.width ?? normal.image?.width ?? 1)),
-      height: Math.max(1, Number(size.height ?? normal.image?.height ?? 1)),
+      width: Math.max(1, Number(size.x ?? normal.image?.width ?? 1)),
+      height: Math.max(1, Number(size.y ?? normal.image?.height ?? 1)),
     };
   }
 
@@ -511,7 +510,7 @@ export function installRealtimeHybridRtExtensionV3(ViewerClass: { prototype: any
   prototype.getAdvancedRenderSettings = function getRealtimeRtAwareAdvancedSettings(): SceneAdvancedRenderSettings {
     return state(this).getSettings();
   };
-  prototype.getAdvancedRenderStatus = function getRealtimeRtAwareAdvancedStatus(): any {
+  prototype.getAdvancedRenderStatus = function getRealtimeRtAwareStatus(): any {
     return state(this).getStatus();
   };
   prototype.resetAccumulation = function resetRealtimeRtHistory(reason = 'manual'): void {
