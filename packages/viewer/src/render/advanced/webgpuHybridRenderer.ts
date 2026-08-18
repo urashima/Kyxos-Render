@@ -6,19 +6,41 @@ import {
 } from './webgpuHybridRendererBase';
 import type { AdvancedRendererCapabilities } from './backendCapabilities';
 import { ADVANCED_STORAGE_BUFFERS_PER_STAGE } from './backendCapabilities';
+import { advancedPathTracingComputeWGSL } from './webgpuShaders';
 
 export type { AdvancedGpuMetrics, AdvancedGpuRendererOptions };
 
 const BUFFER_USAGE = (globalThis as any).GPUBufferUsage ?? { COPY_DST: 8, UNIFORM: 64 };
+const SHADER_STAGE = (globalThis as any).GPUShaderStage ?? { COMPUTE: 4 };
 const EXTENDED_GLOBAL_VEC4_COUNT = 12;
+const ADVANCED_BINDINGS_PER_GROUP = 16;
+
+interface CompilationMessageLike {
+  type?: string;
+  message?: string;
+  lineNum?: number;
+  linePos?: number;
+}
+
+function compilationErrorText(messages: readonly CompilationMessageLike[] | undefined): string | null {
+  const errors = (messages ?? []).filter((entry) => entry.type === 'error');
+  if (!errors.length) return null;
+  return errors
+    .slice(0, 6)
+    .map((entry) => {
+      const location = entry.lineNum ? `:${entry.lineNum}${entry.linePos ? `:${entry.linePos}` : ''}` : '';
+      return `${location} ${entry.message ?? 'WGSL compilation error'}`.trim();
+    })
+    .join(' · ');
+}
 
 /**
  * Safety and control wrapper for the experimental advanced path.
  *
  * The normal Kyxos raster canvas is the authoritative visible fallback. The
- * WebGPU overlay is only revealed after the first frame passes a GPU validation
- * error scope. User-facing advanced controls are appended to the base renderer's
- * uniform block here so the Scene Contract stays backend independent.
+ * WebGPU overlay is only revealed after initialization and first-frame GPU
+ * validation succeed. Complex mobile WebGPU implementations are preflighted
+ * with an explicit compute layout instead of relying on auto-layout inference.
  */
 export class WebGpuHybridRenderer extends BaseWebGpuHybridRenderer {
   private firstFrameValidated = false;
@@ -41,11 +63,19 @@ export class WebGpuHybridRenderer extends BaseWebGpuHybridRenderer {
         `the current Kyxos RT pipeline requires ${ADVANCED_STORAGE_BUFFERS_PER_STAGE}. High raster fallback remains active.`,
       );
     }
+    const actualBindingBudget = Number(this.device?.limits?.maxBindingsPerBindGroup ?? 0);
+    if (actualBindingBudget > 0 && actualBindingBudget < ADVANCED_BINDINGS_PER_GROUP) {
+      this.hide();
+      throw new Error(
+        `Advanced WebGPU device exposes ${actualBindingBudget} bindings per bind group; ` +
+        `the current Kyxos RT pipeline requires ${ADVANCED_BINDINGS_PER_GROUP}. High raster fallback remains active.`,
+      );
+    }
 
     // BaseWebGpuHybridRenderer owns the common nine vec4 values. The unified
     // render-control surface adds three vec4s for light sampling, hybrid RT and
     // display/denoise controls. Replace the buffer before any scene bind groups
-    // are built so the auto-layout sees a correctly sized uniform resource.
+    // are built so the shader receives the complete uniform block.
     if (!this.extendedGlobalsReady && this.device) {
       try { this.globalsBuffer?.destroy?.(); } catch { /* device may already be lost */ }
       this.globalsBuffer = this.device.createBuffer({
@@ -55,7 +85,111 @@ export class WebGpuHybridRenderer extends BaseWebGpuHybridRenderer {
       });
       this.extendedGlobalsReady = true;
     }
+
+    // WebKit/mobile Metal drivers have proven less forgiving of a large
+    // auto-derived compute bind-group layout. Rebuild the compute pipeline with
+    // the exact contract used by rebuildBindGroups(), then force layout
+    // realization while an error scope is active. If this fails, initialization
+    // fails cleanly and the normal realtime canvas stays authoritative.
+    await this.installPortableComputePipeline();
+    await this.preflightPipelineLayouts();
     return capabilities;
+  }
+
+  private async installPortableComputePipeline(): Promise<void> {
+    if (!this.device) throw new Error('Advanced WebGPU device is unavailable.');
+    const device = this.device;
+    const module = device.createShaderModule({
+      label: 'Kyxos.Advanced.PathCompute.Portable',
+      code: advancedPathTracingComputeWGSL,
+    });
+
+    if (typeof module.getCompilationInfo === 'function') {
+      const info = await module.getCompilationInfo();
+      const text = compilationErrorText(info?.messages);
+      if (text) {
+        throw new Error(`Advanced WGSL compilation failed: ${text}`);
+      }
+    }
+
+    const readOnlyStorage = new Set([1, 2, 3, 4, 5, 6, 7, 9, 11, 13, 14]);
+    const entries = Array.from({ length: ADVANCED_BINDINGS_PER_GROUP }, (_, binding) => ({
+      binding,
+      visibility: SHADER_STAGE.COMPUTE,
+      buffer: binding === 0
+        ? { type: 'uniform' }
+        : { type: readOnlyStorage.has(binding) ? 'read-only-storage' : 'storage' },
+    }));
+
+    let validationError: unknown = null;
+    let thrown: unknown = null;
+    device.pushErrorScope?.('validation');
+    try {
+      const bindGroupLayout = device.createBindGroupLayout({
+        label: 'Kyxos.Advanced.PathBindGroupLayout',
+        entries,
+      });
+      const pipelineLayout = device.createPipelineLayout({
+        label: 'Kyxos.Advanced.PathPipelineLayout',
+        bindGroupLayouts: [bindGroupLayout],
+      });
+      const descriptor = {
+        label: 'Kyxos.Advanced.PathPipeline.Portable',
+        layout: pipelineLayout,
+        compute: { module, entryPoint: 'main' },
+      };
+      const pipeline = typeof device.createComputePipelineAsync === 'function'
+        ? await device.createComputePipelineAsync(descriptor)
+        : device.createComputePipeline(descriptor);
+      pipeline.getBindGroupLayout(0);
+      (this as unknown as { computePipeline: unknown }).computePipeline = pipeline;
+    } catch (error) {
+      thrown = error;
+    }
+    try {
+      validationError = await device.popErrorScope?.();
+    } catch (error) {
+      validationError = validationError ?? error;
+    }
+
+    if (thrown || validationError) {
+      const detail = [thrown, validationError]
+        .filter(Boolean)
+        .map((error) => error instanceof Error ? error.message : String((error as { message?: string })?.message ?? error))
+        .filter((value, index, values) => value && values.indexOf(value) === index)
+        .join(' · ');
+      throw new Error(`Advanced WebGPU compute pipeline validation failed: ${detail || 'unknown validation error'}`);
+    }
+  }
+
+  private async preflightPipelineLayouts(): Promise<void> {
+    if (!this.device) throw new Error('Advanced WebGPU device is unavailable.');
+    const device = this.device;
+    const runtime = this as unknown as {
+      computePipeline?: { getBindGroupLayout(index: number): unknown };
+      displayPipeline?: { getBindGroupLayout(index: number): unknown };
+    };
+    let thrown: unknown = null;
+    let gpuError: unknown = null;
+    device.pushErrorScope?.('validation');
+    try {
+      runtime.computePipeline?.getBindGroupLayout(0);
+      runtime.displayPipeline?.getBindGroupLayout(0);
+    } catch (error) {
+      thrown = error;
+    }
+    try {
+      gpuError = await device.popErrorScope?.();
+    } catch (error) {
+      gpuError = gpuError ?? error;
+    }
+    if (thrown || gpuError) {
+      const detail = [thrown, gpuError]
+        .filter(Boolean)
+        .map((error) => error instanceof Error ? error.message : String((error as { message?: string })?.message ?? error))
+        .join(' · ');
+      throw new Error(`Advanced WebGPU pipeline preflight failed: ${detail || 'invalid pipeline layout'}`);
+    }
   }
 
   setSettings(value: SceneAdvancedRenderSettings): void {
