@@ -10,6 +10,7 @@ async function diagnostic(page: any) {
     const status = document.querySelector('#advanced-render-status');
     return {
       backend: window.__kyxosTestApi.getMetrics?.().backend ?? null,
+      fps: window.__kyxosTestApi.getMetrics?.().fps ?? 0,
       state: canvas?.dataset.advancedRenderState ?? null,
       mode: canvas?.dataset.advancedRenderMode ?? null,
       architecture: canvas?.dataset.advancedRenderArchitecture ?? null,
@@ -17,6 +18,25 @@ async function diagnostic(page: any) {
       status: status?.textContent?.trim() ?? '',
       overlayVisible: overlay ? getComputedStyle(overlay).display !== 'none' && getComputedStyle(overlay).visibility !== 'hidden' : false,
     };
+  });
+}
+
+async function viewportChecksum(page: any) {
+  return page.evaluate(() => {
+    const source = document.querySelector<HTMLCanvasElement>('#viewport');
+    if (!source) return 0;
+    const sample = document.createElement('canvas');
+    sample.width = 32;
+    sample.height = 18;
+    const context = sample.getContext('2d', { willReadFrequently: true });
+    if (!context) return 0;
+    context.drawImage(source, 0, 0, sample.width, sample.height);
+    const data = context.getImageData(0, 0, sample.width, sample.height).data;
+    let checksum = 0;
+    for (let index = 0; index < data.length; index += 4) {
+      checksum = (checksum + data[index] * 3 + data[index + 1] * 5 + data[index + 2] * 7 + data[index + 3]) >>> 0;
+    }
+    return checksum;
   });
 }
 
@@ -39,14 +59,15 @@ test('Hybrid RT stays inside the realtime WebGPU viewport while the camera moves
   await page.waitForTimeout(15_000);
   const initial = await diagnostic(page);
   console.log(`HYBRID_WEBGPU_DIAGNOSTIC ${JSON.stringify({ ...initial, pageErrors, gpuErrors })}`);
-  expect(initial, `Hybrid RT did not enter the same-device realtime feature path: ${JSON.stringify({ ...initial, pageErrors, gpuErrors })}`).toMatchObject({
+  expect(initial, `Hybrid RT did not enter the interaction-safe realtime feature path: ${JSON.stringify({ ...initial, pageErrors, gpuErrors })}`).toMatchObject({
     backend: 'webgpu',
     state: 'rendering',
     mode: 'cinematic',
-    architecture: 'realtime-hybrid-feature-pass',
+    architecture: 'realtime-hybrid-feature-pass-v2',
     overlayVisible: false,
   });
 
+  const beforeChecksum = await viewportChecksum(page);
   const viewport = page.locator('#viewport');
   const box = await viewport.boundingBox();
   expect(box).not.toBeNull();
@@ -58,20 +79,24 @@ test('Hybrid RT stays inside the realtime WebGPU viewport while the camera moves
     for (let step = 1; step <= 10; step += 1) {
       await page.mouse.move(x + step * 9, y + Math.sin(step * 0.8) * 10, { steps: 2 });
     }
+    await page.waitForTimeout(250);
     const moving = await diagnostic(page);
+    const movingChecksum = await viewportChecksum(page);
     expect(moving, `Hybrid RT left the realtime feature path during camera motion: ${JSON.stringify(moving)}`).toMatchObject({
       state: 'rendering',
       mode: 'cinematic',
-      architecture: 'realtime-hybrid-feature-pass',
+      architecture: 'realtime-hybrid-feature-pass-v2',
       overlayVisible: false,
     });
+    expect(moving.fps).toBeGreaterThan(0);
+    expect(movingChecksum, 'Realtime viewport did not visibly update while Hybrid RT was suspended for camera interaction.').not.toBe(beforeChecksum);
     await page.mouse.up();
   }
 
-  await page.waitForTimeout(500);
+  await page.waitForTimeout(750);
   const settled = await diagnostic(page);
   expect(settled.state).toBe('rendering');
-  expect(settled.architecture).toBe('realtime-hybrid-feature-pass');
+  expect(settled.architecture).toBe('realtime-hybrid-feature-pass-v2');
   expect(settled.overlayVisible).toBe(false);
   expect(pageErrors).toEqual([]);
   expect(gpuErrors).toEqual([]);
