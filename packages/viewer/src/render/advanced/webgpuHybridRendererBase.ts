@@ -3,7 +3,7 @@ import { normalizeAdvancedRenderSettings } from '@kyxos/scene-contract/advanced-
 import type { AdvancedRendererCapabilities } from './backendCapabilities';
 import { ADVANCED_STORAGE_BUFFERS_PER_STAGE, resolveAdvancedRendererCapabilities } from './backendCapabilities';
 import type { ExtractedAdvancedScene } from './sceneExtraction';
-import { advancedPathTracingComputeWGSL, advancedPathTracingDisplayWGSL } from './webgpuShaders';
+import { advancedPathTracingComputeWGSL, advancedPathTracingDisplayWGSL } from './webgpuShadersPortable';
 
 const BUFFER_USAGE = (globalThis as any).GPUBufferUsage ?? { COPY_SRC: 4, COPY_DST: 8, UNIFORM: 64, STORAGE: 128 };
 const TEXTURE_USAGE = (globalThis as any).GPUTextureUsage ?? { RENDER_ATTACHMENT: 16 };
@@ -217,7 +217,6 @@ export class WebGpuHybridRenderer {
     for (const key of ['accumulation', 'reservoirA', 'reservoirB', 'surfaceA', 'surfaceB'] as const) destroyBuffer(this.pixelBuffers[key]);
     this.pixelBuffers = null;
   }
-
   private ensurePixelBuffers(width: number, height: number): void {
     if (!this.device || (this.pixelBuffers?.width === width && this.pixelBuffers.height === height)) return;
     this.destroyPixelBuffers();
