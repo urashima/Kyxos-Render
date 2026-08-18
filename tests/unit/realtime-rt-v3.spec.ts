@@ -63,10 +63,18 @@ describe('Realtime RT V3', () => {
   });
 
   it('submits RT after raster so GBuffer and camera are from the same frame', () => {
-    const rasterCall = extensionSource.indexOf('const result = originalRender(...args);');
+    const rasterCall = extensionSource.indexOf('result = originalRender(...args);');
     const rtCall = extensionSource.indexOf('this.renderFeatureFrame();', rasterCall);
     expect(rasterCall).toBeGreaterThan(-1);
     expect(rtCall).toBeGreaterThan(rasterCall);
+  });
+
+  it('initializes storage outputs once per resize instead of resetting phases until raw textures appear', () => {
+    expect(passSource).toContain('private outputInitPending = false');
+    expect(passSource).toContain('this.beginOutputInitialization(nextWidth, nextHeight);');
+    expect(passSource).toContain("return 'output-initializing';");
+    expect(passSource).toContain('Promise.all(tasks)');
+    expect(passSource).not.toContain('this.rawTexture(this.visibilityTexture) &&\n      this.rawTexture(this.reflectionTexture)');
   });
 
   it('keeps explicit shared-device layouts instead of requesting external pipeline handles', () => {
