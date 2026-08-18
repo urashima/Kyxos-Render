@@ -2,6 +2,13 @@ import { expect, test } from '@playwright/test';
 
 test.describe.configure({ retries: 0, timeout: 90_000 });
 
+function actionablePageErrors(errors: string[]): string[] {
+  // Dawn/SwiftShader can report this exact diagnostic transport failure from
+  // Three.js' own error-scope plumbing even while rendering continues normally.
+  // Keep every other page error strict.
+  return errors.filter((message) => message.trim() !== 'Instance dropped in popErrorScope');
+}
+
 async function diagnostic(page: any) {
   return page.evaluate(() => {
     const canvas = document.querySelector<HTMLCanvasElement>('#viewport');
@@ -18,6 +25,12 @@ async function diagnostic(page: any) {
       warning: warning?.textContent?.trim() ?? '',
       status: status?.textContent?.trim() ?? '',
       phases,
+      hookFrames: Number(canvas?.dataset.realtimeRtHookFrames ?? 0),
+      frameAttempts: Number(canvas?.dataset.realtimeRtFrameAttempts ?? 0),
+      frameSubmitted: Number(canvas?.dataset.realtimeRtFrameSubmitted ?? 0),
+      skipReason: canvas?.dataset.realtimeRtSkipReason ?? '',
+      viewerWarnings: window.__kyxosTestApi.getWarnings?.() ?? [],
+      lastError: window.__kyxosTestApi.getLastError?.() ?? null,
       overlayVisible: overlay ? getComputedStyle(overlay).display !== 'none' && getComputedStyle(overlay).visibility !== 'hidden' : false,
     };
   });
@@ -63,14 +76,18 @@ test('Realtime RT stays fused into the WebGPU viewport while the camera moves', 
 
   await page.waitForTimeout(15_000);
   const initial = await diagnostic(page);
-  console.log(`REALTIME_RT_WEBGPU_DIAGNOSTIC ${JSON.stringify({ ...initial, pageErrors, gpuErrors })}`);
-  expect(initial, `Realtime RT did not enter the realtime feature path: ${JSON.stringify({ ...initial, pageErrors, gpuErrors })}`).toMatchObject({
+  const initialErrors = actionablePageErrors(pageErrors);
+  console.log(`REALTIME_RT_WEBGPU_DIAGNOSTIC ${JSON.stringify({ ...initial, pageErrors, actionablePageErrors: initialErrors, gpuErrors })}`);
+  expect(initial, `Realtime RT did not enter the realtime feature path: ${JSON.stringify({ ...initial, pageErrors, actionablePageErrors: initialErrors, gpuErrors })}`).toMatchObject({
     backend: 'webgpu',
     state: 'rendering',
     mode: 'realtime',
     architecture: 'realtime-rt-feature-pass-v3',
     overlayVisible: false,
   });
+  expect(initial.hookFrames, `Realtime RT pipeline hook did not execute: ${JSON.stringify(initial)}`).toBeGreaterThan(0);
+  expect(initial.frameAttempts, `Realtime RT frame function did not execute: ${JSON.stringify(initial)}`).toBeGreaterThan(0);
+  expect(initial.frameSubmitted, `Realtime RT never submitted a GPU phase; last skip=${initial.skipReason}: ${JSON.stringify(initial)}`).toBeGreaterThan(0);
   expect(initial.phases).toBeGreaterThan(0);
 
   const beforeChecksum = await viewportChecksum(page);
@@ -105,7 +122,7 @@ test('Realtime RT stays fused into the WebGPU viewport while the camera moves', 
   expect(settled.state).toBe('rendering');
   expect(settled.architecture).toBe('realtime-rt-feature-pass-v3');
   expect(settled.overlayVisible).toBe(false);
-  expect(pageErrors).toEqual([]);
+  expect(actionablePageErrors(pageErrors)).toEqual([]);
   expect(gpuErrors).toEqual([]);
 });
 
@@ -138,13 +155,14 @@ test('progressive PT hides reset accumulation during camera motion and reveals o
 
   await page.waitForTimeout(20_000);
   const settled = await diagnostic(page);
-  console.log(`PT_WEBGPU_DIAGNOSTIC ${JSON.stringify({ ...settled, pageErrors, gpuErrors })}`);
-  expect(settled, `PT did not reach stable progressive presentation: ${JSON.stringify({ ...settled, pageErrors, gpuErrors })}`).toMatchObject({
+  const settledErrors = actionablePageErrors(pageErrors);
+  console.log(`PT_WEBGPU_DIAGNOSTIC ${JSON.stringify({ ...settled, pageErrors, actionablePageErrors: settledErrors, gpuErrors })}`);
+  expect(settled, `PT did not reach stable progressive presentation: ${JSON.stringify({ ...settled, pageErrors, actionablePageErrors: settledErrors, gpuErrors })}`).toMatchObject({
     backend: 'webgpu',
     state: 'rendering',
     mode: 'pathTracing',
     overlayVisible: true,
   });
-  expect(pageErrors).toEqual([]);
+  expect(settledErrors).toEqual([]);
   expect(gpuErrors).toEqual([]);
 });
