@@ -87,9 +87,6 @@ export class WebGpuPackedRenderer extends BaseWebGpuHybridRenderer {
     super(baseCanvas, options);
     this.overlay.style.visibility = 'hidden';
 
-    // Base helpers are TypeScript-private, not ECMAScript #private. Installing
-    // these packed implementations keeps setScene(), resize and dispose on the
-    // same public renderer API while replacing only the GPU resource layout.
     const runtime = this as any;
     runtime.uploadScene = (scene: ExtractedAdvancedScene) => this.uploadPackedScene(scene);
     runtime.destroySceneBuffers = () => this.destroyPackedSceneBuffers();
@@ -370,7 +367,7 @@ export class WebGpuPackedRenderer extends BaseWebGpuHybridRenderer {
     return buffer;
   }
 
-  private createEmptyStorage(size: number, label: string): any {
+  private createPackedEmptyStorage(size: number, label: string): any {
     if (!this.device) throw new Error('Advanced WebGPU device is unavailable.');
     return this.device.createBuffer({
       label,
@@ -413,7 +410,7 @@ export class WebGpuPackedRenderer extends BaseWebGpuHybridRenderer {
     const cacheBytes = cacheCapacity * 20;
     const staticScene = this.createPackedStorage(staticPool.data, 'Kyxos.Advanced.StaticScenePool');
     const dynamicScene = this.createPackedStorage(dynamicPool.data, 'Kyxos.Advanced.DynamicAccelPool');
-    const cache = this.createEmptyStorage(cacheBytes, 'Kyxos.Advanced.RadianceCache');
+    const cache = this.createPackedEmptyStorage(cacheBytes, 'Kyxos.Advanced.RadianceCache');
 
     const runtime = this as any;
     runtime.sceneBuffers = {
