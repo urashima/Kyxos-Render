@@ -29,6 +29,7 @@ import { installScreenSpaceSSSExtension } from './materials/screenSpaceSSS';
 import { installScreenSpaceSSSDebugExtension } from './materials/screenSpaceSSSDebug';
 import { installViewerMetricsBroadcast } from './metricsBroadcast';
 import { installNonBlockingVisibilityRecovery } from './nonBlockingVisibilityRecovery';
+import { installRealtimeHybridRtExtension } from './realtimeHybridRtExtension';
 import { installRenderSettingsParity } from './renderSettingsParity';
 import { installSSSStudyModelExtension } from './scene/sssStudyModel';
 import { installSsrEnvironmentGuard } from './ssrEnvironmentGuard';
@@ -58,6 +59,10 @@ installRenderSettingsParity(KyxosViewer);
 // render-settings wrappers so geometry/material/light edits invalidate the new
 // software-ray histories without changing Studio -> Viewer package boundaries.
 installAdvancedRenderingApi(KyxosViewer);
+// Cinematic/RT mode is a realtime feature layer, not a second full-frame renderer.
+// Install this after the Advanced API so Path Tracing can keep the progressive
+// reference renderer while Hybrid RT intercepts only cinematic mode.
+installRealtimeHybridRtExtension(KyxosViewer);
 installViewerMetricsBroadcast(KyxosViewer);
 
 export { KyxosViewer };
