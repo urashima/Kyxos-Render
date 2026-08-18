@@ -29,7 +29,7 @@ import { installScreenSpaceSSSExtension } from './materials/screenSpaceSSS';
 import { installScreenSpaceSSSDebugExtension } from './materials/screenSpaceSSSDebug';
 import { installViewerMetricsBroadcast } from './metricsBroadcast';
 import { installNonBlockingVisibilityRecovery } from './nonBlockingVisibilityRecovery';
-import { installRealtimeHybridRtExtensionV2 } from './realtimeHybridRtExtensionV2';
+import { installRealtimeHybridRtExtensionV3 } from './realtimeHybridRtExtensionV3';
 import { installRenderSettingsParity } from './renderSettingsParity';
 import { installSSSStudyModelExtension } from './scene/sssStudyModel';
 import { installSharedWebGpuDeviceBridge } from './render/advanced/sharedWebGpuDeviceBridge';
@@ -61,10 +61,11 @@ installRenderSettingsParity(KyxosViewer);
 // render-settings wrappers so geometry/material/light edits invalidate the new
 // software-ray histories without changing Studio -> Viewer package boundaries.
 installAdvancedRenderingApi(KyxosViewer);
-// Cinematic/RT mode is a realtime feature layer, not a second full-frame renderer.
-// V2 guarantees camera interaction always keeps the raster pipeline authoritative;
-// RT work only consumes spare GPU budget after the camera settles.
-installRealtimeHybridRtExtensionV2(KyxosViewer);
+// V3 makes ray tracing an optional realtime feature layer. Camera interaction
+// never suspends RT: each raster frame is followed by a bounded interleaved ray
+// update and the next frame reprojects/denoises/fuses it. Path Tracing remains
+// the only independent progressive full-frame reference renderer.
+installRealtimeHybridRtExtensionV3(KyxosViewer);
 installViewerMetricsBroadcast(KyxosViewer);
 
 export { KyxosViewer };
