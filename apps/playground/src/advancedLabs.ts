@@ -23,7 +23,7 @@ type AdvancedUpdate = {
 };
 
 function requestedMode(): AdvancedRenderingMode {
-  return isPathLab ? 'pathTracing' : isRtLab ? 'cinematic' : 'realtime';
+  return isPathLab ? 'pathTracing' : 'realtime';
 }
 
 function routeDefaults(instance: KyxosViewer): void {
@@ -32,15 +32,26 @@ function routeDefaults(instance: KyxosViewer): void {
   instance.setAdvancedRenderSettings(normalizeAdvancedRenderSettings({
     ...current,
     renderingMode: requestedMode(),
+    rayTracing: {
+      ...current.rayTracing,
+      enabled: isRtLab,
+      shadows: true,
+      ambientOcclusion: isRtLab,
+      reflections: true,
+      refractions: isRtLab,
+      realtimeDenoise: true,
+      realtimeFusion: true,
+      fusionStrength: 1,
+    },
     restirDI: {
       ...current.restirDI,
       mode: 'temporalSpatial',
-      candidates: isPathLab ? 16 : 8,
-      spatialSamples: 8,
+      candidates: isPathLab ? 16 : 4,
+      spatialSamples: isPathLab ? 8 : 4,
     },
     radianceCache: {
       ...current.radianceCache,
-      enabled: true,
+      enabled: isPathLab,
       cellSize: 0.5,
       capacity: 65536,
       updateRatio: 0.04,
@@ -75,9 +86,9 @@ function configure(instance: KyxosViewer): void {
   updatePanel(instance.getAdvancedRenderStatus());
 }
 
-// Install on every Playground route so the right-hand Render Controls expose the
-// same advanced feature surface everywhere. RT Lab and Path Tracing only provide
-// different default modes; they no longer own a separate one-off settings UI.
+// Every Playground route shares one Render Controls surface. RT Lab now proves
+// the realtime-first architecture explicitly: mode stays Realtime while the RT
+// feature master is enabled. Path Tracing is the only separate full-frame mode.
 const originalCreate = KyxosViewer.create.bind(KyxosViewer);
 (KyxosViewer as unknown as { create: typeof KyxosViewer.create }).create = async (options) => {
   const instance = await originalCreate(options);
@@ -132,7 +143,7 @@ function syncControls(): void {
   if (!labViewer) return;
   const settings = labViewer.getAdvancedRenderSettings();
   setValue('advanced-render-mode', settings.renderingMode);
-  setChecked('advanced-hybrid-enabled', settings.renderingMode !== 'realtime');
+  setChecked('advanced-rt-enabled', settings.rayTracing.enabled);
   setChecked('advanced-path-enabled', settings.renderingMode === 'pathTracing');
   setChecked('advanced-env-importance', settings.lightSampling.environmentImportance);
   setChecked('advanced-emissive-sampling', settings.lightSampling.emissiveTriangles);
@@ -143,6 +154,14 @@ function syncControls(): void {
   setValue('advanced-ao-strength', settings.rayTracing.aoStrength);
   setChecked('advanced-ray-reflections', settings.rayTracing.reflections);
   setValue('advanced-reflection-roughness', settings.rayTracing.reflectionMaxRoughness);
+  setChecked('advanced-ray-refractions', settings.rayTracing.refractions);
+  setValue('advanced-refraction-roughness', settings.rayTracing.refractionMaxRoughness);
+  setValue('advanced-refraction-strength', settings.rayTracing.refractionStrength);
+  setChecked('advanced-rt-denoise-enabled', settings.rayTracing.realtimeDenoise);
+  setValue('advanced-rt-denoise-radius', settings.rayTracing.denoiseRadius);
+  setValue('advanced-rt-denoise-strength', settings.rayTracing.denoiseStrength);
+  setChecked('advanced-rt-fusion-enabled', settings.rayTracing.realtimeFusion);
+  setValue('advanced-rt-fusion-strength', settings.rayTracing.fusionStrength);
   setValue('advanced-restir-mode', settings.restirDI.mode);
   setValue('advanced-restir-candidates', settings.restirDI.candidates);
   setValue('advanced-restir-spatial', settings.restirDI.spatialSamples);
@@ -207,27 +226,35 @@ function mountPanel(): void {
   panel.className = 'panel';
   panel.id = 'advanced-render-panel';
   panel.innerHTML = `
-    <div class="panel-title"><span>WebGPU RT / Path Tracing</span><span id="advanced-render-state">idle · realtime</span></div>
+    <div class="panel-title"><span>Realtime WebGPU RT / Path Tracing</span><span id="advanced-render-state">idle · realtime</span></div>
     <div class="panel-body">
       <div class="control-row"><label for="advanced-render-mode">Mode</label><select class="select" id="advanced-render-mode">
         <option value="realtime">Realtime</option>
-        <option value="cinematic">Hybrid RT</option>
+        <option value="cinematic">RT Preset</option>
         <option value="pathTracing">Path Tracing</option>
       </select></div>
-      ${switchRow('advanced-hybrid-enabled', 'Hybrid RT')}
+      ${switchRow('advanced-rt-enabled', 'RT Enabled')}
 
       ${groupTitle('Light Sampling')}
       ${switchRow('advanced-env-importance', 'HDRI importance')}
       ${switchRow('advanced-emissive-sampling', 'Emissive triangles')}
 
-      ${groupTitle('Hybrid Ray Tracing')}
-      ${switchRow('advanced-ray-shadows', 'Ray shadows')}
+      ${groupTitle('Realtime Ray Tracing')}
+      ${switchRow('advanced-ray-shadows', 'RT shadows')}
       ${rangeRow('advanced-shadow-bias', 'Shadow bias', 0.0001, 0.02, 0.0001)}
-      ${switchRow('advanced-ray-ao', 'Ray AO')}
+      ${switchRow('advanced-ray-ao', 'RT AO')}
       ${rangeRow('advanced-ao-radius', 'AO radius', 0.05, 5, 0.05)}
       ${rangeRow('advanced-ao-strength', 'AO strength', 0, 1, 0.05)}
-      ${switchRow('advanced-ray-reflections', 'Ray reflections')}
+      ${switchRow('advanced-ray-reflections', 'RT reflections')}
       ${rangeRow('advanced-reflection-roughness', 'Reflection roughness', 0.05, 1, 0.05)}
+      ${switchRow('advanced-ray-refractions', 'RT refractions')}
+      ${rangeRow('advanced-refraction-roughness', 'Refraction roughness', 0.02, 1, 0.02)}
+      ${rangeRow('advanced-refraction-strength', 'Refraction strength', 0, 2, 0.05)}
+      ${switchRow('advanced-rt-denoise-enabled', 'Realtime denoise')}
+      ${rangeRow('advanced-rt-denoise-radius', 'Denoise radius', 0.5, 3, 0.1)}
+      ${rangeRow('advanced-rt-denoise-strength', 'Denoise strength', 0, 1, 0.05)}
+      ${switchRow('advanced-rt-fusion-enabled', 'Realtime fusion')}
+      ${rangeRow('advanced-rt-fusion-strength', 'Fusion strength', 0, 1.5, 0.05)}
 
       ${groupTitle('ReSTIR DI')}
       <div class="control-row"><label for="advanced-restir-mode">Mode</label><select class="select" id="advanced-restir-mode">
@@ -248,19 +275,19 @@ function mountPanel(): void {
       ${rangeRow('advanced-path-spp', 'Samples / frame', 1, 4, 1)}
       ${rangeRow('advanced-path-resolution', 'Resolution', 0.25, 1, 0.05)}
       ${rangeRow('advanced-firefly', 'Firefly clamp', 1, 100, 1)}
-      ${switchRow('advanced-denoise-enabled', 'Denoise')}
-      ${rangeRow('advanced-denoise-radius', 'Denoise radius', 0, 2, 1)}
-      ${rangeRow('advanced-denoise-strength', 'Denoise strength', 0, 1, 0.05)}
+      ${switchRow('advanced-denoise-enabled', 'PT denoise')}
+      ${rangeRow('advanced-denoise-radius', 'PT denoise radius', 0, 2, 1)}
+      ${rangeRow('advanced-denoise-strength', 'PT denoise strength', 0, 1, 0.05)}
 
       ${groupTitle('Runtime / Capabilities')}
-      <div class="control-row"><label>Samples</label><strong id="advanced-render-samples">0</strong></div>
+      <div class="control-row"><label>RT phases / PT samples</label><strong id="advanced-render-samples">0</strong></div>
       <div class="control-row"><label>Scene</label><span id="advanced-render-scene">—</span></div>
       <div class="control-row"><label>Advanced memory</label><span id="advanced-render-memory">0 MB</span></div>
       <div class="control-row"><label>CPU submit</label><span id="advanced-render-frame">0 ms</span></div>
       <div class="control-row"><label>Active features</label><span id="advanced-render-active-features">—</span></div>
       <div class="control-row"><label>Unavailable</label><span id="advanced-render-unavailable">—</span></div>
-      <div class="control-row"><button class="btn" id="advanced-render-reset">Reset accumulation</button></div>
-      <div class="warning-list" id="advanced-render-warning">Raster preview stays visible until the negotiated advanced renderer produces frames.</div>
+      <div class="control-row"><button class="btn" id="advanced-render-reset">Reset temporal history</button></div>
+      <div class="warning-list" id="advanced-render-warning">Realtime raster stays authoritative; optional RT work may skip a phase instead of blocking the viewport.</div>
     </div>`;
 
   const effectLabel = Array.from(inspector.querySelectorAll<HTMLElement>('.section-label'))
@@ -290,8 +317,7 @@ function bindRange(panel: HTMLElement, id: string, onChange: (value: number) => 
 function bindControls(panel: HTMLElement): void {
   panel.querySelector<HTMLSelectElement>('#advanced-render-mode')?.addEventListener('change', (event) =>
     applyUpdate({ renderingMode: (event.currentTarget as HTMLSelectElement).value as AdvancedRenderingMode }));
-  bindToggle(panel, 'advanced-hybrid-enabled', (enabled) =>
-    applyUpdate({ renderingMode: enabled ? 'cinematic' : 'realtime' }));
+  bindToggle(panel, 'advanced-rt-enabled', (enabled) => applyUpdate({ rayTracing: { enabled } }));
   bindToggle(panel, 'advanced-env-importance', (environmentImportance) => applyUpdate({ lightSampling: { environmentImportance } }));
   bindToggle(panel, 'advanced-emissive-sampling', (emissiveTriangles) => applyUpdate({ lightSampling: { emissiveTriangles } }));
   bindToggle(panel, 'advanced-ray-shadows', (shadows) => applyUpdate({ rayTracing: { shadows } }));
@@ -301,6 +327,14 @@ function bindControls(panel: HTMLElement): void {
   bindRange(panel, 'advanced-ao-strength', (aoStrength) => applyUpdate({ rayTracing: { aoStrength } }));
   bindToggle(panel, 'advanced-ray-reflections', (reflections) => applyUpdate({ rayTracing: { reflections } }));
   bindRange(panel, 'advanced-reflection-roughness', (reflectionMaxRoughness) => applyUpdate({ rayTracing: { reflectionMaxRoughness } }));
+  bindToggle(panel, 'advanced-ray-refractions', (refractions) => applyUpdate({ rayTracing: { refractions } }));
+  bindRange(panel, 'advanced-refraction-roughness', (refractionMaxRoughness) => applyUpdate({ rayTracing: { refractionMaxRoughness } }));
+  bindRange(panel, 'advanced-refraction-strength', (refractionStrength) => applyUpdate({ rayTracing: { refractionStrength } }));
+  bindToggle(panel, 'advanced-rt-denoise-enabled', (realtimeDenoise) => applyUpdate({ rayTracing: { realtimeDenoise } }));
+  bindRange(panel, 'advanced-rt-denoise-radius', (denoiseRadius) => applyUpdate({ rayTracing: { denoiseRadius } }));
+  bindRange(panel, 'advanced-rt-denoise-strength', (denoiseStrength) => applyUpdate({ rayTracing: { denoiseStrength } }));
+  bindToggle(panel, 'advanced-rt-fusion-enabled', (realtimeFusion) => applyUpdate({ rayTracing: { realtimeFusion } }));
+  bindRange(panel, 'advanced-rt-fusion-strength', (fusionStrength) => applyUpdate({ rayTracing: { fusionStrength } }));
   panel.querySelector<HTMLSelectElement>('#advanced-restir-mode')?.addEventListener('change', (event) =>
     applyUpdate({ restirDI: { mode: (event.currentTarget as HTMLSelectElement).value as RestirDIMode } }));
   bindRange(panel, 'advanced-restir-candidates', (candidates) => applyUpdate({ restirDI: { candidates } }));
@@ -309,7 +343,7 @@ function bindControls(panel: HTMLElement): void {
   bindRange(panel, 'advanced-cache-cell', (cellSize) => applyUpdate({ radianceCache: { cellSize } }));
   bindRange(panel, 'advanced-cache-capacity', (capacity) => applyUpdate({ radianceCache: { capacity } }));
   bindRange(panel, 'advanced-cache-update', (updateRatio) => applyUpdate({ radianceCache: { updateRatio } }));
-  bindToggle(panel, 'advanced-path-enabled', (enabled) => applyUpdate({ renderingMode: enabled ? 'pathTracing' : 'cinematic' }));
+  bindToggle(panel, 'advanced-path-enabled', (enabled) => applyUpdate({ renderingMode: enabled ? 'pathTracing' : 'realtime' }));
   bindRange(panel, 'advanced-path-bounces', (maxBounces) => applyUpdate({ pathTracing: { maxBounces } }));
   bindRange(panel, 'advanced-path-spp', (samplesPerFrame) => applyUpdate({ pathTracing: { samplesPerFrame } }));
   bindRange(panel, 'advanced-path-resolution', (resolutionScale) => applyUpdate({ pathTracing: { resolutionScale } }));
