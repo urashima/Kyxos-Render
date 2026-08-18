@@ -1,7 +1,34 @@
 import {
   advancedPathTracingComputeWGSL as baseComputeWGSL,
-  advancedPathTracingDisplayWGSL,
+  advancedPathTracingDisplayWGSL as baseDisplayWGSL,
 } from './webgpuShadersBase';
+
+const oldGlobalsBlock = `struct Globals {
+  camPosTan: vec4<f32>,
+  camForwardAspect: vec4<f32>,
+  camRightFrame: vec4<f32>,
+  camUpFlags: vec4<f32>,
+  resolutionCounts: vec4<f32>,
+  sceneCounts: vec4<f32>,
+  modes: vec4<f32>,
+  output: vec4<f32>,
+  cacheInfo: vec4<f32>,
+};`;
+
+const newGlobalsBlock = `struct Globals {
+  camPosTan: vec4<f32>,
+  camForwardAspect: vec4<f32>,
+  camRightFrame: vec4<f32>,
+  camUpFlags: vec4<f32>,
+  resolutionCounts: vec4<f32>,
+  sceneCounts: vec4<f32>,
+  modes: vec4<f32>,
+  output: vec4<f32>,
+  cacheInfo: vec4<f32>,
+  features: vec4<f32>,
+  rayInfo: vec4<f32>,
+  displayInfo: vec4<f32>,
+};`;
 
 const oldBindingBlock = `@group(0) @binding(0) var<uniform> globals: Globals;
 @group(0) @binding(1) var<storage, read> triangles: array<Triangle>;
@@ -206,9 +233,84 @@ fn traceClosest(origin: vec3<f32>, direction: vec3<f32>, maxDistance: f32) -> Hi
   return result;
 }`;
 
-const migrated = baseComputeWGSL
+const oldVisible = `fn visible(origin: vec3<f32>, normal: vec3<f32>, candidate: Candidate) -> bool {
+  let maximum = candidate.directionDistance.w;
+  let rayMaximum = select(1e20, max(0.0002, maximum - 0.002), maximum < 1e19);
+  let hit = traceClosest(origin + normal * 0.0015, candidate.directionDistance.xyz, rayMaximum);
+  return hit.positionT.w < 0.0;
+}`;
+
+const newVisible = `fn visible(origin: vec3<f32>, normal: vec3<f32>, candidate: Candidate) -> bool {
+  if (globals.features.z < 0.5) { return true; }
+  let maximum = candidate.directionDistance.w;
+  let bias = clamp(globals.rayInfo.y, 0.0001, 0.02);
+  let rayMaximum = select(1e20, max(0.0002, maximum - bias * 1.5), maximum < 1e19);
+  let hit = traceClosest(origin + normal * bias, candidate.directionDistance.xyz, rayMaximum);
+  return hit.positionT.w < 0.0;
+}`;
+
+const oldSampleEnvironment = `fn sampleEnvironment(classProbability: f32) -> Candidate {
+  let width = max(1u, u32(globals.sceneCounts.z));
+  let height = max(1u, u32(globals.sceneCounts.w));
+  let count = width * height;
+  let bucket = min(count - 1u, u32(random() * f32(count)));
+  let entry = environmentAlias[bucket];
+  let selected = select(bucket, u32(entry.y + 0.5), random() > entry.x);
+  let x = selected % width;
+  let y = selected / width;
+  let uv = vec2<f32>((f32(x) + random()) / f32(width), (f32(y) + random()) / f32(height));
+  let direction = environmentUvToDirection(uv);
+  let pdf = classProbability * entry.z / max(entry.w, 1e-8);
+  var candidate: Candidate;
+  candidate.directionDistance = vec4<f32>(direction, 1e20);
+  candidate.radiancePdf = vec4<f32>(environmentRadiance(direction), max(pdf, 1e-8));
+  candidate.key = vec4<f32>(4.0, f32(selected), uv.x, uv.y);
+  return candidate;
+}`;
+
+const newSampleEnvironment = `fn sampleEnvironment(classProbability: f32) -> Candidate {
+  let width = max(1u, u32(globals.sceneCounts.z));
+  let height = max(1u, u32(globals.sceneCounts.w));
+  let count = width * height;
+  if (globals.features.x < 0.5) {
+    let z = random() * 2.0 - 1.0;
+    let phi = random() * 2.0 * 3.14159265359;
+    let radial = sqrt(max(0.0, 1.0 - z * z));
+    let direction = safeDirection(vec3<f32>(radial * cos(phi), z, radial * sin(phi)));
+    let uv = directionToEnvironmentUv(direction);
+    let x = min(width - 1u, u32(uv.x * f32(width)));
+    let y = min(height - 1u, u32(uv.y * f32(height)));
+    let selected = y * width + x;
+    var candidate: Candidate;
+    candidate.directionDistance = vec4<f32>(direction, 1e20);
+    candidate.radiancePdf = vec4<f32>(
+      environmentRadiance(direction),
+      max(classProbability / (4.0 * 3.14159265359), 1e-8)
+    );
+    candidate.key = vec4<f32>(4.0, f32(selected), uv.x, uv.y);
+    return candidate;
+  }
+  let bucket = min(count - 1u, u32(random() * f32(count)));
+  let entry = environmentAlias[bucket];
+  let selected = select(bucket, u32(entry.y + 0.5), random() > entry.x);
+  let x = selected % width;
+  let y = selected / width;
+  let uv = vec2<f32>((f32(x) + random()) / f32(width), (f32(y) + random()) / f32(height));
+  let direction = environmentUvToDirection(uv);
+  let pdf = classProbability * entry.z / max(entry.w, 1e-8);
+  var candidate: Candidate;
+  candidate.directionDistance = vec4<f32>(direction, 1e20);
+  candidate.radiancePdf = vec4<f32>(environmentRadiance(direction), max(pdf, 1e-8));
+  candidate.key = vec4<f32>(4.0, f32(selected), uv.x, uv.y);
+  return candidate;
+}`;
+
+const migratedCompute = baseComputeWGSL
+  .replace(oldGlobalsBlock, newGlobalsBlock)
   .replace(oldBindingBlock, newBindingBlock)
   .replace(oldTraceClosest, newTraceClosest)
+  .replace(oldVisible, newVisible)
+  .replace(oldSampleEnvironment, newSampleEnvironment)
   .replace(
     'let attenuation = 1.0 / max(1.0, pow(distance, max(0.0, decay)));',
     'var attenuation = 1.0 / max(1.0, pow(distance, max(0.0, decay)));',
@@ -220,11 +322,80 @@ const migrated = baseComputeWGSL
   .replace(
     "let index = min(u32(max(0.0, hit.normalMaterial.w)), max(0u, u32(globals.modes.w) - 1u));",
     "let index = min(u32(max(0.0, hit.normalMaterial.w)), max(1u, u32(globals.cacheInfo.w)) - 1u);",
+  )
+  .replace(
+    '  if (kind == 2u) {',
+    `  if (kind == 2u && globals.features.y < 0.5) {
+    candidate.directionDistance = vec4<f32>(0.0, 1.0, 0.0, 1e20);
+    candidate.radiancePdf = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    return candidate;
+  }
+  if (kind == 2u) {`,
+  )
+  .replace(
+    '    candidate.radiancePdf = vec4<f32>(environmentRadiance(direction), max(classProbability * entry.z / max(entry.w, 1e-8), 1e-8));',
+    `    let environmentPdf = select(
+      1.0 / (4.0 * 3.14159265359),
+      entry.z / max(entry.w, 1e-8),
+      globals.features.x > 0.5
+    );
+    candidate.radiancePdf = vec4<f32>(environmentRadiance(direction), max(classProbability * environmentPdf, 1e-8));`,
+  )
+  .replace(
+    '  let specularChance = clamp(max(fresnel, metallic) + clearcoat * 0.15, 0.05, 0.95);',
+    `  let reflectionEnabled = globals.rayInfo.x > 0.5 && roughness <= clamp(globals.displayInfo.x, 0.02, 1.0);
+  if (!reflectionEnabled) {
+    return vec4<f32>(cosineHemisphere(normal), 1.0);
+  }
+  let specularChance = clamp(max(fresnel, metallic) + clearcoat * 0.15, 0.05, 0.95);`,
+  )
+  .replace(
+    '    radiance += throughput * direct;',
+    `    if (depth == 0 && globals.features.w > 0.5) {
+      let randomDirection = safeDirection(vec3<f32>(random() * 2.0 - 1.0, random() * 2.0 - 1.0, random() * 2.0 - 1.0));
+      let aoDirection = select(randomDirection, -randomDirection, dot(randomDirection, hit.normalMaterial.xyz) < 0.0);
+      let aoRadius = max(0.01, globals.rayInfo.z);
+      let aoBias = clamp(globals.rayInfo.y, 0.0001, 0.02);
+      let aoHit = traceClosest(hit.positionT.xyz + hit.normalMaterial.xyz * aoBias, aoDirection, aoRadius);
+      let aoVisibility = select(1.0, 0.0, aoHit.positionT.w > 0.0);
+      direct *= mix(1.0, aoVisibility, clamp(globals.rayInfo.w, 0.0, 1.0));
+    }
+    radiance += throughput * direct;`,
   );
 
-if (migrated === baseComputeWGSL || !migrated.includes('@binding(15)') || !migrated.includes('fn traceBlas(')) {
-  throw new Error('Kyxos advanced WGSL migration did not match the pinned base shader.');
+const migratedDisplay = baseDisplayWGSL
+  .replace(oldGlobalsBlock, newGlobalsBlock)
+  .replace(
+    '  var color = samplePixel(x, y);\n  if (globals.output.y > 0.5) {',
+    `  var color = samplePixel(x, y);
+  let rawColor = color;
+  let denoiseRadius = i32(clamp(globals.displayInfo.y, 0.0, 2.0));
+  if (globals.output.y > 0.5 && denoiseRadius > 0 && globals.displayInfo.z > 0.001) {`,
+  )
+  .replace('    for (var oy = -1; oy <= 1; oy += 1) {', '    for (var oy = -2; oy <= 2; oy += 1) {')
+  .replace(
+    '      for (var ox = -1; ox <= 1; ox += 1) {\n        if (ox == 0 && oy == 0) { continue; }',
+    `      for (var ox = -2; ox <= 2; ox += 1) {
+        if (abs(ox) > denoiseRadius || abs(oy) > denoiseRadius) { continue; }
+        if (ox == 0 && oy == 0) { continue; }`,
+  )
+  .replace(
+    '    color = weighted / max(weightSum, 1e-5);',
+    '    color = mix(rawColor, weighted / max(weightSum, 1e-5), clamp(globals.displayInfo.z, 0.0, 1.0));',
+  );
+
+if (
+  migratedCompute === baseComputeWGSL ||
+  !migratedCompute.includes('@binding(15)') ||
+  !migratedCompute.includes('fn traceBlas(') ||
+  !migratedCompute.includes('globals.features') ||
+  !migratedCompute.includes('globals.rayInfo')
+) {
+  throw new Error('Kyxos advanced compute WGSL migration did not match the pinned base shader.');
+}
+if (migratedDisplay === baseDisplayWGSL || !migratedDisplay.includes('globals.displayInfo')) {
+  throw new Error('Kyxos advanced display WGSL migration did not match the pinned base shader.');
 }
 
-export const advancedPathTracingComputeWGSL = migrated;
-export { advancedPathTracingDisplayWGSL };
+export const advancedPathTracingComputeWGSL = migratedCompute;
+export const advancedPathTracingDisplayWGSL = migratedDisplay;
