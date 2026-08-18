@@ -41,6 +41,12 @@ describe('packed WebGPU advanced renderer', () => {
     expect(advancedPathTracingComputeWGSL).toContain('targetValue');
   });
 
+  it('normalizes ReSTIR selected radiance exactly once by the proposal PDF', () => {
+    expect(advancedPathTracingComputeWGSL).toContain('let selectedContribution = selected.radiancePdf.rgb * evaluateBrdf(');
+    expect(advancedPathTracingComputeWGSL).toContain('return selectedContribution * reservoirFinalWeight(reservoir);');
+    expect(advancedPathTracingComputeWGSL).not.toContain('return evaluateCandidate(hit, viewDirection, selected) * reservoirFinalWeight(reservoir);');
+  });
+
   it('uses packed accessors instead of the legacy scene-buffer arrays', () => {
     expect(advancedPathTracingComputeWGSL).toContain('fn loadTriangle(');
     expect(advancedPathTracingComputeWGSL).toContain('fn loadBvhNode(');
