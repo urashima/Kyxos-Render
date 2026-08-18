@@ -6,7 +6,7 @@ import {
 } from './webgpuHybridRendererBase';
 import type { AdvancedRendererCapabilities } from './backendCapabilities';
 import { ADVANCED_STORAGE_BUFFERS_PER_STAGE } from './backendCapabilities';
-import { advancedPathTracingComputeWGSL } from './webgpuShaders';
+import { advancedPathTracingComputeWGSL } from './webgpuShadersPortable';
 
 export type { AdvancedGpuMetrics, AdvancedGpuRendererOptions };
 
