@@ -29,9 +29,10 @@ import { installScreenSpaceSSSExtension } from './materials/screenSpaceSSS';
 import { installScreenSpaceSSSDebugExtension } from './materials/screenSpaceSSSDebug';
 import { installViewerMetricsBroadcast } from './metricsBroadcast';
 import { installNonBlockingVisibilityRecovery } from './nonBlockingVisibilityRecovery';
-import { installRealtimeHybridRtExtension } from './realtimeHybridRtExtension';
+import { installRealtimeHybridRtExtensionV2 } from './realtimeHybridRtExtensionV2';
 import { installRenderSettingsParity } from './renderSettingsParity';
 import { installSSSStudyModelExtension } from './scene/sssStudyModel';
+import { installSharedWebGpuDeviceBridge } from './render/advanced/sharedWebGpuDeviceBridge';
 import { installSsrEnvironmentGuard } from './ssrEnvironmentGuard';
 import { installTimestampQueryGuard } from './timestampQueryGuard';
 
@@ -40,6 +41,7 @@ import { installTimestampQueryGuard } from './timestampQueryGuard';
 installTimestampQueryGuard(KyxosViewer as unknown as Parameters<typeof installTimestampQueryGuard>[0]);
 installSsrEnvironmentGuard();
 installNonBlockingVisibilityRecovery(KyxosViewer);
+installSharedWebGpuDeviceBridge(KyxosViewer);
 
 // Scene API is installed by the side-effect import above. Studio scene mode then
 // removes the procedural playground model and unmanaged lights before loading
@@ -60,9 +62,9 @@ installRenderSettingsParity(KyxosViewer);
 // software-ray histories without changing Studio -> Viewer package boundaries.
 installAdvancedRenderingApi(KyxosViewer);
 // Cinematic/RT mode is a realtime feature layer, not a second full-frame renderer.
-// Install this after the Advanced API so Path Tracing can keep the progressive
-// reference renderer while Hybrid RT intercepts only cinematic mode.
-installRealtimeHybridRtExtension(KyxosViewer);
+// V2 guarantees camera interaction always keeps the raster pipeline authoritative;
+// RT work only consumes spare GPU budget after the camera settles.
+installRealtimeHybridRtExtensionV2(KyxosViewer);
 installViewerMetricsBroadcast(KyxosViewer);
 
 export { KyxosViewer };
