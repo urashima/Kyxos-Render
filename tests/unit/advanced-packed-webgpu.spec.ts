@@ -6,6 +6,7 @@ import {
 import {
   advancedPathTracingComputeWGSL,
   advancedPathTracingDisplayWGSL,
+  findReservedWGSLIdentifiers,
 } from '../../packages/viewer/src/render/advanced/webgpuShadersPortable';
 
 describe('packed WebGPU advanced renderer', () => {
@@ -33,11 +34,9 @@ describe('packed WebGPU advanced renderer', () => {
     expect(advancedPathTracingComputeWGSL).toContain('dynamicScene: array<vec4<f32>>');
   });
 
-  it('removes reserved identifiers reported by current WGSL compilers', () => {
-    for (const source of [advancedPathTracingComputeWGSL, advancedPathTracingDisplayWGSL]) {
-      expect(source).not.toMatch(/\bmeta\b/);
-      expect(source).not.toMatch(/\btarget\b/);
-    }
+  it('removes every identifier reserved by the current WGSL grammar', () => {
+    expect(findReservedWGSLIdentifiers(advancedPathTracingComputeWGSL)).toEqual([]);
+    expect(findReservedWGSLIdentifiers(advancedPathTracingDisplayWGSL)).toEqual([]);
     expect(advancedPathTracingComputeWGSL).toContain('nodeInfo');
     expect(advancedPathTracingComputeWGSL).toContain('targetValue');
   });
