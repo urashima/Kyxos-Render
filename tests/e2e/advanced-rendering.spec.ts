@@ -1,15 +1,43 @@
 import { expect, test } from '@playwright/test';
 
+const completeControlIds = [
+  '#advanced-env-importance',
+  '#advanced-emissive-sampling',
+  '#advanced-ray-shadows',
+  '#advanced-shadow-bias',
+  '#advanced-ray-ao',
+  '#advanced-ao-radius',
+  '#advanced-ao-strength',
+  '#advanced-ray-reflections',
+  '#advanced-reflection-roughness',
+  '#advanced-restir-mode',
+  '#advanced-restir-candidates',
+  '#advanced-restir-spatial',
+  '#advanced-cache-enabled',
+  '#advanced-cache-cell',
+  '#advanced-cache-capacity',
+  '#advanced-cache-update',
+  '#advanced-path-enabled',
+  '#advanced-path-bounces',
+  '#advanced-path-spp',
+  '#advanced-path-resolution',
+  '#advanced-firefly',
+  '#advanced-denoise-enabled',
+  '#advanced-denoise-radius',
+  '#advanced-denoise-strength',
+] as const;
+
 for (const route of ['rt-lab', 'path-tracing'] as const) {
-  test(`${route} keeps a visible viewer and exposes advanced controls`, async ({ page }) => {
+  test(`${route} keeps a visible viewer and exposes complete advanced controls`, async ({ page }) => {
     const pageErrors: string[] = [];
     page.on('pageerror', (error) => pageErrors.push(error.message));
     await page.goto(`/${route}/`);
     await page.waitForFunction(() => window.__kyxosTestApi?.ready(), null, { timeout: 90_000 });
 
-    await expect(page.locator('#advanced-lab-panel')).toBeVisible();
-    await expect(page.locator('#advanced-lab-mode')).toHaveValue(route === 'path-tracing' ? 'pathTracing' : 'cinematic');
-    await expect(page.locator('#advanced-lab-restir')).toHaveValue('temporalSpatial');
+    await expect(page.locator('#advanced-render-panel')).toBeVisible();
+    await expect(page.locator('#advanced-render-mode')).toHaveValue(route === 'path-tracing' ? 'pathTracing' : 'cinematic');
+    await expect(page.locator('#advanced-restir-mode')).toHaveValue('temporalSpatial');
+    for (const selector of completeControlIds) await expect(page.locator(selector)).toHaveCount(1);
     await expect(page.locator('#loading')).not.toHaveClass(/fatal/);
     await expect(page.locator('#viewport')).toBeVisible();
 
@@ -45,8 +73,6 @@ for (const route of ['rt-lab', 'path-tracing'] as const) {
     expect(result.state).toMatch(/rendering|fallback/);
     expect(result.mode).toMatch(/realtime|cinematic|pathTracing/);
 
-    // If advanced rendering cannot run on the test adapter, the opaque overlay
-    // must stay hidden so the healthy raster viewer remains visible.
     if (result.state === 'fallback') {
       expect(result.mode).toBe('realtime');
       expect(result.overlayDisplay === 'none' || result.overlayVisibility === 'hidden').toBe(true);
@@ -56,6 +82,22 @@ for (const route of ['rt-lab', 'path-tracing'] as const) {
   });
 }
 
+test('ordinary Playground routes expose the same advanced render controls', async ({ page }) => {
+  await page.goto('/overview/');
+  await page.waitForFunction(() => window.__kyxosTestApi?.ready(), null, { timeout: 90_000 });
+  await expect(page.locator('#advanced-render-panel')).toBeVisible();
+  await expect(page.locator('#advanced-render-mode')).toHaveValue('realtime');
+  for (const selector of completeControlIds) await expect(page.locator(selector)).toHaveCount(1);
+
+  // Controls are live, not decorative: toggling an inexpensive feature should
+  // update the UI without producing a fatal Viewer state.
+  const importance = page.locator('#advanced-env-importance');
+  const before = await importance.isChecked();
+  await importance.click();
+  await expect(importance).toBeChecked({ checked: !before });
+  await expect(page.locator('#loading')).not.toHaveClass(/fatal/);
+});
+
 test('path tracing request gracefully falls back when WebGPU is unavailable', async ({ page }) => {
   const pageErrors: string[] = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
@@ -64,8 +106,8 @@ test('path tracing request gracefully falls back when WebGPU is unavailable', as
   });
   await page.goto('/path-tracing/');
   await page.waitForFunction(() => window.__kyxosTestApi?.ready(), null, { timeout: 90_000 });
-  await expect(page.locator('#advanced-lab-panel')).toBeVisible();
-  await expect(page.locator('#advanced-lab-warning')).toContainText(/WebGPU|fallback|requires|raster/i);
+  await expect(page.locator('#advanced-render-panel')).toBeVisible();
+  await expect(page.locator('#advanced-render-warning')).toContainText(/WebGPU|fallback|requires|raster/i);
 
   await page.waitForFunction(() =>
     document.querySelector<HTMLCanvasElement>('#viewport')?.dataset.advancedRenderState === 'fallback',
