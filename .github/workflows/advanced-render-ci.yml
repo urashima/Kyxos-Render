@@ -16,7 +16,7 @@ jobs:
   verify-advanced-rendering:
     if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -36,7 +36,7 @@ jobs:
         run: pnpm typecheck
 
       - name: Run advanced rendering unit acceptance
-        run: pnpm exec vitest run tests/unit/truvis-render.spec.ts tests/unit/advanced-packed-webgpu.spec.ts tests/unit/viewer-ssr-environment.spec.ts tests/unit/advanced-scene-contract.spec.ts
+        run: pnpm exec vitest run tests/unit/truwis-render.spec.ts tests/unit/advanced-packed-webgpu.spec.ts tests/unit/viewer-ssr-environment.spec.ts tests/unit/advanced-scene-contract.spec.ts
 
       - name: Build production products
         run: pnpm build
@@ -53,3 +53,8 @@ jobs:
 
       - name: Run advanced lab browser acceptance
         run: pnpm exec playwright test tests/e2e/advanced-rendering.spec.ts --project=chromium
+
+      - name: Run true WebGPU Hybrid RT acceptance
+        env:
+          KYXOS_WEBGPU_E2E: '1'
+        run: pnpm exec playwright test tests/e2e/advanced-hybrid.webgpu.spec.ts --project=chromium-webgpu
