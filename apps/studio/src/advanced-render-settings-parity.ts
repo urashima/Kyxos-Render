@@ -215,8 +215,8 @@ function mount(): void {
 
   const scene = api.getScene();
   const settings = current(scene);
-  const advancedEnabled = settings.renderingMode !== 'realtime';
   const pathEnabled = settings.renderingMode === 'pathTracing';
+  const realtimeRtEnabled = settings.rayTracing.enabled && !pathEnabled;
 
   const group = document.createElement('section');
   group.className = 'kx-render-group kx-advanced-render-settings';
@@ -225,14 +225,14 @@ function mount(): void {
 
   const note = document.createElement('p');
   note.className = 'kx-render-empty';
-  note.textContent = 'Unified WebGPU RT controls. Unsupported features fall back to the normal raster viewport without hiding the scene.';
+  note.textContent = 'RT AO, shadows, reflection and refraction are realtime enhancements. They remain active while the camera moves; temporal denoise and fusion reconstruct each frame. Path Trace is the separate progressive reference mode.';
   group.append(note);
 
   group.append(segmented<AdvancedRenderingMode>(
     'Rendering mode',
     [
       { value: 'realtime', label: 'Realtime' },
-      { value: 'cinematic', label: 'Hybrid RT' },
+      { value: 'cinematic', label: 'RT Preset' },
       { value: 'pathTracing', label: 'Path Trace' },
     ],
     settings.renderingMode,
@@ -247,10 +247,10 @@ function mount(): void {
       update(scene, 'Emissive triangle sampling', { lightSampling: { emissiveTriangles } })),
   );
 
-  const rt = detailsCard('Hybrid Ray Tracing', advancedEnabled, advancedEnabled);
+  const rt = detailsCard('Realtime Ray Tracing', realtimeRtEnabled, realtimeRtEnabled);
   rt.body.append(
-    switchControl('Enabled', advancedEnabled, (enabled) =>
-      update(scene, 'Hybrid ray tracing', { renderingMode: enabled ? 'cinematic' : 'realtime' })),
+    switchControl('RT Enabled', settings.rayTracing.enabled, (enabled) =>
+      update(scene, 'Realtime ray tracing', { rayTracing: { enabled } })),
     switchControl('Ray traced shadows', settings.rayTracing.shadows, (shadows) =>
       update(scene, 'Ray traced shadows', { rayTracing: { shadows } })),
     rangeControl('Shadow bias', settings.rayTracing.shadowBias, 0.0001, 0.02, 0.0001, (shadowBias) =>
@@ -265,6 +265,22 @@ function mount(): void {
       update(scene, 'Ray reflections', { rayTracing: { reflections } })),
     rangeControl('Reflection max roughness', settings.rayTracing.reflectionMaxRoughness, 0.05, 1, 0.05, (reflectionMaxRoughness) =>
       update(scene, 'Ray reflection roughness', { rayTracing: { reflectionMaxRoughness } })),
+    switchControl('Ray refractions', settings.rayTracing.refractions, (refractions) =>
+      update(scene, 'Ray refractions', { rayTracing: { refractions } })),
+    rangeControl('Refraction max roughness', settings.rayTracing.refractionMaxRoughness, 0.02, 1, 0.02, (refractionMaxRoughness) =>
+      update(scene, 'Ray refraction roughness', { rayTracing: { refractionMaxRoughness } })),
+    rangeControl('Refraction strength', settings.rayTracing.refractionStrength, 0, 2, 0.05, (refractionStrength) =>
+      update(scene, 'Ray refraction strength', { rayTracing: { refractionStrength } })),
+    switchControl('Realtime denoise', settings.rayTracing.realtimeDenoise, (realtimeDenoise) =>
+      update(scene, 'Realtime RT denoise', { rayTracing: { realtimeDenoise } })),
+    rangeControl('Denoise radius', settings.rayTracing.denoiseRadius, 0.5, 3, 0.1, (denoiseRadius) =>
+      update(scene, 'Realtime RT denoise radius', { rayTracing: { denoiseRadius } })),
+    rangeControl('Denoise strength', settings.rayTracing.denoiseStrength, 0, 1, 0.05, (denoiseStrength) =>
+      update(scene, 'Realtime RT denoise strength', { rayTracing: { denoiseStrength } })),
+    switchControl('Realtime fusion', settings.rayTracing.realtimeFusion, (realtimeFusion) =>
+      update(scene, 'Realtime RT fusion', { rayTracing: { realtimeFusion } })),
+    rangeControl('Fusion strength', settings.rayTracing.fusionStrength, 0, 1.5, 0.05, (fusionStrength) =>
+      update(scene, 'Realtime RT fusion strength', { rayTracing: { fusionStrength } })),
   );
 
   const restir = detailsCard('ReSTIR Direct Lighting', settings.restirDI.mode !== 'off');
@@ -301,7 +317,7 @@ function mount(): void {
   const path = detailsCard('Progressive Path Tracing', pathEnabled, pathEnabled);
   path.body.append(
     switchControl('Enabled', pathEnabled, (enabled) =>
-      update(scene, 'Progressive path tracing', { renderingMode: enabled ? 'pathTracing' : 'cinematic' })),
+      update(scene, 'Progressive path tracing', { renderingMode: enabled ? 'pathTracing' : 'realtime' })),
     rangeControl('Max bounces', settings.pathTracing.maxBounces, 1, 16, 1, (maxBounces) =>
       update(scene, 'Path tracing bounces', { pathTracing: { maxBounces } })),
     rangeControl('Samples / frame', settings.pathTracing.samplesPerFrame, 1, 4, 1, (samplesPerFrame) =>
@@ -321,12 +337,12 @@ function mount(): void {
   const runtimeCard = detailsCard('Runtime / Capabilities', true, false);
   runtimeCard.body.append(
     infoRow('State', 'idle · realtime', 'kx-advanced-runtime-state'),
-    infoRow('Samples', '0', 'kx-advanced-runtime-samples'),
+    infoRow('RT phases', '0', 'kx-advanced-runtime-samples'),
     infoRow('Scene acceleration', '—', 'kx-advanced-runtime-scene'),
     infoRow('Advanced GPU memory', '0 MB', 'kx-advanced-runtime-memory'),
     infoRow('Active features', '—', 'kx-advanced-runtime-features'),
     infoRow('Unavailable', '—', 'kx-advanced-runtime-unavailable'),
-    infoRow('Status', 'Capability is negotiated by KyxosViewer.', 'kx-advanced-runtime-message'),
+    infoRow('Status', 'Realtime raster remains authoritative.', 'kx-advanced-runtime-message'),
   );
 
   group.append(sampling.root, rt.root, restir.root, cache.root, path.root, runtimeCard.root);
@@ -362,7 +378,7 @@ function refreshRuntimeStatus(): void {
   if (memory) memory.textContent = bytes(status?.advancedGpuBytes ?? 0);
   if (features) features.textContent = status?.enabledFeatures?.length ? status.enabledFeatures.join(', ') : 'Raster / environment';
   if (unavailable) unavailable.textContent = status?.unavailableFeatures?.length ? status.unavailableFeatures.join(', ') : 'None';
-  if (message) message.textContent = status?.message || 'Capability is negotiated by KyxosViewer; raster remains visible during fallback.';
+  if (message) message.textContent = status?.message || 'Realtime raster remains visible while optional RT work is skipped or unavailable.';
 }
 
 function refreshMountedControls(): void {
@@ -371,9 +387,6 @@ function refreshMountedControls(): void {
     scheduleMount();
     return;
   }
-  // The main render settings panel is schema-rendered and may replace its body
-  // after a SceneDocument patch. If it did not, remount just this independent
-  // advanced group so controls always reflect the canonical persisted values.
   existing.remove();
   mount();
 }
