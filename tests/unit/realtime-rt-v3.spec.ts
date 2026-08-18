@@ -14,6 +14,10 @@ const passSource = fs.readFileSync(
   new URL('../../packages/viewer/src/render/advanced/realtimeHybridRtFeaturePassV3.ts', import.meta.url),
   'utf8',
 );
+const sharedPtSource = fs.readFileSync(
+  new URL('../../packages/viewer/src/render/advanced/webgpuSharedPackedRenderer.ts', import.meta.url),
+  'utf8',
+);
 
 describe('Realtime RT V3', () => {
   it('keeps RT independent from progressive rendering mode', () => {
@@ -42,6 +46,8 @@ describe('Realtime RT V3', () => {
     expect(realtimeHybridRtWGSL).toContain('transmissionValue');
     expect(realtimeHybridRtWGSL).toContain('refract(rayValue.xyz');
     expect(realtimeHybridRtWGSL).toContain('textureStore(refractionOutput');
+    expect(realtimeHybridRtWGSL).toContain('vec4<f32>(1.0, 1.0, 1.0, 0.0)');
+    expect(realtimeHybridRtWGSL).not.toContain('vec4<f32>(1.0, 1.0, 1.0, 1.0)');
     expect(realtimeHybridRtWGSL).not.toContain('.negate()');
   });
 
@@ -61,5 +67,18 @@ describe('Realtime RT V3', () => {
     const rtCall = extensionSource.indexOf('this.renderFeatureFrame();', rasterCall);
     expect(rasterCall).toBeGreaterThan(-1);
     expect(rtCall).toBeGreaterThan(rasterCall);
+  });
+
+  it('keeps explicit shared-device layouts instead of requesting external pipeline handles', () => {
+    expect(passSource).toContain('private bindGroupLayout');
+    expect(passSource).toContain('this.device.createComputePipeline({');
+    expect(passSource).not.toContain('createComputePipelineAsync');
+    expect(passSource).not.toContain('this.pipeline.getBindGroupLayout');
+    expect(sharedPtSource).toContain('private sharedComputeLayout');
+    expect(sharedPtSource).toContain('private sharedDisplayLayout');
+    expect(sharedPtSource).not.toContain('createComputePipelineAsync');
+    expect(sharedPtSource).not.toContain('getBindGroupLayout(0)');
+    expect(sharedPtSource).not.toContain('pushErrorScope');
+    expect(sharedPtSource).not.toContain('popErrorScope');
   });
 });
