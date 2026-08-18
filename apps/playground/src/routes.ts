@@ -170,7 +170,7 @@ export const demoRoutes: DemoRoute[] = [
     eyebrow: 'Software BVH · ReSTIR DI · Radiance Cache',
     description:
       'Kyxos WebGPU Enhanced path: CPU-built BVH, WGSL software ray queries, unified HDRI/analytic/emissive light candidates, ReSTIR reuse and world-space radiance caching.',
-    quality: 'cinematic',
+    quality: 'high',
   },
   {
     slug: 'path-tracing',
@@ -178,7 +178,7 @@ export const demoRoutes: DemoRoute[] = [
     eyebrow: 'Ground Truth Renderer',
     description:
       'Progressive WebGPU path integration with software BVH traversal, PBR sampling, NEE, ReSTIR primary lighting, radiance cache and edge-aware denoise.',
-    quality: 'capture',
+    quality: 'high',
   },
   {
     slug: 'performance',
