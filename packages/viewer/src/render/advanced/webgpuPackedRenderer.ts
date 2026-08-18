@@ -1,3 +1,4 @@
+import type { SceneAdvancedRenderSettings } from '@kyxos/scene-contract/advanced-render-settings';
 import type { ExtractedAdvancedScene } from './sceneExtraction';
 import {
   ADVANCED_STORAGE_BUFFERS_PER_STAGE,
@@ -5,10 +6,10 @@ import {
   type AdvancedRendererCapabilities,
 } from './backendCapabilities';
 import {
-  WebGpuHybridRenderer,
+  WebGpuHybridRenderer as BaseWebGpuHybridRenderer,
   type AdvancedGpuMetrics,
   type AdvancedGpuRendererOptions,
-} from './webgpuHybridRenderer';
+} from './webgpuHybridRendererBase';
 import {
   advancedPathTracingComputeWGSL,
   advancedPathTracingDisplayWGSL,
@@ -50,10 +51,10 @@ function packFloatPools(arrays: readonly Float32Array[]): PackedPool {
   }
   const data = new Float32Array(Math.max(4, totalFloats));
   let cursor = 0;
-  arrays.forEach((array) => {
+  for (const array of arrays) {
     data.set(array, cursor);
     cursor += align4(array.length);
-  });
+  }
   return { data, offsets };
 }
 
@@ -67,12 +68,15 @@ function compilationErrors(info: any): string | null {
 }
 
 /**
- * Production WebGPU RT path using the WebGPU baseline of eight storage buffers
- * per shader stage. Static scene records are packed into one vec4 pool and
- * instance/TLAS data into a second pool; temporal histories remain independent
- * so ReSTIR and accumulation can ping-pong without copying the full scene.
+ * Advanced renderer using the WebGPU baseline of eight storage buffers per
+ * shader stage. Static records are packed into one vec4 pool and instance/TLAS
+ * records into a second pool; temporal histories remain separate so ReSTIR and
+ * accumulation can ping-pong without copying the full scene.
  */
-export class WebGpuPackedRenderer extends WebGpuHybridRenderer {
+export class WebGpuPackedRenderer extends BaseWebGpuHybridRenderer {
+  private firstFrameValidated = false;
+  private validationPending = false;
+  private validationFailure: Error | null = null;
   private packedLayout: PackedLayout = {
     static0: [0, 0, 0, 0],
     static1: [0, 0, 0, 0],
@@ -81,10 +85,11 @@ export class WebGpuPackedRenderer extends WebGpuHybridRenderer {
 
   constructor(baseCanvas: HTMLCanvasElement, options: AdvancedGpuRendererOptions = {}) {
     super(baseCanvas, options);
+    this.overlay.style.visibility = 'hidden';
 
-    // BaseWebGpuHybridRenderer's helpers are TypeScript-private rather than
-    // ECMAScript #private. Install the packed implementations on the instance so
-    // setScene(), resize and dispose keep using the same public renderer API.
+    // Base helpers are TypeScript-private, not ECMAScript #private. Installing
+    // these packed implementations keeps setScene(), resize and dispose on the
+    // same public renderer API while replacing only the GPU resource layout.
     const runtime = this as any;
     runtime.uploadScene = (scene: ExtractedAdvancedScene) => this.uploadPackedScene(scene);
     runtime.destroySceneBuffers = () => this.destroyPackedSceneBuffers();
@@ -185,6 +190,7 @@ export class WebGpuPackedRenderer extends WebGpuHybridRenderer {
     });
 
     let validationError: any = null;
+    let thrown: unknown = null;
     this.device.pushErrorScope?.('validation');
     try {
       runtime.computePipeline = typeof this.device.createComputePipelineAsync === 'function'
@@ -207,30 +213,140 @@ export class WebGpuPackedRenderer extends WebGpuHybridRenderer {
         primitive: { topology: 'triangle-list' },
       });
       runtime.displayPipeline.getBindGroupLayout(0);
-    } finally {
-      validationError = await this.device.popErrorScope?.();
+    } catch (error) {
+      thrown = error;
     }
-    if (validationError) {
-      throw new Error(`Advanced WebGPU packed pipeline validation failed: ${validationError.message ?? validationError}`);
+    try {
+      validationError = await this.device.popErrorScope?.();
+    } catch (error) {
+      validationError = validationError ?? error;
+    }
+    if (thrown || validationError) {
+      const detail = [thrown, validationError]
+        .filter(Boolean)
+        .map((error) => error instanceof Error ? error.message : String((error as any)?.message ?? error))
+        .join(' · ');
+      throw new Error(`Advanced WebGPU packed pipeline validation failed: ${detail || 'unknown validation error'}`);
     }
 
     runtime.initialized = true;
     return capabilities;
   }
 
+  setSettings(value: SceneAdvancedRenderSettings): void {
+    const previous = this.controlSignature();
+    super.setSettings(value);
+    if (previous !== this.controlSignature()) this.resetAccumulation();
+  }
+
   protected cameraData(camera: any): { data: Float32Array; signature: string } {
     const base = super.cameraData(camera);
     const data = new Float32Array(GLOBAL_VEC4_COUNT * 4);
     data.set(base.data, 0);
+
+    const lightSampling = this.settings.lightSampling;
+    const rayTracing = this.settings.rayTracing;
+    const pathTracing = this.settings.pathTracing;
+    data.set([
+      lightSampling.environmentImportance ? 1 : 0,
+      lightSampling.emissiveTriangles ? 1 : 0,
+      rayTracing.shadows ? 1 : 0,
+      rayTracing.ambientOcclusion ? 1 : 0,
+    ], 36);
+    data.set([
+      rayTracing.reflections ? 1 : 0,
+      rayTracing.shadowBias,
+      rayTracing.aoRadius,
+      rayTracing.aoStrength,
+    ], 40);
+    data.set([
+      rayTracing.reflectionMaxRoughness,
+      pathTracing.denoiseRadius,
+      pathTracing.denoiseStrength,
+      0,
+    ], 44);
     data.set(this.packedLayout.static0, 48);
     data.set(this.packedLayout.static1, 52);
     data.set(this.packedLayout.dynamic, 56);
+
     const layoutSignature = [
       ...this.packedLayout.static0,
       ...this.packedLayout.static1,
       ...this.packedLayout.dynamic,
     ].join(',');
-    return { data, signature: `${base.signature}|packed:${layoutSignature}` };
+    return {
+      data,
+      signature: `${base.signature}|${this.controlSignature()}|packed:${layoutSignature}`,
+    };
+  }
+
+  private controlSignature(): string {
+    const value = this.settings;
+    return [
+      value.lightSampling.environmentImportance ? 1 : 0,
+      value.lightSampling.emissiveTriangles ? 1 : 0,
+      value.rayTracing.shadows ? 1 : 0,
+      value.rayTracing.shadowBias,
+      value.rayTracing.ambientOcclusion ? 1 : 0,
+      value.rayTracing.aoRadius,
+      value.rayTracing.aoStrength,
+      value.rayTracing.reflections ? 1 : 0,
+      value.rayTracing.reflectionMaxRoughness,
+      value.pathTracing.denoiseRadius,
+      value.pathTracing.denoiseStrength,
+    ].join('|');
+  }
+
+  render(camera: any, mode: 'cinematic' | 'pathTracing'): AdvancedGpuMetrics | null {
+    if (this.validationFailure) {
+      this.hide();
+      throw this.validationFailure;
+    }
+    if (this.firstFrameValidated) {
+      this.overlay.style.visibility = 'visible';
+      return super.render(camera, mode);
+    }
+    if (this.validationPending) return null;
+
+    this.validationPending = true;
+    this.overlay.style.visibility = 'hidden';
+    this.device?.pushErrorScope?.('validation');
+    let metrics: AdvancedGpuMetrics | null = null;
+    try {
+      metrics = super.render(camera, mode);
+    } catch (error) {
+      this.validationPending = false;
+      this.hide();
+      throw error;
+    }
+
+    const scope = this.device?.popErrorScope?.();
+    if (!scope || typeof scope.then !== 'function') {
+      this.validationPending = false;
+      this.firstFrameValidated = true;
+      this.overlay.style.visibility = 'visible';
+      return metrics;
+    }
+    void scope.then((gpuError: { message?: string } | null) => {
+      this.validationPending = false;
+      if (gpuError) {
+        this.validationFailure = new Error(`Advanced WebGPU validation failed: ${gpuError.message ?? 'unknown validation error'}`);
+        this.hide();
+        return;
+      }
+      this.firstFrameValidated = true;
+      this.overlay.style.visibility = 'visible';
+    }).catch((error: unknown) => {
+      this.validationPending = false;
+      this.validationFailure = error instanceof Error ? error : new Error(String(error));
+      this.hide();
+    });
+    return metrics;
+  }
+
+  hide(): void {
+    this.overlay.style.visibility = 'hidden';
+    super.hide();
   }
 
   private createPackedStorage(data: Float32Array, label: string): any {
