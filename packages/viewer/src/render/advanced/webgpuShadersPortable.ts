@@ -4,13 +4,14 @@ import {
 } from './webgpuShaders';
 
 /**
- * WGSL reserves a number of identifiers for future language use. `meta` is one
- * of those reserved words in current browser compilers, while older Dawn builds
- * accepted it. Keep the final shader text portable regardless of which pinned
- * migration block introduced the identifier.
+ * Keep the browser-facing WGSL compatible with the current WGSL grammar.
+ * The generated shader is assembled from pinned migration snippets, so a
+ * reserved identifier can otherwise survive until a stricter browser compiler
+ * rejects the module. Rename identifiers before any pipeline sees the source.
  */
 const RESERVED_IDENTIFIER_RENAMES: ReadonlyArray<readonly [string, string]> = [
   ['meta', 'nodeInfo'],
+  ['target', 'targetValue'],
 ];
 
 export function sanitizePortableWGSL(source: string): string {
@@ -21,5 +22,156 @@ export function sanitizePortableWGSL(source: string): string {
   return result;
 }
 
-export const advancedPathTracingComputeWGSL = sanitizePortableWGSL(generatedComputeWGSL);
-export const advancedPathTracingDisplayWGSL = sanitizePortableWGSL(generatedDisplayWGSL);
+const LEGACY_COMPUTE_BINDINGS = `@group(0) @binding(0) var<uniform> globals: Globals;
+@group(0) @binding(1) var<storage, read> triangles: array<Triangle>;
+@group(0) @binding(2) var<storage, read> nodes: array<BvhNode>;
+@group(0) @binding(3) var<storage, read> instances: array<Instance>;
+@group(0) @binding(4) var<storage, read> tlasNodes: array<BvhNode>;
+@group(0) @binding(5) var<storage, read> materials: array<Material>;
+@group(0) @binding(6) var<storage, read> lights: array<Light>;
+@group(0) @binding(7) var<storage, read> lightAlias: array<vec4<f32>>;
+@group(0) @binding(8) var<storage, read_write> accumulation: array<vec4<f32>>;
+@group(0) @binding(9) var<storage, read> previousReservoir: array<Reservoir>;
+@group(0) @binding(10) var<storage, read_write> nextReservoir: array<Reservoir>;
+@group(0) @binding(11) var<storage, read> previousSurface: array<SurfaceKey>;
+@group(0) @binding(12) var<storage, read_write> nextSurface: array<SurfaceKey>;
+@group(0) @binding(13) var<storage, read> environmentPixels: array<vec4<f32>>;
+@group(0) @binding(14) var<storage, read> environmentAlias: array<vec4<f32>>;
+@group(0) @binding(15) var<storage, read_write> cache: array<CacheCell>;`;
+
+const PACKED_COMPUTE_BINDINGS = `@group(0) @binding(0) var<uniform> globals: Globals;
+@group(0) @binding(1) var<storage, read> staticScene: array<vec4<f32>>;
+@group(0) @binding(2) var<storage, read> dynamicScene: array<vec4<f32>>;
+@group(0) @binding(3) var<storage, read_write> accumulation: array<vec4<f32>>;
+@group(0) @binding(4) var<storage, read> previousReservoir: array<Reservoir>;
+@group(0) @binding(5) var<storage, read_write> nextReservoir: array<Reservoir>;
+@group(0) @binding(6) var<storage, read> previousSurface: array<SurfaceKey>;
+@group(0) @binding(7) var<storage, read_write> nextSurface: array<SurfaceKey>;
+@group(0) @binding(8) var<storage, read_write> cache: array<CacheCell>;
+
+fn loadTriangle(index: u32) -> Triangle {
+  let base = u32(globals.staticLayout0.x) + index * 4u;
+  var value: Triangle;
+  value.a = staticScene[base];
+  value.b = staticScene[base + 1u];
+  value.c = staticScene[base + 2u];
+  value.normalMaterial = staticScene[base + 3u];
+  return value;
+}
+
+fn loadBvhNode(index: u32) -> BvhNode {
+  let base = u32(globals.staticLayout0.y) + index * 3u;
+  var value: BvhNode;
+  value.minLeft = staticScene[base];
+  value.maxRight = staticScene[base + 1u];
+  value.nodeInfo = staticScene[base + 2u];
+  return value;
+}
+
+fn loadInstance(index: u32) -> Instance {
+  let base = u32(globals.dynamicLayout.x) + index * 9u;
+  var value: Instance;
+  value.world0 = dynamicScene[base];
+  value.world1 = dynamicScene[base + 1u];
+  value.world2 = dynamicScene[base + 2u];
+  value.world3 = dynamicScene[base + 3u];
+  value.inverse0 = dynamicScene[base + 4u];
+  value.inverse1 = dynamicScene[base + 5u];
+  value.inverse2 = dynamicScene[base + 6u];
+  value.inverse3 = dynamicScene[base + 7u];
+  value.nodeInfo = dynamicScene[base + 8u];
+  return value;
+}
+
+fn loadTlasNode(index: u32) -> BvhNode {
+  let base = u32(globals.dynamicLayout.y) + index * 3u;
+  var value: BvhNode;
+  value.minLeft = dynamicScene[base];
+  value.maxRight = dynamicScene[base + 1u];
+  value.nodeInfo = dynamicScene[base + 2u];
+  return value;
+}
+
+fn loadMaterial(index: u32) -> Material {
+  let base = u32(globals.staticLayout0.z) + index * 3u;
+  var value: Material;
+  value.baseMetal = staticScene[base];
+  value.emissiveRough = staticScene[base + 1u];
+  value.parameters = staticScene[base + 2u];
+  return value;
+}
+
+fn loadLight(index: u32) -> Light {
+  let base = u32(globals.staticLayout0.w) + index * 4u;
+  var value: Light;
+  value.a = staticScene[base];
+  value.b = staticScene[base + 1u];
+  value.c = staticScene[base + 2u];
+  value.colorType = staticScene[base + 3u];
+  return value;
+}
+
+fn loadLightAlias(index: u32) -> vec4<f32> {
+  return staticScene[u32(globals.staticLayout1.x) + index];
+}
+
+fn loadEnvironmentPixel(index: u32) -> vec4<f32> {
+  return staticScene[u32(globals.staticLayout1.y) + index];
+}
+
+fn loadEnvironmentAlias(index: u32) -> vec4<f32> {
+  return staticScene[u32(globals.staticLayout1.z) + index];
+}`;
+
+const GLOBALS_LAYOUT_TAIL = `  displayInfo: vec4<f32>,
+};`;
+const PACKED_GLOBALS_LAYOUT_TAIL = `  displayInfo: vec4<f32>,
+  staticLayout0: vec4<f32>,
+  staticLayout1: vec4<f32>,
+  dynamicLayout: vec4<f32>,
+};`;
+
+function replaceArrayReads(source: string, name: string, loader: string): string {
+  return source.replace(new RegExp(`\\b${name}\\[([^\\]\\n]+)\\]`, 'g'), `${loader}($1)`);
+}
+
+function packComputeWGSL(source: string): string {
+  let result = source
+    .replace(GLOBALS_LAYOUT_TAIL, PACKED_GLOBALS_LAYOUT_TAIL)
+    .replace(LEGACY_COMPUTE_BINDINGS, PACKED_COMPUTE_BINDINGS)
+    .replace('arrayLength(&tlasNodes)', 'u32(globals.dynamicLayout.z)');
+
+  const reads: ReadonlyArray<readonly [string, string]> = [
+    ['triangles', 'loadTriangle'],
+    ['nodes', 'loadBvhNode'],
+    ['instances', 'loadInstance'],
+    ['tlasNodes', 'loadTlasNode'],
+    ['materials', 'loadMaterial'],
+    ['lights', 'loadLight'],
+    ['lightAlias', 'loadLightAlias'],
+    ['environmentPixels', 'loadEnvironmentPixel'],
+    ['environmentAlias', 'loadEnvironmentAlias'],
+  ];
+  for (const [name, loader] of reads) result = replaceArrayReads(result, name, loader);
+
+  if (
+    result.includes('@binding(9)') ||
+    result.includes('@binding(15)') ||
+    !result.includes('var<storage, read> staticScene') ||
+    !result.includes('var<storage, read> dynamicScene') ||
+    !result.includes('fn loadTriangle(') ||
+    !result.includes('fn loadInstance(')
+  ) {
+    throw new Error('Kyxos packed WGSL migration did not reduce the compute binding contract to eight storage buffers.');
+  }
+  return result;
+}
+
+const sanitizedCompute = sanitizePortableWGSL(generatedComputeWGSL);
+const sanitizedDisplay = sanitizePortableWGSL(generatedDisplayWGSL);
+
+export const advancedPathTracingComputeWGSL = packComputeWGSL(sanitizedCompute);
+export const advancedPathTracingDisplayWGSL = sanitizedDisplay.replace(
+  GLOBALS_LAYOUT_TAIL,
+  PACKED_GLOBALS_LAYOUT_TAIL,
+);
