@@ -17,6 +17,7 @@ function requestedMode(): AdvancedRenderingMode {
 
 function configure(instance: KyxosViewer): void {
   if (!isRtLab && !isPathLab) return;
+  if (!instance.canvas.isConnected) return;
   labViewer = instance;
   instance.setAdvancedRenderSettings({
     renderingMode: requestedMode(),
@@ -55,7 +56,10 @@ if (isRtLab || isPathLab) {
   const originalCreate = KyxosViewer.create.bind(KyxosViewer);
   (KyxosViewer as unknown as { create: typeof KyxosViewer.create }).create = async (options) => {
     const instance = await originalCreate(options);
-    configure(instance);
+    // Let Playground finish its route preset, debug state and UI wiring first.
+    // The raster viewer remains the guaranteed visible fallback while advanced
+    // WebGPU resources are negotiated and built on the following animation frame.
+    requestAnimationFrame(() => configure(instance));
     return instance;
   };
 }
@@ -112,7 +116,7 @@ function mountPanel(): void {
       <div class="control-row"><label>Advanced memory</label><span id="advanced-lab-memory">0 MB</span></div>
       <div class="control-row"><label>CPU submit</label><span id="advanced-lab-frame">0 ms</span></div>
       <div class="control-row"><button class="btn" id="advanced-lab-reset">Reset accumulation</button><button class="btn" id="advanced-lab-cache">Toggle cache</button></div>
-      <div class="warning-list" id="advanced-lab-warning">Software BVH / ReSTIR / radiance cache are negotiated against adapter limits.</div>
+      <div class="warning-list" id="advanced-lab-warning">Raster preview stays visible until the negotiated advanced renderer produces frames.</div>
     </div>`;
   const firstLabel = inspector.querySelector('.section-label');
   inspector.insertBefore(panel, firstLabel?.nextSibling ?? inspector.firstChild);
