@@ -47,6 +47,23 @@ export function sanitizePortableWGSL(source: string): string {
   return result;
 }
 
+const LEGACY_TRIANGLE_STRUCT = `struct Triangle {
+  a: vec4<f32>,
+  b: vec4<f32>,
+  c: vec4<f32>,
+  normalMaterial: vec4<f32>,
+};`;
+
+const SMOOTH_TRIANGLE_STRUCT = `struct Triangle {
+  a: vec4<f32>,
+  b: vec4<f32>,
+  c: vec4<f32>,
+  normalMaterial: vec4<f32>,
+  normalA: vec4<f32>,
+  normalB: vec4<f32>,
+  normalC: vec4<f32>,
+};`;
+
 const LEGACY_COMPUTE_BINDINGS = `@group(0) @binding(0) var<uniform> globals: Globals;
 @group(0) @binding(1) var<storage, read> triangles: array<Triangle>;
 @group(0) @binding(2) var<storage, read> nodes: array<BvhNode>;
@@ -75,13 +92,37 @@ const PACKED_COMPUTE_BINDINGS = `@group(0) @binding(0) var<uniform> globals: Glo
 @group(0) @binding(8) var<storage, read_write> cache: array<CacheCell>;
 
 fn loadTriangle(index: u32) -> Triangle {
-  let base = u32(globals.staticLayout0.x) + index * 4u;
+  let base = u32(globals.staticLayout0.x) + index * 7u;
   var value: Triangle;
   value.a = staticScene[base];
   value.b = staticScene[base + 1u];
   value.c = staticScene[base + 2u];
   value.normalMaterial = staticScene[base + 3u];
+  value.normalA = staticScene[base + 4u];
+  value.normalB = staticScene[base + 5u];
+  value.normalC = staticScene[base + 6u];
   return value;
+}
+
+fn triangleShadingNormal(triangle: Triangle, position: vec3<f32>) -> vec3<f32> {
+  let edge0 = triangle.b.xyz - triangle.a.xyz;
+  let edge1 = triangle.c.xyz - triangle.a.xyz;
+  let localPosition = position - triangle.a.xyz;
+  let d00 = dot(edge0, edge0);
+  let d01 = dot(edge0, edge1);
+  let d11 = dot(edge1, edge1);
+  let d20 = dot(localPosition, edge0);
+  let d21 = dot(localPosition, edge1);
+  let denominator = d00 * d11 - d01 * d01;
+  if (abs(denominator) < 1e-12) { return safeDirection(triangle.normalMaterial.xyz); }
+  let baryV = (d11 * d20 - d01 * d21) / denominator;
+  let baryW = (d00 * d21 - d01 * d20) / denominator;
+  let baryU = 1.0 - baryV - baryW;
+  return safeDirection(
+    triangle.normalA.xyz * baryU +
+    triangle.normalB.xyz * baryV +
+    triangle.normalC.xyz * baryW
+  );
 }
 
 fn loadBvhNode(index: u32) -> BvhNode {
@@ -177,6 +218,20 @@ function fixRestirEnergyEstimator(source: string): string {
   );
 }
 
+function installSmoothNormalInterpolation(source: string): string {
+  const migrated = source.replace(LEGACY_TRIANGLE_STRUCT, SMOOTH_TRIANGLE_STRUCT);
+  const facingPattern = /let facing = select\(\s*triangle\.normalMaterial\.xyz,\s*-triangle\.normalMaterial\.xyz,\s*dot\(triangle\.normalMaterial\.xyz, direction\) > 0\.0\s*\);/g;
+  const result = migrated.replace(
+    facingPattern,
+    `let shadingNormal = triangleShadingNormal(triangle, origin + direction * distance);
+          let facing = select(shadingNormal, -shadingNormal, dot(shadingNormal, direction) > 0.0);`,
+  );
+  if (result === source || !result.includes('normalA: vec4<f32>') || !result.includes('let shadingNormal = triangleShadingNormal')) {
+    throw new Error('Kyxos PT smooth-normal migration did not match the pinned shader.');
+  }
+  return result;
+}
+
 function packComputeWGSL(source: string): string {
   let result = source
     .replace(GLOBALS_LAYOUT_TAIL, PACKED_GLOBALS_LAYOUT_TAIL)
@@ -209,7 +264,9 @@ function packComputeWGSL(source: string): string {
   return result;
 }
 
-const sanitizedCompute = fixRestirEnergyEstimator(sanitizePortableWGSL(generatedComputeWGSL));
+const sanitizedCompute = installSmoothNormalInterpolation(
+  fixRestirEnergyEstimator(sanitizePortableWGSL(generatedComputeWGSL)),
+);
 const sanitizedDisplay = sanitizePortableWGSL(generatedDisplayWGSL);
 
 export const advancedPathTracingComputeWGSL = packComputeWGSL(sanitizedCompute);
