@@ -1,7 +1,7 @@
 export {
-  WebGpuPackedRenderer as WebGpuHybridRenderer,
-} from './webgpuPackedRenderer';
+  WebGpuStablePathRenderer as WebGpuHybridRenderer,
+} from './webgpuStablePathRenderer';
 export type {
   AdvancedGpuMetrics,
   AdvancedGpuRendererOptions,
-} from './webgpuPackedRenderer';
+} from './webgpuStablePathRenderer';
