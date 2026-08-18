@@ -3,8 +3,8 @@ import type {
   AdvancedRenderingCapabilityDescription,
 } from '@kyxos/scene-contract/advanced-render-settings';
 
-/** Compute shader resource contract. Keep this in sync with webgpuHybridRendererBase. */
-export const ADVANCED_STORAGE_BUFFERS_PER_STAGE = 15;
+/** Packed compute shader resource contract. Keep this in sync with webgpuPackedRenderer. */
+export const ADVANCED_STORAGE_BUFFERS_PER_STAGE = 8;
 export const ADVANCED_MIN_COMPUTE_INVOCATIONS = 64;
 
 export interface RuntimeGpuLimits {
@@ -79,7 +79,7 @@ export function resolveAdvancedRendererCapabilities(
   let reason: string | undefined;
   if (!enhanced) {
     reason = !hasAdvancedBindingBudget(limits)
-      ? `WebGPU is available, but this adapter exposes ${limits.maxStorageBuffersPerShaderStage} storage buffers per shader stage; Kyxos RT currently requires ${ADVANCED_STORAGE_BUFFERS_PER_STAGE}. High raster fallback is active.`
+      ? `WebGPU is available, but this adapter exposes ${limits.maxStorageBuffersPerShaderStage} storage buffers per shader stage; Kyxos packed RT requires ${ADVANCED_STORAGE_BUFFERS_PER_STAGE}. High raster fallback is active.`
       : 'WebGPU is available, but the adapter storage-buffer size budget is below the Kyxos RT Enhanced baseline.';
   }
 
