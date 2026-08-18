@@ -20,11 +20,26 @@ export interface RealtimeRtFrameInputs {
   height: number;
 }
 
+export type RealtimeRtSkipReason =
+  | 'disposed'
+  | 'not-initialized'
+  | 'no-scene'
+  | 'gpu-busy'
+  | 'output-initializing'
+  | 'pipeline-resources'
+  | 'depth-gpu-texture'
+  | 'normal-gpu-texture'
+  | 'metalrough-gpu-texture'
+  | 'visibility-gpu-texture'
+  | 'reflection-gpu-texture'
+  | 'refraction-gpu-texture';
+
 export interface RealtimeRtFrameState {
   ready: boolean;
   frameIndex: number;
   cpuFrameTimeMs: number;
   submitted: boolean;
+  skipReason?: RealtimeRtSkipReason;
 }
 
 function align4(value: number): number {
@@ -91,6 +106,9 @@ export class RealtimeRtFeaturePassV3 {
   private initialized = false;
   private disposed = false;
   private gpuBusy = false;
+  private outputInitPending = false;
+  private outputInitGeneration = 0;
+  private outputInitError: Error | null = null;
 
   constructor(viewer: any, settings: SceneAdvancedRenderSettings) {
     this.renderer = viewer.renderer;
@@ -163,10 +181,6 @@ export class RealtimeRtFeaturePassV3 {
       throw stageError('pipeline-layout creation', error);
     }
 
-    // The realtime renderer owns this GPUDevice. On Dawn/SwiftShader, awaiting
-    // createComputePipelineAsync() or asking a pipeline for another external
-    // GPUBindGroupLayout wrapper can invalidate the native external Instance.
-    // Keep the explicitly-created layout and use the synchronous pipeline API.
     try {
       this.pipeline = this.device.createComputePipeline({
         label: 'Kyxos.RealtimeRT.FeaturePipeline.V3',
@@ -201,8 +215,6 @@ export class RealtimeRtFeaturePassV3 {
   }
 
   resetHistory(): void {
-    // History is owned by realtime temporal nodes. Resetting this counter only
-    // restarts checkerboard phase ordering; it never hides RT until convergence.
     this.frameIndex = 0;
   }
 
@@ -241,41 +253,69 @@ export class RealtimeRtFeaturePassV3 {
     return this.backend?.get?.(texture)?.texture ?? null;
   }
 
-  private ensureOutputs(width: number, height: number): void {
-    const nextWidth = Math.max(1, width);
-    const nextHeight = Math.max(1, height);
-    if (
-      this.width === nextWidth && this.height === nextHeight &&
-      this.rawTexture(this.visibilityTexture) &&
-      this.rawTexture(this.reflectionTexture) &&
-      this.rawTexture(this.refractionTexture)
-    ) return;
-    this.width = nextWidth;
-    this.height = nextHeight;
-    for (const texture of [this.visibilityTexture, this.reflectionTexture, this.refractionTexture]) {
-      texture.setSize(this.width, this.height);
-      this.renderer.initTexture(texture);
-    }
+  private beginOutputInitialization(width: number, height: number): void {
+    this.width = Math.max(1, width);
+    this.height = Math.max(1, height);
     this.bindGroup = null;
     this.boundInputs = null;
     this.frameIndex = 0;
+    this.outputInitError = null;
+    const generation = ++this.outputInitGeneration;
+    this.outputInitPending = true;
+    const tasks: Promise<unknown>[] = [];
+    for (const texture of [this.visibilityTexture, this.reflectionTexture, this.refractionTexture]) {
+      texture.setSize(this.width, this.height);
+      try {
+        tasks.push(Promise.resolve(this.renderer.initTexture(texture)));
+      } catch (error) {
+        tasks.push(Promise.reject(error));
+      }
+    }
+    void Promise.all(tasks).then(() => {
+      if (this.disposed || generation !== this.outputInitGeneration) return;
+      this.outputInitPending = false;
+    }).catch((error) => {
+      if (this.disposed || generation !== this.outputInitGeneration) return;
+      this.outputInitPending = false;
+      this.outputInitError = stageError('storage-texture initialization', error);
+    });
   }
 
-  private ensureBindGroup(inputs: RealtimeRtFrameInputs): boolean {
-    if (!this.pipeline || !this.bindGroupLayout || !this.globalsBuffer || !this.staticSceneBuffer || !this.dynamicSceneBuffer) return false;
-    this.ensureOutputs(inputs.width, inputs.height);
+  private ensureOutputs(width: number, height: number): RealtimeRtSkipReason | null {
+    const nextWidth = Math.max(1, width);
+    const nextHeight = Math.max(1, height);
+    if (this.width !== nextWidth || this.height !== nextHeight) {
+      this.beginOutputInitialization(nextWidth, nextHeight);
+      return 'output-initializing';
+    }
+    if (this.outputInitError) throw this.outputInitError;
+    if (this.outputInitPending) return 'output-initializing';
+    return null;
+  }
+
+  private ensureBindGroup(inputs: RealtimeRtFrameInputs): RealtimeRtSkipReason | null {
+    if (!this.pipeline || !this.bindGroupLayout || !this.globalsBuffer || !this.staticSceneBuffer || !this.dynamicSceneBuffer) {
+      return 'pipeline-resources';
+    }
+    const outputReason = this.ensureOutputs(inputs.width, inputs.height);
+    if (outputReason) return outputReason;
     const depthGpu = this.rawTexture(inputs.depth);
+    if (!depthGpu) return 'depth-gpu-texture';
     const normalGpu = this.rawTexture(inputs.normal);
+    if (!normalGpu) return 'normal-gpu-texture';
     const metalRoughGpu = this.rawTexture(inputs.metalRough);
+    if (!metalRoughGpu) return 'metalrough-gpu-texture';
     const visibilityGpu = this.rawTexture(this.visibilityTexture);
+    if (!visibilityGpu) return 'visibility-gpu-texture';
     const reflectionGpu = this.rawTexture(this.reflectionTexture);
+    if (!reflectionGpu) return 'reflection-gpu-texture';
     const refractionGpu = this.rawTexture(this.refractionTexture);
-    if (!depthGpu || !normalGpu || !metalRoughGpu || !visibilityGpu || !reflectionGpu || !refractionGpu) return false;
+    if (!refractionGpu) return 'refraction-gpu-texture';
 
     if (
       this.bindGroup && this.boundInputs &&
       this.boundInputs[0] === inputs.depth && this.boundInputs[1] === inputs.normal && this.boundInputs[2] === inputs.metalRough
-    ) return true;
+    ) return null;
 
     this.bindGroup = this.device.createBindGroup({
       label: 'Kyxos.RealtimeRT.FeatureBindGroup.V3',
@@ -293,7 +333,7 @@ export class RealtimeRtFeaturePassV3 {
       ],
     });
     this.boundInputs = [inputs.depth, inputs.normal, inputs.metalRough];
-    return true;
+    return null;
   }
 
   private restirCandidateBudget(): number {
@@ -343,12 +383,13 @@ export class RealtimeRtFeaturePassV3 {
 
   render(camera: any, inputs: RealtimeRtFrameInputs): RealtimeRtFrameState {
     const readyNow = this.frameIndex > 0;
-    if (this.disposed || !this.initialized || !this.scene || this.gpuBusy) {
-      return { ready: readyNow, frameIndex: this.frameIndex, cpuFrameTimeMs: this.cpuFrameTimeMs, submitted: false };
-    }
-    if (!this.ensureBindGroup(inputs)) {
-      return { ready: readyNow, frameIndex: this.frameIndex, cpuFrameTimeMs: this.cpuFrameTimeMs, submitted: false };
-    }
+    if (this.disposed) return { ready: readyNow, frameIndex: this.frameIndex, cpuFrameTimeMs: this.cpuFrameTimeMs, submitted: false, skipReason: 'disposed' };
+    if (!this.initialized) return { ready: readyNow, frameIndex: this.frameIndex, cpuFrameTimeMs: this.cpuFrameTimeMs, submitted: false, skipReason: 'not-initialized' };
+    if (!this.scene) return { ready: readyNow, frameIndex: this.frameIndex, cpuFrameTimeMs: this.cpuFrameTimeMs, submitted: false, skipReason: 'no-scene' };
+    if (this.gpuBusy) return { ready: readyNow, frameIndex: this.frameIndex, cpuFrameTimeMs: this.cpuFrameTimeMs, submitted: false, skipReason: 'gpu-busy' };
+
+    const bindReason = this.ensureBindGroup(inputs);
+    if (bindReason) return { ready: readyNow, frameIndex: this.frameIndex, cpuFrameTimeMs: this.cpuFrameTimeMs, submitted: false, skipReason: bindReason };
 
     const started = performance.now();
     this.writeGlobals(camera);
@@ -374,6 +415,7 @@ export class RealtimeRtFeaturePassV3 {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.outputInitGeneration += 1;
     destroyBuffer(this.globalsBuffer);
     destroyBuffer(this.staticSceneBuffer);
     destroyBuffer(this.dynamicSceneBuffer);
