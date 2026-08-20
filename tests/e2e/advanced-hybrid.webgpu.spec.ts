@@ -22,6 +22,7 @@ async function diagnostic(page: any) {
       state: canvas?.dataset.advancedRenderState ?? null,
       mode: canvas?.dataset.advancedRenderMode ?? null,
       architecture: canvas?.dataset.advancedRenderArchitecture ?? null,
+      injectionStage: canvas?.dataset.hdrFeatureInjectionStage ?? null,
       warning: warning?.textContent?.trim() ?? '',
       status: status?.textContent?.trim() ?? '',
       phases,
@@ -64,6 +65,7 @@ test('Realtime RT stays fused into the WebGPU viewport while the camera moves', 
     state: 'rendering',
     mode: 'realtime',
     architecture: 'realtime-rt-feature-pass-v3',
+    injectionStage: 'pre-temporal',
     overlayVisible: false,
   });
   expect(initial.hookFrames, `Realtime RT pipeline hook did not execute: ${JSON.stringify(initial)}`).toBeGreaterThan(0);
@@ -89,6 +91,7 @@ test('Realtime RT stays fused into the WebGPU viewport while the camera moves', 
       state: 'rendering',
       mode: 'realtime',
       architecture: 'realtime-rt-feature-pass-v3',
+      injectionStage: 'pre-temporal',
       overlayVisible: false,
     });
     expect(moving.warning).not.toMatch(/suspend|pure Realtime|after interaction settles/i);
@@ -104,6 +107,7 @@ test('Realtime RT stays fused into the WebGPU viewport while the camera moves', 
   const settled = await diagnostic(page);
   expect(settled.state).toBe('rendering');
   expect(settled.architecture).toBe('realtime-rt-feature-pass-v3');
+  expect(settled.injectionStage).toBe('pre-temporal');
   expect(settled.overlayVisible).toBe(false);
   expect(actionablePageErrors(pageErrors)).toEqual([]);
   expect(gpuErrors).toEqual([]);
