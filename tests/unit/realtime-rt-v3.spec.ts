@@ -14,6 +14,10 @@ const viewerSource = fs.readFileSync(
   new URL('../../packages/viewer/src/KyxosViewer.ts', import.meta.url),
   'utf8',
 );
+const recoverySource = fs.readFileSync(
+  new URL('../../packages/viewer/src/nonBlockingVisibilityRecovery.ts', import.meta.url),
+  'utf8',
+);
 const passSource = fs.readFileSync(
   new URL('../../packages/viewer/src/render/advanced/realtimeHybridRtFeaturePassV3.ts', import.meta.url),
   'utf8',
@@ -93,6 +97,17 @@ describe('Realtime RT V3', () => {
     expect(extensionSource).toContain('this.syncFusionUniforms();');
     expect(extensionSource).toContain('this.readyUniform.mul(this.fusionUniform)');
     expect(extensionSource).toContain('.mul(this.refractionStrengthUniform)');
+  });
+
+  it('ignores asynchronous device loss from a retired WebGPU device', () => {
+    expect(recoverySource).toContain('viewer.renderer?.backend?.device !== device');
+    expect(recoverySource).toContain("webgpuIgnoredRetiredDeviceLoss = 'true'");
+    const identityGate = recoverySource.indexOf('viewer.renderer?.backend?.device !== device');
+    const fallback = recoverySource.indexOf('viewer.activateWebGPURecovery?.(`device-lost:${detail}`)');
+    expect(identityGate).toBeGreaterThan(-1);
+    expect(fallback).toBeGreaterThan(identityGate);
+    expect(recoverySource).not.toContain('drawImage(');
+    expect(recoverySource).not.toContain('getImageData(');
   });
 
   it('initializes storage outputs once per resize instead of resetting phases until raw textures appear', () => {
