@@ -23,6 +23,8 @@ async function diagnostic(page: any) {
       mode: canvas?.dataset.advancedRenderMode ?? null,
       architecture: canvas?.dataset.advancedRenderArchitecture ?? null,
       injectionStage: canvas?.dataset.hdrFeatureInjectionStage ?? null,
+      ignoredRetiredDeviceLoss: canvas?.dataset.webgpuIgnoredRetiredDeviceLoss ?? null,
+      currentDeviceLoss: canvas?.dataset.webgpuCurrentDeviceLoss ?? null,
       warning: warning?.textContent?.trim() ?? '',
       status: status?.textContent?.trim() ?? '',
       phases,
@@ -35,6 +37,11 @@ async function diagnostic(page: any) {
       overlayVisible: overlay ? getComputedStyle(overlay).display !== 'none' && getComputedStyle(overlay).visibility !== 'hidden' : false,
     };
   });
+}
+
+function expectNoBeautyRecovery(snapshot: any): void {
+  expect(snapshot.currentDeviceLoss, `Current WebGPU device was actually lost: ${JSON.stringify(snapshot)}`).toBeNull();
+  expect((snapshot.viewerWarnings ?? []).join('\n')).not.toMatch(/recovered to the lit Beauty pass/i);
 }
 
 test('Realtime RT stays fused into the WebGPU viewport while the camera moves', async ({ page }) => {
@@ -68,6 +75,7 @@ test('Realtime RT stays fused into the WebGPU viewport while the camera moves', 
     injectionStage: 'pre-temporal',
     overlayVisible: false,
   });
+  expectNoBeautyRecovery(initial);
   expect(initial.hookFrames, `Realtime RT pipeline hook did not execute: ${JSON.stringify(initial)}`).toBeGreaterThan(0);
   expect(initial.frameAttempts, `Realtime RT frame function did not execute: ${JSON.stringify(initial)}`).toBeGreaterThan(0);
   expect(initial.frameSubmitted, `Realtime RT never submitted a GPU phase; last skip=${initial.skipReason}: ${JSON.stringify(initial)}`).toBeGreaterThan(0);
@@ -94,6 +102,7 @@ test('Realtime RT stays fused into the WebGPU viewport while the camera moves', 
       injectionStage: 'pre-temporal',
       overlayVisible: false,
     });
+    expectNoBeautyRecovery(moving);
     expect(moving.warning).not.toMatch(/suspend|pure Realtime|after interaction settles/i);
     expect(moving.fps).toBeGreaterThan(0);
     expect(moving.hookFrames, 'Realtime raster frames stopped while camera interaction was active.').toBeGreaterThan(beforeMotion.hookFrames);
@@ -109,6 +118,7 @@ test('Realtime RT stays fused into the WebGPU viewport while the camera moves', 
   expect(settled.architecture).toBe('realtime-rt-feature-pass-v3');
   expect(settled.injectionStage).toBe('pre-temporal');
   expect(settled.overlayVisible).toBe(false);
+  expectNoBeautyRecovery(settled);
   expect(actionablePageErrors(pageErrors)).toEqual([]);
   expect(gpuErrors).toEqual([]);
 });
