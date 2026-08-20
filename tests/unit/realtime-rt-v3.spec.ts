@@ -10,6 +10,10 @@ const extensionSource = fs.readFileSync(
   new URL('../../packages/viewer/src/realtimeHybridRtExtensionV3.ts', import.meta.url),
   'utf8',
 );
+const viewerSource = fs.readFileSync(
+  new URL('../../packages/viewer/src/KyxosViewer.ts', import.meta.url),
+  'utf8',
+);
 const passSource = fs.readFileSync(
   new URL('../../packages/viewer/src/render/advanced/realtimeHybridRtFeaturePassV3.ts', import.meta.url),
   'utf8',
@@ -67,6 +71,28 @@ describe('Realtime RT V3', () => {
     const rtCall = extensionSource.indexOf('this.renderFeatureFrame();', rasterCall);
     expect(rasterCall).toBeGreaterThan(-1);
     expect(rtCall).toBeGreaterThan(rasterCall);
+  });
+
+  it('injects RT in HDR before TRAA and display-referred renderOutput', () => {
+    const injection = viewerSource.indexOf('source = this.hdrFeatureInjector({');
+    const traaCall = viewerSource.indexOf('const traaNode = traa(source');
+    const displayTransform = viewerSource.indexOf('source = renderOutput(source);');
+    expect(viewerSource).toContain('setInternalHdrFeatureInjector');
+    expect(viewerSource).toContain("hdrFeatureInjectionStage = 'pre-temporal'");
+    expect(injection).toBeGreaterThan(-1);
+    expect(traaCall).toBeGreaterThan(injection);
+    expect(displayTransform).toBeGreaterThan(traaCall);
+    expect(extensionSource).toContain('preparePipelineInjection(): void');
+    expect(extensionSource).toContain('return vec4(hybridRgb, source.a);');
+    expect(extensionSource).not.toContain('renderOutput(');
+  });
+
+  it('keeps realtime fusion strength hot through persistent uniforms', () => {
+    expect(extensionSource).toContain('private fusionUniform = uniform(0)');
+    expect(extensionSource).toContain('private refractionStrengthUniform = uniform(0)');
+    expect(extensionSource).toContain('this.syncFusionUniforms();');
+    expect(extensionSource).toContain('this.readyUniform.mul(this.fusionUniform)');
+    expect(extensionSource).toContain('.mul(this.refractionStrengthUniform)');
   });
 
   it('initializes storage outputs once per resize instead of resetting phases until raw textures appear', () => {
