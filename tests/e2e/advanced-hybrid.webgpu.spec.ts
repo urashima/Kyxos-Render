@@ -24,6 +24,7 @@ async function diagnostic(page: any) {
       architecture: canvas?.dataset.advancedRenderArchitecture ?? null,
       injectionStage: canvas?.dataset.hdrFeatureInjectionStage ?? null,
       ignoredRetiredDeviceLoss: canvas?.dataset.webgpuIgnoredRetiredDeviceLoss ?? null,
+      ignoredDestroyedDeviceLoss: canvas?.dataset.webgpuIgnoredDestroyedDeviceLoss ?? null,
       currentDeviceLoss: canvas?.dataset.webgpuCurrentDeviceLoss ?? null,
       warning: warning?.textContent?.trim() ?? '',
       status: status?.textContent?.trim() ?? '',
@@ -40,7 +41,7 @@ async function diagnostic(page: any) {
 }
 
 function expectNoBeautyRecovery(snapshot: any): void {
-  expect(snapshot.currentDeviceLoss, `Current WebGPU device was actually lost: ${JSON.stringify(snapshot)}`).toBeNull();
+  expect(snapshot.currentDeviceLoss, `Unexpected WebGPU device loss reached recovery: ${JSON.stringify(snapshot)}`).toBeNull();
   expect((snapshot.viewerWarnings ?? []).join('\n')).not.toMatch(/recovered to the lit Beauty pass/i);
 }
 
