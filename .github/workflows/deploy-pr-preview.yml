@@ -26,6 +26,8 @@ jobs:
     env:
       PREVIEW_ROUTE: preview/pr-${{ github.event.pull_request.number }}
       PREVIEW_URL: https://urashima.github.io/Kyxos-Render/preview/pr-${{ github.event.pull_request.number }}/
+      RT_LAB_URL: https://urashima.github.io/Kyxos-Render/preview/pr-${{ github.event.pull_request.number }}/rt-lab/
+      PATH_TRACING_URL: https://urashima.github.io/Kyxos-Render/preview/pr-${{ github.event.pull_request.number }}/path-tracing/
       STUDIO_URL: https://urashima.github.io/Kyxos-Render/preview/pr-${{ github.event.pull_request.number }}/studio/
       UI_LAB_URL: https://urashima.github.io/Kyxos-Render/preview/pr-${{ github.event.pull_request.number }}/studio/ui-lab/
       PUBLIC_URL: https://urashima.github.io/Kyxos-Render/preview/pr-${{ github.event.pull_request.number }}/view/ui-fixture/
@@ -78,6 +80,8 @@ jobs:
           cp -R main-src/site combined-site
           mkdir -p "combined-site/${PREVIEW_ROUTE}"
           cp -R preview-src/apps/playground/dist/. "combined-site/${PREVIEW_ROUTE}/"
+          mkdir -p "combined-site/${PREVIEW_ROUTE}/studio"
+          cp -R preview-src/apps/studio/dist/. "combined-site/${PREVIEW_ROUTE}/studio/"
           rm -rf combined-site/preview/pr-12/studio
           mkdir -p combined-site/preview/pr-12/studio
           cp -R combined-site/studio/. combined-site/preview/pr-12/studio/
@@ -90,7 +94,7 @@ jobs:
           const routes = [
             'overview', 'pbr', 'sss', 'buffers', 'aa', 'traa', 'temporal', 'gtao', 'ssao', 'ssr',
             'ssgi', 'motion-blur', 'denoise', 'sharpness', 'lens-distortion', 'background', 'sparkle',
-            'full-stack', 'performance', 'lifecycle',
+            'full-stack', 'rt-lab', 'path-tracing', 'performance', 'lifecycle',
           ];
           (async () => {
             for (const route of routes) {
@@ -109,6 +113,8 @@ jobs:
           test -f combined-site/latest/index.html
           test -f "combined-site/${PREVIEW_ROUTE}/index.html"
           test -f "combined-site/${PREVIEW_ROUTE}/sss/index.html"
+          test -f "combined-site/${PREVIEW_ROUTE}/rt-lab/index.html"
+          test -f "combined-site/${PREVIEW_ROUTE}/path-tracing/index.html"
           test -f "combined-site/${PREVIEW_ROUTE}/studio/index.html"
           test -f "combined-site/${PREVIEW_ROUTE}/studio/ui-lab/index.html"
           test -f "combined-site/${PREVIEW_ROUTE}/view/ui-fixture/index.html"
@@ -132,10 +138,12 @@ jobs:
       - name: Verify deployed product routes online
         shell: bash
         run: |
-          rm -f preview-index.html preview-sss.html studio-index.html ui-lab-index.html public-index.html stable-studio.html legacy-studio.html
+          rm -f preview-index.html preview-sss.html preview-rt.html preview-path.html studio-index.html ui-lab-index.html public-index.html stable-studio.html legacy-studio.html
           for attempt in $(seq 1 18); do
             if curl --fail --silent --show-error --location "${PREVIEW_URL}" --output preview-index.html && \
                curl --fail --silent --show-error --location "${PREVIEW_URL}sss/" --output preview-sss.html && \
+               curl --fail --silent --show-error --location "${RT_LAB_URL}" --output preview-rt.html && \
+               curl --fail --silent --show-error --location "${PATH_TRACING_URL}" --output preview-path.html && \
                curl --fail --silent --show-error --location "${STUDIO_URL}" --output studio-index.html && \
                curl --fail --silent --show-error --location "${UI_LAB_URL}" --output ui-lab-index.html && \
                curl --fail --silent --show-error --location "${PUBLIC_URL}" --output public-index.html && \
@@ -143,11 +151,13 @@ jobs:
                curl --fail --silent --show-error --location "${STUDIO_LEGACY_URL}" --output legacy-studio.html; then
               break
             fi
-            rm -f preview-index.html preview-sss.html studio-index.html ui-lab-index.html public-index.html stable-studio.html legacy-studio.html
+            rm -f preview-index.html preview-sss.html preview-rt.html preview-path.html studio-index.html ui-lab-index.html public-index.html stable-studio.html legacy-studio.html
             sleep 5
           done
           test -s preview-index.html
           test -s preview-sss.html
+          test -s preview-rt.html
+          test -s preview-path.html
           test -s studio-index.html
           test -s ui-lab-index.html
           test -s public-index.html
@@ -155,6 +165,8 @@ jobs:
           test -s legacy-studio.html
           grep -q "Kyxos WebGPU Realism Lab" preview-index.html
           grep -q "Kyxos WebGPU Realism Lab" preview-sss.html
+          grep -q "Kyxos WebGPU Realism Lab" preview-rt.html
+          grep -q "Kyxos WebGPU Realism Lab" preview-path.html
           grep -q "Kyxos Studio" studio-index.html
           grep -q "Kyxos UI Lab" ui-lab-index.html
           grep -q "Kyxos Public Viewer" public-index.html
@@ -165,6 +177,8 @@ jobs:
         uses: actions/github-script@v7
         env:
           PREVIEW_URL: ${{ env.PREVIEW_URL }}
+          RT_LAB_URL: ${{ env.RT_LAB_URL }}
+          PATH_TRACING_URL: ${{ env.PATH_TRACING_URL }}
           STUDIO_URL: ${{ env.STUDIO_URL }}
           UI_LAB_URL: ${{ env.UI_LAB_URL }}
           PUBLIC_URL: ${{ env.PUBLIC_URL }}
@@ -172,7 +186,7 @@ jobs:
         with:
           script: |
             const marker = '<!-- kyxos-pr-preview -->';
-            const body = `${marker}\n### Online preview\n\n- Studio: ${process.env.STUDIO_URL}\n- UI Lab: ${process.env.UI_LAB_URL}\n- Public Viewer fixture: ${process.env.PUBLIC_URL}\n- Viewer Playground: ${process.env.PREVIEW_URL}\n- Stable Studio from main: ${process.env.STABLE_STUDIO_URL}\n\nUpdated from commit \`${context.payload.pull_request.head.sha}\`. The PR Studio is built against the production Supabase public client. All product entry points and the stable Studio route passed online HTTP smoke checks.`;
+            const body = `${marker}\n### Online preview\n\n- Studio: ${process.env.STUDIO_URL}\n- WebGPU RT Lab: ${process.env.RT_LAB_URL}\n- Path Tracing Lab: ${process.env.PATH_TRACING_URL}\n- UI Lab: ${process.env.UI_LAB_URL}\n- Public Viewer fixture: ${process.env.PUBLIC_URL}\n- Viewer Playground: ${process.env.PREVIEW_URL}\n- Stable Studio from main: ${process.env.STABLE_STUDIO_URL}\n\nUpdated from commit \`${context.payload.pull_request.head.sha}\`. The PR Studio is built against the production Supabase public client. Viewer, RT Lab, Path Tracing Lab, Studio, Public Viewer and stable Studio entry points passed online HTTP smoke checks.`;
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,

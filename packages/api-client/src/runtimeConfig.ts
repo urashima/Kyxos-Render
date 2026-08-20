@@ -6,6 +6,11 @@ export interface KyxosRuntimeEnvironment {
   VITE_KYXOS_REQUIRE_REMOTE?: string;
 }
 
+/** Vite and other bundlers expose extra keys alongside the Kyxos variables. */
+export type KyxosRuntimeEnvironmentInput =
+  | KyxosRuntimeEnvironment
+  | Readonly<Record<string, unknown>>;
+
 export interface KyxosRuntimeBackendConfig {
   provider: 'local' | 'supabase';
   supabaseUrl?: string;
@@ -40,17 +45,18 @@ function edgeFunctionUrl(base: string, functionName: string): string {
 }
 
 export function resolveKyxosRuntimeBackendConfig(
-  environment: KyxosRuntimeEnvironment,
+  environment: KyxosRuntimeEnvironmentInput,
 ): KyxosRuntimeBackendConfig {
-  const supabaseUrl = value(environment.VITE_SUPABASE_URL);
-  const supabaseAnonKey = value(environment.VITE_SUPABASE_ANON_KEY);
-  const requireRemote = environment.VITE_KYXOS_REQUIRE_REMOTE === '1';
+  const env = environment as Readonly<Record<string, unknown>>;
+  const supabaseUrl = value(env.VITE_SUPABASE_URL);
+  const supabaseAnonKey = value(env.VITE_SUPABASE_ANON_KEY);
+  const requireRemote = env.VITE_KYXOS_REQUIRE_REMOTE === '1';
   const provider = supabaseUrl && supabaseAnonKey ? 'supabase' : 'local';
-  const functionsBase = value(environment.VITE_KYXOS_FUNCTIONS_URL) ?? supabaseUrl;
+  const functionsBase = value(env.VITE_KYXOS_FUNCTIONS_URL) ?? supabaseUrl;
   const functionsUrl = functionsBase
     ? edgeFunctionUrl(functionsBase, 'kyxos-api')
     : undefined;
-  const publicFunctionUrl = value(environment.VITE_KYXOS_PUBLIC_FUNCTION_URL)
+  const publicFunctionUrl = value(env.VITE_KYXOS_PUBLIC_FUNCTION_URL)
     ?? (functionsBase ? edgeFunctionUrl(functionsBase, 'public-scene') : undefined);
 
   let error: string | undefined;

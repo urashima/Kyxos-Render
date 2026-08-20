@@ -35,7 +35,9 @@ function wholeArray<T>(patch: ScenePatch, path: string): { index: number; value:
     Array.isArray(operation.value),
   );
   if (index < 0) return null;
-  return { index, value: patch[index].value as T[] };
+  const operation = patch[index];
+  if (operation.op !== 'replace' && operation.op !== 'add') return null;
+  return { index, value: operation.value as T[] };
 }
 
 function normalizeNewCameras(scene: KyxosSceneContract, patch: ScenePatch): ScenePatch {
@@ -55,15 +57,17 @@ function normalizeNewCameras(scene: KyxosSceneContract, patch: ScenePatch): Scen
     };
   });
   if (!changed) return patch;
-  const next = patch.map((operation, index) => index === cameraArray.index
+  const next: ScenePatch = patch.map((operation, index) => index === cameraArray.index
     ? { ...operation, value: cameras }
-    : operation);
+    : operation) as ScenePatch;
 
   const nodeArray = wholeArray<SceneNode>(next, '/nodes');
   if (!nodeArray) return next;
   const byCamera = new Map(cameras.map((camera) => [camera.id, camera]));
+  const nodeOperation = next[nodeArray.index];
+  if (nodeOperation.op !== 'replace' && nodeOperation.op !== 'add') return next;
   next[nodeArray.index] = {
-    ...next[nodeArray.index],
+    ...nodeOperation,
     value: nodeArray.value.map((node) => {
       const camera = node.cameraId ? byCamera.get(node.cameraId) : undefined;
       if (!camera || scene.nodes.some((entry) => entry.id === node.id)) return node;

@@ -9,7 +9,7 @@ const commonUse = {
 
 const chromiumProject = {
   name: 'chromium',
-  testIgnore: '**/webgpu.spec.ts',
+  testIgnore: ['**/webgpu.spec.ts', '**/*.webgpu.spec.ts'],
   use: {
     ...devices['Desktop Chrome'],
     ...commonUse,
@@ -21,7 +21,7 @@ const chromiumProject = {
 
 const webkitProject = {
   name: 'webkit',
-  testIgnore: '**/webgpu.spec.ts',
+  testIgnore: ['**/webgpu.spec.ts', '**/*.webgpu.spec.ts'],
   use: {
     ...devices['Desktop Safari'],
     ...commonUse,
@@ -30,7 +30,7 @@ const webkitProject = {
 
 const webgpuProject = {
   name: 'chromium-webgpu',
-  testMatch: '**/webgpu.spec.ts',
+  testMatch: ['**/webgpu.spec.ts', '**/*.webgpu.spec.ts'],
   use: {
     ...devices['Desktop Chrome'],
     ...commonUse,

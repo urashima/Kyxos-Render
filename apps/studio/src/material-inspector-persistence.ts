@@ -33,3 +33,7 @@ function install(): void {
 
 if (document.body) install();
 else window.addEventListener('DOMContentLoaded', install, { once: true });
+
+// This file is loaded for side effects, but it must remain an ES module so its
+// observer does not collide with other standalone Studio enhancement scripts.
+export {};

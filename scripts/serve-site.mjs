@@ -41,6 +41,8 @@ const legacyRoutes = new Set([
   'background',
   'sparkle',
   'full-stack',
+  'rt-lab',
+  'path-tracing',
   'performance',
   'lifecycle',
 ]);

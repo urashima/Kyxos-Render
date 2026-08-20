@@ -9,17 +9,21 @@ type VisibilityRecoveryPrototype = {
   __kyxosNonBlockingVisibilityRecovery?: boolean;
 };
 
+type DeviceLostInfo = { message?: string; reason?: string };
+type WatchedDevice = {
+  lost?: Promise<DeviceLostInfo>;
+};
+
 type ViewerInternals = {
   backend?: string;
   disposed?: boolean;
   pipelineGeneration?: number;
   renderer?: {
     backend?: {
-      device?: {
-        lost?: Promise<{ message?: string; reason?: string }>;
-      };
+      device?: WatchedDevice;
     };
   };
+  canvas?: HTMLCanvasElement;
   activateWebGPURecovery?(reason: string): void;
 };
 
@@ -32,8 +36,15 @@ const watchedDevices = new WeakSet<object>();
  * low-end drivers immediately after a successful GLB import.
  *
  * Runtime render exceptions already activate the Beauty-pass fallback. Keep
- * that deterministic path and observe WebGPU device loss without reading
- * pixels back from the presentation canvas.
+ * that deterministic path and observe unexpected WebGPU device loss without
+ * reading pixels back from the presentation canvas.
+ *
+ * GPUDevice.lost also resolves when an application intentionally calls
+ * GPUDevice.destroy(), with the standardized reason "destroyed". That lifecycle
+ * event is not an unexpected adapter/driver loss and must not silently replace
+ * an otherwise healthy realtime RT graph with the Beauty fallback. We use the
+ * standardized reason field only; the implementation-defined message remains
+ * diagnostic text and is never parsed for control flow.
  */
 export function installNonBlockingVisibilityRecovery(
   ViewerClass: typeof KyxosViewer = KyxosViewer,
@@ -64,7 +75,29 @@ export function installNonBlockingVisibilityRecovery(
     if (!lost || typeof lost.then !== 'function') return;
     void lost.then((info) => {
       if (viewer.disposed) return;
-      const detail = info?.message || info?.reason || reason || 'unknown';
+
+      if (viewer.renderer?.backend?.device !== device) {
+        if (viewer.canvas) viewer.canvas.dataset.webgpuIgnoredRetiredDeviceLoss = 'true';
+        return;
+      }
+
+      const reasonCode = String(info?.reason ?? '').trim().toLowerCase();
+      const message = String(info?.message ?? '').trim();
+
+      if (reasonCode === 'destroyed') {
+        if (viewer.canvas) {
+          viewer.canvas.dataset.webgpuIgnoredDestroyedDeviceLoss = reasonCode;
+          viewer.canvas.dataset.webgpuDestroyedDeviceMessage = message;
+          delete viewer.canvas.dataset.webgpuCurrentDeviceLoss;
+        }
+        return;
+      }
+
+      const detail = message || reasonCode || reason || 'unknown';
+      if (viewer.canvas) {
+        viewer.canvas.dataset.webgpuCurrentDeviceLoss = String(detail);
+        viewer.canvas.dataset.webgpuCurrentDeviceLossReason = reasonCode || 'unknown';
+      }
       viewer.activateWebGPURecovery?.(`device-lost:${detail}`);
     });
   };

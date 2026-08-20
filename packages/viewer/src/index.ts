@@ -20,6 +20,7 @@ import './editorLightVisualization';
 import './editorViewportNavigation';
 import './editorRenderModes';
 
+import { installAdvancedRenderingApi } from './advancedRenderingApi';
 import { KyxosViewer } from './KyxosViewer';
 import { installEditorSceneModeExtension } from './editorSceneMode';
 import { installGltfAuthoringFidelityExtension } from './gltfAuthoringFidelity';
@@ -28,8 +29,10 @@ import { installScreenSpaceSSSExtension } from './materials/screenSpaceSSS';
 import { installScreenSpaceSSSDebugExtension } from './materials/screenSpaceSSSDebug';
 import { installViewerMetricsBroadcast } from './metricsBroadcast';
 import { installNonBlockingVisibilityRecovery } from './nonBlockingVisibilityRecovery';
+import { installRealtimeHybridRtExtensionV3 } from './realtimeHybridRtExtensionV3';
 import { installRenderSettingsParity } from './renderSettingsParity';
 import { installSSSStudyModelExtension } from './scene/sssStudyModel';
+import { installSharedWebGpuDeviceBridge } from './render/advanced/sharedWebGpuDeviceBridge';
 import { installSsrEnvironmentGuard } from './ssrEnvironmentGuard';
 import { installTimestampQueryGuard } from './timestampQueryGuard';
 
@@ -38,6 +41,7 @@ import { installTimestampQueryGuard } from './timestampQueryGuard';
 installTimestampQueryGuard(KyxosViewer as unknown as Parameters<typeof installTimestampQueryGuard>[0]);
 installSsrEnvironmentGuard();
 installNonBlockingVisibilityRecovery(KyxosViewer);
+installSharedWebGpuDeviceBridge(KyxosViewer);
 
 // Scene API is installed by the side-effect import above. Studio scene mode then
 // removes the procedural playground model and unmanaged lights before loading
@@ -53,6 +57,15 @@ installSSSStudyModelExtension(KyxosViewer);
 installScreenSpaceSSSExtension(KyxosViewer);
 installScreenSpaceSSSDebugExtension(KyxosViewer);
 installRenderSettingsParity(KyxosViewer);
+// Advanced rendering is deliberately installed after the existing authoring and
+// render-settings wrappers so geometry/material/light edits invalidate the new
+// software-ray histories without changing Studio -> Viewer package boundaries.
+installAdvancedRenderingApi(KyxosViewer);
+// V3 makes ray tracing an optional realtime feature layer. Camera interaction
+// never suspends RT: each raster frame is followed by a bounded interleaved ray
+// update and the next frame reprojects/denoises/fuses it. Path Tracing remains
+// the only independent progressive full-frame reference renderer.
+installRealtimeHybridRtExtensionV3(KyxosViewer);
 installViewerMetricsBroadcast(KyxosViewer);
 
 export { KyxosViewer };
@@ -87,6 +100,35 @@ export {
   type RenderParameterDefinition,
   type ScreenSpaceSssRenderSettings,
 } from '@kyxos/scene-contract/render-settings';
+export {
+  DEFAULT_ADVANCED_RENDER_SETTINGS,
+  normalizeAdvancedRenderSettings,
+} from '@kyxos/scene-contract/advanced-render-settings';
+export type {
+  AdvancedRendererTier,
+  AdvancedRenderingCapabilityDescription,
+  AdvancedRenderingMode,
+  RestirDIMode,
+  SceneAdvancedRenderSettings,
+  ScenePathTracingSettings,
+  SceneRadianceCacheSettings,
+  SceneRestirDISettings,
+} from '@kyxos/scene-contract/advanced-render-settings';
+export type { AdvancedRenderRuntimeState, AdvancedRenderStatus } from './advancedRenderingApi';
+export {
+  balanceHeuristic,
+  buildAliasTable,
+  buildBvh,
+  buildEnvironmentAliasTable,
+  environmentSolidAnglePdf,
+  powerHeuristic,
+  RadianceHashCache,
+  reservoirFinalWeight,
+  reservoirUpdate,
+  TemporalHistoryRegistry,
+  traceAny,
+  traceClosest,
+} from './render/advanced';
 export type { AnimationState, CameraState, PickResult } from './sceneTypes';
 export type {
   EditorTransformMode,
