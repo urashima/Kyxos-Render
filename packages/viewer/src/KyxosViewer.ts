@@ -102,6 +102,7 @@ export class KyxosViewer extends EventTarget {
   private nodes: any[] = [];
   private debugNodes = new Map<DebugView, any>();
   private finalNode: any = null;
+  private hdrFeatureInjector: ((context: any) => any) | null = null;
   private beforeNode: any = null;
   private debugView: DebugView = 'final';
   private compareEnabled = false;
@@ -439,6 +440,7 @@ export class KyxosViewer extends EventTarget {
     };
 
     if (useSSAA) {
+      delete this.canvas.dataset.hdrFeatureInjectionStage;
       const ssaaNode = ssaaPass(this.scene, this.camera);
       const requestedSamples = Number(this.effects.ssaa.samples ?? 8);
       ssaaNode.sampleLevel = Math.max(0, Math.min(5, Math.round(Math.log2(Math.max(1, requestedSamples)))));
@@ -568,6 +570,34 @@ export class KyxosViewer extends EventTarget {
         } catch (error) {
           this.effectFailure('poissonDenoise', error);
         }
+      }
+
+      if (this.hdrFeatureInjector) {
+        try {
+          source = this.hdrFeatureInjector({
+            source,
+            beauty,
+            depth,
+            normalPacked,
+            velocityNode,
+            metalRough,
+            metalRoughness,
+            diffuseMetal,
+            sceneNormal,
+            camera: this.camera,
+            nodes: this.nodes,
+          }) ?? source;
+          this.canvas.dataset.hdrFeatureInjectionStage = 'pre-temporal';
+          this.warnings.delete('hdr-feature-injection');
+        } catch (error) {
+          delete this.canvas.dataset.hdrFeatureInjectionStage;
+          this.warn(
+            'hdr-feature-injection',
+            `HDR feature injection failed: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      } else {
+        delete this.canvas.dataset.hdrFeatureInjectionStage;
       }
 
       if (dofBeforeTraa) applyDepthOfField();
@@ -786,6 +816,10 @@ export class KyxosViewer extends EventTarget {
       this.rebuildQueued = false;
       this.buildPipeline(reason);
     });
+  }
+
+  setInternalHdrFeatureInjector(injector: ((context: any) => any) | null) {
+    this.hdrFeatureInjector = injector;
   }
 
   resetTemporal(reason = 'manual') {
@@ -1100,6 +1134,7 @@ export class KyxosViewer extends EventTarget {
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
+    this.hdrFeatureInjector = null;
     this.renderer?.setAnimationLoop(null);
     this.resizeObserver?.disconnect();
     this.controls?.dispose();
