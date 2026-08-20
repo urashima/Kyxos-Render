@@ -99,18 +99,19 @@ describe('Realtime RT V3', () => {
     expect(extensionSource).toContain('.mul(this.refractionStrengthUniform)');
   });
 
-  it('ignores retired and explicitly destroyed WebGPU devices before Beauty recovery', () => {
+  it('ignores retired and intentionally destroyed WebGPU devices before Beauty recovery', () => {
     expect(recoverySource).toContain('viewer.renderer?.backend?.device !== device');
     expect(recoverySource).toContain("webgpuIgnoredRetiredDeviceLoss = 'true'");
-    expect(recoverySource).toContain("reasonCode === 'destroyed'");
-    expect(recoverySource).toContain('/^device was destroyed\\.?$/i.test(message)');
+    expect(recoverySource).toContain("if (reasonCode === 'destroyed')");
     expect(recoverySource).toContain('webgpuIgnoredDestroyedDeviceLoss');
+    expect(recoverySource).toContain('webgpuDestroyedDeviceMessage');
     const identityGate = recoverySource.indexOf('viewer.renderer?.backend?.device !== device');
-    const destroyedGate = recoverySource.indexOf('if (explicitlyDestroyed)');
+    const destroyedGate = recoverySource.indexOf("if (reasonCode === 'destroyed')");
     const fallback = recoverySource.indexOf('viewer.activateWebGPURecovery?.(`device-lost:${detail}`)');
     expect(identityGate).toBeGreaterThan(-1);
     expect(destroyedGate).toBeGreaterThan(identityGate);
     expect(fallback).toBeGreaterThan(destroyedGate);
+    expect(recoverySource).not.toContain('/^device was destroyed');
     expect(recoverySource).not.toContain('drawImage(');
     expect(recoverySource).not.toContain('getImageData(');
   });
