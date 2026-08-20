@@ -3,7 +3,7 @@ import {
   type SceneAdvancedRenderSettings,
 } from '@kyxos/scene-contract/advanced-render-settings';
 import { Vector2 } from 'three/webgpu';
-import { mix, renderOutput, sample, screenUV, texture, uniform, vec4 } from 'three/tsl';
+import { mix, sample, screenUV, texture, uniform, vec4 } from 'three/tsl';
 import { temporalReproject } from 'three/addons/tsl/display/TemporalReprojectNode.js';
 import { recurrentDenoise } from 'three/addons/tsl/display/RecurrentDenoiseNode.js';
 import { extractAdvancedSceneAsync } from './render/advanced/sceneExtraction';
@@ -47,6 +47,8 @@ class RealtimeRtControllerV3 {
   private sceneBuild: Promise<void> | null = null;
   private initialization: Promise<void> | null = null;
   private readyUniform = uniform(0);
+  private fusionUniform = uniform(0);
+  private refractionStrengthUniform = uniform(0);
   private runtimeState: 'idle' | 'initializing' | 'building' | 'rendering' | 'fallback' | 'error' = 'idle';
   private message: string | null = null;
   private frameIndex = 0;
@@ -64,6 +66,7 @@ class RealtimeRtControllerV3 {
     this.viewer = viewer;
     this.methods = methods;
     this.settings = normalizeAdvancedRenderSettings(methods.getAdvancedRenderSettings.call(viewer));
+    this.syncFusionUniforms();
   }
 
   getSettings(): SceneAdvancedRenderSettings {
@@ -72,6 +75,13 @@ class RealtimeRtControllerV3 {
 
   private wantsRealtimeRt(): boolean {
     return this.settings.renderingMode !== 'pathTracing' && this.settings.rayTracing.enabled;
+  }
+
+  private syncFusionUniforms(): void {
+    this.fusionUniform.value = this.settings.rayTracing.realtimeFusion
+      ? Number(this.settings.rayTracing.fusionStrength)
+      : 0;
+    this.refractionStrengthUniform.value = Number(this.settings.rayTracing.refractionStrength);
   }
 
   private passRealtimeSettings(): void {
@@ -93,6 +103,7 @@ class RealtimeRtControllerV3 {
   setSettings(update: Partial<SceneAdvancedRenderSettings>): void {
     const previous = this.settings;
     this.settings = mergeSettings(this.settings, update);
+    this.syncFusionUniforms();
     this.featurePass?.setSettings(this.settings);
 
     if (this.settings.renderingMode === 'pathTracing') {
@@ -105,10 +116,7 @@ class RealtimeRtControllerV3 {
       this.active = true;
       this.passRealtimeSettings();
       void this.activate('settings');
-      const structuralChange =
-        previous.rayTracing.realtimeDenoise !== this.settings.rayTracing.realtimeDenoise ||
-        previous.rayTracing.realtimeFusion !== this.settings.rayTracing.realtimeFusion ||
-        previous.rayTracing.refractions !== this.settings.rayTracing.refractions;
+      const structuralChange = previous.rayTracing.realtimeDenoise !== this.settings.rayTracing.realtimeDenoise;
       if (structuralChange && this.featurePass) this.viewer.queuePipelineRebuild?.('realtime-rt-v3-settings');
       return;
     }
@@ -122,6 +130,7 @@ class RealtimeRtControllerV3 {
       renderingMode: mode,
       ...(mode === 'cinematic' ? { rayTracing: { ...this.settings.rayTracing, enabled: true } } : {}),
     });
+    this.syncFusionUniforms();
 
     if (mode === 'pathTracing') {
       this.deactivateRealtimeRt(false);
@@ -177,7 +186,7 @@ class RealtimeRtControllerV3 {
     if (this.sceneDirty) await this.rebuildScene();
     if (!this.sceneDirty && this.featurePass) {
       this.viewer.queuePipelineRebuild?.(`realtime-rt-v3:${reason}`);
-      this.setState('rendering', 'Realtime raster + interleaved RT queries + velocity reprojection + realtime denoise/fusion.');
+      this.setState('rendering', 'Realtime RT is fused in HDR before TRAA and display post-processing.');
     }
   }
 
@@ -264,7 +273,7 @@ class RealtimeRtControllerV3 {
       if (frame.ready) this.readyUniform.value = 1;
       if (frame.submitted) {
         this.frameSubmitted += 1;
-        this.message = 'Realtime RT phase submitted; temporal reprojection and denoise reconstruct continuously during camera motion.';
+        this.message = 'Realtime RT phase submitted; HDR fusion remains active during camera motion.';
         this.recordFrameReason('submitted');
         if (frame.frameIndex === 1 || frame.frameIndex % 16 === 0) this.emitStatus();
       } else {
@@ -300,18 +309,24 @@ class RealtimeRtControllerV3 {
     pipeline.__kyxosRealtimeRtV3Wrapped = true;
   }
 
-  decoratePipeline(): void {
-    if (!this.active || !this.featurePass || this.disposed || this.viewer.debugView !== 'final') return;
-    const prePass = this.viewer.nodes?.find?.((node: any) => node?.name === 'Kyxos.PrePassMRT');
-    const pipeline = this.viewer.renderPipeline;
-    const baseFinal = this.viewer.finalNode;
-    if (!prePass || !pipeline || !baseFinal) return;
+  preparePipelineInjection(): void {
+    const injector = this.active && this.featurePass && !this.disposed && this.viewer.debugView === 'final'
+      ? (context: any) => this.injectHdrFeatures(context)
+      : null;
+    this.viewer.setInternalHdrFeatureInjector?.(injector);
+  }
 
-    const depth = prePass.getTextureNode('depth');
-    const normalPacked = prePass.getTextureNode('output');
-    const velocityNode = prePass.getTextureNode('velocity');
-    const metalRough = prePass.getTextureNode('metalrough');
-    const metalRoughness = sample((uv: any) => metalRough.sample(uv).rg);
+  private injectHdrFeatures(context: any): any {
+    if (!this.featurePass || !this.active || this.disposed) return context.source;
+
+    const {
+      source,
+      depth,
+      normalPacked,
+      velocityNode,
+      metalRough,
+      metalRoughness,
+    } = context;
     const visibilityRaw = texture(this.featurePass.visibilityTexture);
     const reflectionRaw = texture(this.featurePass.reflectionTexture);
     const refractionRaw = texture(this.featurePass.refractionTexture);
@@ -388,29 +403,27 @@ class RealtimeRtControllerV3 {
       refractionFiltered = createSpecularDenoiser(refractionTemporal, refractionRaw);
     }
 
-    const ready = this.readyUniform;
-    const fusion = uniform(this.settings.rayTracing.realtimeFusion ? this.settings.rayTracing.fusionStrength : 0);
-    const fusionReady = ready.mul(fusion);
+    const fusionReady = this.readyUniform.mul(this.fusionUniform);
     const visibility = mix(1, visibilityTemporal.r, fusionReady);
     const material = metalRough.sample(screenUV).rg;
     const reflectionWeight = material.r.mul(0.7).add(0.03).mul(material.g.oneMinus()).mul(fusionReady);
     const transmission = visibilityTemporal.a.clamp(0, 1);
     const refractionWeight = transmission
       .mul(material.g.oneMinus())
-      .mul(this.settings.rayTracing.refractionStrength)
+      .mul(this.refractionStrengthUniform)
       .mul(fusionReady);
 
-    const reflectionDisplay = renderOutput(vec4(reflectionFiltered.rgb, 1));
-    const refractionDisplay = renderOutput(vec4(refractionFiltered.rgb, 1));
-    const realtimeWithVisibility = baseFinal.rgb.mul(visibility);
-    const withReflection = mix(realtimeWithVisibility, reflectionDisplay.rgb, reflectionWeight);
-    const hybridRgb = mix(withReflection, refractionDisplay.rgb, refractionWeight);
-    const hybridFinal = vec4(hybridRgb, baseFinal.a);
+    const realtimeWithVisibility = source.rgb.mul(visibility);
+    const withReflection = mix(realtimeWithVisibility, reflectionFiltered.rgb, reflectionWeight);
+    const hybridRgb = mix(withReflection, refractionFiltered.rgb, refractionWeight);
+    this.viewer.canvas.dataset.advancedRenderArchitecture = 'realtime-rt-feature-pass-v3';
+    return vec4(hybridRgb, source.a);
+  }
 
-    this.viewer.finalNode = hybridFinal;
-    this.viewer.debugNodes?.set?.('final', hybridFinal);
-    this.viewer.applyOutputSelection?.();
-    pipeline.needsUpdate = true;
+  attachPipelineFrameHook(): void {
+    if (!this.active || !this.featurePass || this.disposed || this.viewer.debugView !== 'final') return;
+    const pipeline = this.viewer.renderPipeline;
+    if (!pipeline) return;
     this.wrapPipelineRender(pipeline);
     this.viewer.canvas.dataset.advancedRenderArchitecture = 'realtime-rt-feature-pass-v3';
     this.recordFrameReason('pipeline-decorated');
@@ -442,6 +455,7 @@ class RealtimeRtControllerV3 {
       rtFrameAttempts: this.frameAttempts,
       rtFrameSubmitted: this.frameSubmitted,
       rtFrameSkipReason: this.lastSkipReason,
+      injectionStage: this.viewer.canvas.dataset.hdrFeatureInjectionStage ?? null,
       enabledFeatures,
       unavailableFeatures: this.settings.radianceCache.enabled ? ['radianceCache'] : [],
     };
@@ -465,7 +479,9 @@ class RealtimeRtControllerV3 {
     this.active = false;
     this.readyUniform.value = 0;
     this.runtimeState = 'idle';
+    this.viewer.setInternalHdrFeatureInjector?.(null);
     delete this.viewer.canvas.dataset.advancedRenderArchitecture;
+    delete this.viewer.canvas.dataset.hdrFeatureInjectionStage;
     if (rebuild && wasActive) this.viewer.queuePipelineRebuild?.('realtime-rt-v3-disabled');
   }
 
@@ -473,6 +489,7 @@ class RealtimeRtControllerV3 {
     if (this.disposed) return;
     this.disposed = true;
     this.active = false;
+    this.viewer.setInternalHdrFeatureInjector?.(null);
     this.featurePass?.dispose();
     this.featurePass = null;
   }
@@ -521,8 +538,10 @@ export function installRealtimeHybridRtExtensionV3(ViewerClass: { prototype: any
 
   if (typeof originalBuildPipeline === 'function') {
     prototype.buildPipeline = function buildPipelineWithRealtimeRT(...args: any[]): any {
+      const controller = states.get(this);
+      controller?.preparePipelineInjection();
       const result = originalBuildPipeline.apply(this, args);
-      states.get(this)?.decoratePipeline();
+      controller?.attachPipelineFrameHook();
       return result;
     };
   }
