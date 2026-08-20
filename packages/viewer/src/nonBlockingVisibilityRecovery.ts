@@ -36,13 +36,19 @@ const watchedDevices = new WeakSet<object>();
  * low-end drivers immediately after a successful GLB import.
  *
  * Runtime render exceptions already activate the Beauty-pass fallback. Keep
- * that deterministic path and observe WebGPU device loss without reading
- * pixels back from the presentation canvas.
+ * that deterministic path and observe unexpected WebGPU device loss without
+ * reading pixels back from the presentation canvas.
  *
- * A WebGPU renderer may replace its device while an older device.lost Promise
- * is still pending. A normal destroy of that retired device must not recover a
- * newer healthy renderer to Beauty. Only the device that is still installed on
- * the active renderer is allowed to trigger the fallback.
+ * WebGPU resolves device.lost both for unexpected loss and for an explicit
+ * GPUDevice.destroy(). Three.js / Dawn can explicitly destroy a device wrapper
+ * during backend lifecycle work while the active renderer continues to submit
+ * frames through its valid presentation path. Treating that intentional
+ * "destroyed" notification as a rendering failure silently replaces a healthy
+ * realtime RT graph with the Beauty fallback. Therefore:
+ *   - retired-device notifications are ignored by identity;
+ *   - explicit/destroyed loss is diagnostic-only;
+ *   - unknown/unexpected loss still activates recovery;
+ *   - actual RenderPipeline exceptions remain the deterministic fallback path.
  */
 export function installNonBlockingVisibilityRecovery(
   ViewerClass: typeof KyxosViewer = KyxosViewer,
@@ -74,17 +80,26 @@ export function installNonBlockingVisibilityRecovery(
     void lost.then((info) => {
       if (viewer.disposed) return;
 
-      // Three/WebGPU can retire and destroy a previous GPUDevice during a
-      // renderer/backend rebuild. device.lost resolves asynchronously, so
-      // reject that stale notification if the Viewer has already installed a
-      // different live device. Without this identity check a healthy realtime
-      // RT renderer can be silently replaced by the Beauty fallback.
       if (viewer.renderer?.backend?.device !== device) {
         if (viewer.canvas) viewer.canvas.dataset.webgpuIgnoredRetiredDeviceLoss = 'true';
         return;
       }
 
-      const detail = info?.message || info?.reason || reason || 'unknown';
+      const reasonCode = String(info?.reason ?? '').trim().toLowerCase();
+      const message = String(info?.message ?? '').trim();
+      const explicitlyDestroyed =
+        reasonCode === 'destroyed'
+        || /^device was destroyed\.?$/i.test(message);
+
+      if (explicitlyDestroyed) {
+        if (viewer.canvas) {
+          viewer.canvas.dataset.webgpuIgnoredDestroyedDeviceLoss = message || reasonCode || 'destroyed';
+          delete viewer.canvas.dataset.webgpuCurrentDeviceLoss;
+        }
+        return;
+      }
+
+      const detail = message || reasonCode || reason || 'unknown';
       if (viewer.canvas) viewer.canvas.dataset.webgpuCurrentDeviceLoss = String(detail);
       viewer.activateWebGPURecovery?.(`device-lost:${detail}`);
     });
